@@ -1,21 +1,1161 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gileno - Gestão Saúde</title>
-    <style>
-        body { font-family: -apple-system, system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #064e3b; color: #fff; }
-        .container { text-align: center; }
-        h1 { font-size: 2em; margin-bottom: 0.5em; }
-        p { opacity: 0.7; }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#059669">
+<title>Gileno - Gestão Saúde</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+
+<!-- Firebase SDKs via CDN (compat) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+
+<style>
+/* ========== RESET & VARIÁVEIS ========== */
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+--primary:#059669;--primary-light:#d1fae5;--primary-dark:#064e3b;
+--accent:#f59e0b;--accent-light:#fef3c7;
+--bg:#0f1214;--surface:#1a1d23;--surface2:#22262e;--card:#1e2228;
+--text:#f1f5f9;--text2:#94a3b8;--text3:#64748b;
+--border:#2d3748;--border-light:#374151;
+--red:#ef4444;--red-bg:rgba(239,68,68,0.12);
+--green:#10b981;--green-bg:rgba(16,185,129,0.12);
+--blue:#3b82f6;--blue-bg:rgba(59,130,246,0.12);
+--yellow:#f59e0b;--yellow-bg:rgba(245,158,11,0.12);
+--radius:12px;--radius-sm:8px;
+--shadow:0 1px 3px rgba(0,0,0,0.3);
+}
+body.light{
+--bg:#f8faf9;--surface:#ffffff;--surface2:#f0fdf4;--card:#ffffff;
+--text:#1a1a2e;--text2:#6b7280;--text3:#9ca3af;
+--border:#d1d5db;--border-light:#e5e7eb;
+--shadow:0 1px 3px rgba(0,0,0,0.08);
+}
+body{font-family:-apple-system,system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;-webkit-tap-highlight-color:transparent;overflow-x:hidden}
+a{color:var(--primary);text-decoration:none}
+input,select,textarea,button{font-family:inherit;font-size:inherit}
+
+/* ========== UTILIDADES ========== */
+.hidden{display:none!important}
+.flex{display:flex}.flex-col{flex-direction:column}.items-center{align-items:center}.justify-between{justify-content:space-between}.gap-8{gap:8px}.gap-12{gap:12px}.gap-16{gap:16px}
+.w-full{width:100%}.text-center{text-align:center}.text-right{text-align:right}
+.mt-8{margin-top:8px}.mt-12{margin-top:12px}.mt-16{margin-top:16px}.mb-8{margin-bottom:8px}.mb-12{margin-bottom:12px}.mb-16{margin-bottom:16px}
+
+/* ========== COMPONENTES ========== */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:10px 18px;border:none;border-radius:var(--radius-sm);font-size:14px;font-weight:600;cursor:pointer;transition:all .2s}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-primary:active{background:#047857}
+.btn-outline{background:transparent;border:1px solid var(--border);color:var(--text2)}
+.btn-outline:active{background:var(--surface2)}
+.btn-sm{padding:6px 12px;font-size:12px}
+.btn-icon{width:40px;height:40px;padding:0;border-radius:var(--radius-sm)}
+.btn-danger{background:var(--red);color:#fff}
+
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow)}
+.card-title{font-size:14px;font-weight:700;color:var(--text);margin-bottom:12px}
+
+.form-group{margin-bottom:14px}
+.form-label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px}
+.form-input{width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:14px;outline:none;transition:border .2s}
+.form-input:focus{border-color:var(--primary)}
+select.form-input{-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
+
+.progress-bar{width:100%;height:8px;border-radius:8px;background:var(--border);overflow:hidden}
+.progress-fill{height:100%;border-radius:8px;transition:width .4s ease}
+
+.badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:600}
+.badge-green{background:var(--green-bg);color:var(--green)}
+.badge-yellow{background:var(--yellow-bg);color:var(--yellow)}
+.badge-blue{background:var(--blue-bg);color:var(--blue)}
+.badge-red{background:var(--red-bg);color:var(--red)}
+
+/* ========== TOAST ========== */
+#toast-container{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.toast{padding:12px 20px;border-radius:var(--radius-sm);font-size:13px;font-weight:600;color:#fff;background:var(--primary);box-shadow:0 4px 12px rgba(0,0,0,0.3);animation:toastIn .3s ease,toastOut .3s ease 2.7s forwards;pointer-events:auto}
+.toast.error{background:var(--red)}
+@keyframes toastIn{from{opacity:0;transform:translateY(-20px)}to{opacity:1;transform:translateY(0)}}
+@keyframes toastOut{from{opacity:1}to{opacity:0;transform:translateY(-10px)}}
+
+/* ========== MODAL ========== */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;display:flex;align-items:flex-end;justify-content:center;animation:fadeIn .2s ease}
+.modal-box{background:var(--surface);border-radius:16px 16px 0 0;width:100%;max-width:480px;max-height:85vh;overflow-y:auto;padding:20px;animation:slideUp .3s ease}
+.modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.modal-header h3{font-size:16px;font-weight:700;color:var(--text)}
+.modal-close{width:32px;height:32px;border:none;background:var(--bg);border-radius:50%;color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:18px}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+
+/* ========== LOGIN ========== */
+#page-login{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:24px}
+.login-logo{font-size:48px;margin-bottom:12px}
+.login-title{font-size:24px;font-weight:700;color:var(--text);margin-bottom:4px}
+.login-sub{font-size:14px;color:var(--text2);margin-bottom:32px}
+.login-box{width:100%;max-width:360px}
+.login-box .form-group{margin-bottom:12px}
+.btn-google{background:#fff;color:#333;border:1px solid #ddd;width:100%;margin-top:12px}
+.btn-google img{width:18px;height:18px}
+.login-divider{display:flex;align-items:center;gap:12px;margin:16px 0;color:var(--text3);font-size:12px}
+.login-divider::before,.login-divider::after{content:'';flex:1;height:1px;background:var(--border)}
+
+/* ========== HEADER ========== */
+.app-header{background:linear-gradient(135deg,#059669 0%,#10b981 50%,#34d399 100%);padding:16px 20px 14px;color:#fff}
+.header-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.header-app{font-size:11px;opacity:.8;letter-spacing:.5px;text-transform:uppercase}
+.header-date{font-size:20px;font-weight:700}
+.header-badge{background:rgba(255,255,255,.2);border-radius:8px;padding:4px 10px;font-size:12px;font-weight:600;cursor:pointer}
+.header-stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.header-stat{background:rgba(255,255,255,.15);border-radius:8px;padding:8px 10px;text-align:center}
+.header-stat-label{font-size:10px;opacity:.75}
+.header-stat-value{font-size:16px;font-weight:700}
+.header-stat-unit{font-size:9px;opacity:.65}
+
+/* ========== BOTTOM NAV ========== */
+.bottom-nav{position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);display:flex;justify-content:space-around;padding:8px 0 max(12px,env(safe-area-inset-bottom));z-index:100;box-shadow:0 -2px 10px rgba(0,0,0,0.15)}
+.nav-item{display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px 12px;background:none;border:none;cursor:pointer;color:var(--text3);transition:color .2s}
+.nav-item.active{color:var(--primary)}
+.nav-item svg{width:20px;height:20px}
+.nav-item span{font-size:10px;font-weight:500}
+.nav-item.active span{font-weight:700}
+
+/* ========== PAGES ========== */
+.page{display:none;padding-bottom:80px}
+.page.active{display:block}
+.page-body{padding:16px}
+
+/* ========== ALERT CARD ========== */
+.alert{display:flex;align-items:flex-start;gap:10px;padding:10px 14px;border-radius:var(--radius-sm);margin-bottom:12px}
+.alert-warn{background:var(--yellow-bg);border:1px solid rgba(245,158,11,0.2)}
+.alert-warn .alert-icon{color:var(--yellow)}
+.alert-warn .alert-title{color:#92400e;font-size:12px;font-weight:600}
+.alert-warn .alert-text{color:#a16207;font-size:11px}
+body.light .alert-warn .alert-title{color:#92400e}
+body.light .alert-warn .alert-text{color:#a16207}
+body:not(.light) .alert-warn .alert-title{color:#fbbf24}
+body:not(.light) .alert-warn .alert-text{color:#f59e0b}
+
+/* ========== MEAL LIST ========== */
+.meal-item{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)}
+.meal-item:last-child{border-bottom:none}
+.meal-check{width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0;border:2px solid var(--border);cursor:pointer}
+.meal-check.done{background:var(--primary);border-color:var(--primary)}
+.meal-check.done svg{display:block}
+.meal-check svg{display:none;width:14px;height:14px;color:#fff}
+.meal-info{flex:1;min-width:0}
+.meal-name{font-size:13px;font-weight:600;color:var(--text)}
+.meal-time{font-size:11px;color:var(--text3)}
+.meal-macros{text-align:right;flex-shrink:0}
+.meal-kcal{font-size:12px;font-weight:600;color:var(--text)}
+.meal-prot{font-size:10px;color:var(--primary)}
+.meal-item.pending{opacity:.5}
+
+/* ========== HYDRATION ========== */
+.hydro-block{margin-bottom:10px}
+.hydro-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.hydro-period{font-size:13px;font-weight:700;color:var(--text)}
+.hydro-strategy{font-size:11px;color:var(--text3)}
+.hydro-vol{font-size:12px;font-weight:700}
+.hydro-entries{margin-top:8px}
+.hydro-entry{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px;color:var(--text2)}
+.hydro-entry-time{color:var(--text);font-weight:500;width:40px}
+.hydro-entry-vol{color:var(--blue);font-weight:600;width:55px}
+.hydro-add-btn{margin-top:8px;width:100%;padding:8px;background:var(--surface2);border:1px dashed var(--border);border-radius:8px;cursor:pointer;font-size:12px;color:var(--primary);font-weight:600}
+.hydro-locked{margin-top:8px;font-size:11px;color:var(--text3);text-align:center;padding:6px;background:var(--bg);border-radius:6px}
+
+/* ========== FOOD SEARCH ========== */
+.search-box{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg);border-radius:var(--radius-sm);border:1px solid var(--border);margin-bottom:12px}
+.search-box svg{width:16px;height:16px;color:var(--text3);flex-shrink:0}
+.search-box input{border:none;background:transparent;outline:none;font-size:13px;color:var(--text);width:100%}
+.food-item{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer}
+.food-item:last-child{border-bottom:none}
+.food-item:active{opacity:.7}
+.food-info{flex:1}
+.food-name{font-size:13px;font-weight:600;color:var(--text)}
+.food-detail{font-size:11px;color:var(--text3)}
+.food-add-btn{width:28px;height:28px;border-radius:7px;background:var(--primary-light);display:flex;align-items:center;justify-content:center;color:var(--primary);flex-shrink:0}
+body:not(.light) .food-add-btn{background:var(--green-bg);color:var(--green)}
+
+/* ========== GOALS ========== */
+.goal-toggle{display:flex;gap:4px;background:var(--bg);border-radius:10px;padding:3px;margin-bottom:16px}
+.goal-toggle-btn{flex:1;padding:10px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:500;background:transparent;color:var(--text3);transition:all .2s}
+.goal-toggle-btn.active{background:var(--surface);color:var(--text);font-weight:700;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.goal-card{display:flex;align-items:center;gap:14px;margin-bottom:10px}
+.goal-icon{width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.goal-value{font-size:20px;font-weight:700;color:var(--text)}
+.goal-label{font-size:12px;color:var(--text2)}
+
+/* ========== CONFIG ========== */
+.cfg-item{display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid var(--border)}
+.cfg-item:last-child{border-bottom:none}
+.cfg-label{font-size:14px;color:var(--text)}
+.cfg-desc{font-size:11px;color:var(--text3)}
+.toggle{width:44px;height:24px;background:var(--border);border-radius:12px;position:relative;cursor:pointer;transition:background .2s;border:none;flex-shrink:0}
+.toggle.on{background:var(--primary)}
+.toggle::after{content:'';width:20px;height:20px;background:#fff;border-radius:50%;position:absolute;top:2px;left:2px;transition:transform .2s}
+.toggle.on::after{transform:translateX(20px)}
+
+/* ========== CHIP SELECT ========== */
+.chip-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
+.chip{padding:6px 12px;border-radius:20px;border:none;cursor:pointer;font-size:12px;font-weight:500;background:var(--bg);color:var(--text3);border:1px solid var(--border);transition:all .2s}
+.chip.active{background:var(--primary-light);color:var(--primary-dark);border-color:var(--primary);font-weight:700}
+body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);border-color:var(--green)}
+
+/* ========== ADDED ITEMS ========== */
+.added-item{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)}
+.added-item:last-child{border-bottom:none}
+.added-remove{width:24px;height:24px;border-radius:6px;background:var(--red-bg);color:var(--red);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+.added-total{display:flex;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:2px solid var(--primary);font-weight:700;font-size:13px}
+</style>
 </head>
 <body>
-    <div class="container">
-        <h1>🏥 Gileno - Gestão Saúde</h1>
-        <p>App em desenvolvimento</p>
-        <p>v0.0.1</p>
+
+<!-- TOAST -->
+<div id="toast-container"></div>
+
+<!-- ========== PAGE: LOGIN ========== -->
+<div id="page-login" class="page active">
+    <div class="login-logo">🏥</div>
+    <div class="login-title">Gestão Saúde</div>
+    <div class="login-sub">Suíte Gileno</div>
+    <div class="login-box">
+        <div class="form-group">
+            <label class="form-label">Email</label>
+            <input type="email" id="login-email" class="form-input" placeholder="seu@email.com">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Senha</label>
+            <input type="password" id="login-pass" class="form-input" placeholder="••••••••">
+        </div>
+        <button class="btn btn-primary w-full" onclick="loginEmail()">Entrar</button>
+        <div class="login-divider">ou</div>
+        <button class="btn btn-google w-full" onclick="loginGoogle()">
+            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="G"> Entrar com Google
+        </button>
+        <p style="margin-top:16px;font-size:12px;color:var(--text3);text-align:center">
+            Não tem conta? <a href="#" onclick="registerEmail()">Criar conta</a>
+        </p>
     </div>
+</div>
+
+<!-- ========== PAGE: DASHBOARD ========== -->
+<div id="page-dash" class="page">
+    <div class="app-header" id="dash-header"></div>
+    <div class="page-body" id="dash-body"></div>
+</div>
+
+<!-- ========== PAGE: ADD MEAL ========== -->
+<div id="page-meal" class="page">
+    <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+        <button class="btn-icon btn-outline" onclick="showPage('dash')" style="width:36px;height:36px">←</button>
+        <div style="flex:1"><div style="font-size:16px;font-weight:700">Registrar Refeição</div></div>
+        <button class="btn btn-primary btn-sm" onclick="saveMeal()">Salvar</button>
+    </div>
+    <div class="page-body" id="meal-body"></div>
+</div>
+
+<!-- ========== PAGE: HYDRATION ========== -->
+<div id="page-hydro" class="page">
+    <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+        <button class="btn-icon btn-outline" onclick="showPage('dash')" style="width:36px;height:36px">←</button>
+        <div style="flex:1">
+            <div style="font-size:16px;font-weight:700">Hidratação</div>
+            <div style="font-size:11px;color:var(--text3)">Estratégia BPH — Corte 17h</div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="openAddWater()">+ Água</button>
+    </div>
+    <div class="page-body" id="hydro-body"></div>
+</div>
+
+<!-- ========== PAGE: GOALS ========== -->
+<div id="page-goals" class="page">
+    <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+        <button class="btn-icon btn-outline" onclick="showPage('dash')" style="width:36px;height:36px">←</button>
+        <div style="font-size:16px;font-weight:700">Metas & Config</div>
+    </div>
+    <div class="page-body" id="goals-body"></div>
+</div>
+
+<!-- ========== BOTTOM NAV ========== -->
+<div class="bottom-nav hidden" id="bottom-nav">
+    <button class="nav-item active" onclick="showPage('dash')" data-page="dash">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        <span>Início</span>
+    </button>
+    <button class="nav-item" onclick="showPage('meal')" data-page="meal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3zm0 0v7"/></svg>
+        <span>Refeição</span>
+    </button>
+    <button class="nav-item" onclick="showPage('hydro')" data-page="hydro">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>
+        <span>Água</span>
+    </button>
+    <button class="nav-item" onclick="showPage('goals')" data-page="goals">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+        <span>Metas</span>
+    </button>
+</div>
+
+<script>
+// ========== FIREBASE CONFIG ==========
+const firebaseConfig = {
+    apiKey: "AIzaSyAgUD1MkFsrIoLyMgSo76LyfOUh6cpSVrI",
+    authDomain: "gileno-gestao-saude.firebaseapp.com",
+    projectId: "gileno-gestao-saude",
+    storageBucket: "gileno-gestao-saude.firebasestorage.app",
+    messagingSenderId: "400772585840",
+    appId: "1:400772585840:web:850435acce6e16df3cd7b5"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+// ========== VERSÃO ==========
+const APP_VERSION = '1.0.0';
+
+// ========== GLOBALS ==========
+let U = null; // user
+let D = null; // data object
+let cPage = 'login';
+let editingMealIndex = -1;
+let selectedMealSlot = 'almoco';
+
+// ========== HELPERS ==========
+const $ = id => document.getElementById(id);
+const uid = () => Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
+const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); };
+const fmt = v => v.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 1 });
+const fmtN = v => Math.round(v).toLocaleString('pt-BR');
+
+function toast(msg, isError) {
+    const t = document.createElement('div');
+    t.className = 'toast' + (isError ? ' error' : '');
+    t.textContent = msg;
+    $('toast-container').appendChild(t);
+    setTimeout(() => t.remove(), 3000);
+}
+
+function dateLabel(dateStr) {
+    if (!dateStr) dateStr = today();
+    const [y,m,d] = dateStr.split('-').map(Number);
+    const dt = new Date(y, m-1, d);
+    const dias = ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
+    const meses = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+    return dias[dt.getDay()] + ', ' + d + ' ' + meses[m-1];
+}
+
+function getDayOfWeek(dateStr) {
+    if (!dateStr) dateStr = today();
+    const [y,m,d] = dateStr.split('-').map(Number);
+    return new Date(y, m-1, d).getDay();
+}
+
+function currentHour() { return new Date().getHours(); }
+
+// ========== DATA STRUCTURE ==========
+function defaultD() {
+    return {
+        // Profile
+        userName: 'Gileno',
+        peso: 71.8,
+        metaPeso: [65, 68],
+        // Meals by date: { '2026-03-01': { slots: { pretreino: { items: [...], time: '05:20' }, ... } } }
+        days: {},
+        // Water by date: { '2026-03-01': [ { time: '05:15', vol: 500, source: 'Dexilant', auto: true }, ... ] }
+        water: {},
+        // Goals
+        goals: {
+            treino: { kcal: 2000, prot: 180, water: 4750 },
+            descanso: { kcal: 1450, prot: 160, water: 4250 }
+        },
+        // Day type: { '2026-03-01': 'treino' }
+        dayType: {},
+        // Vitals: { '2026-03-01': { peso: 71.8, pa: '112/71', fc: 76 } }
+        vitals: {},
+        // Foods database
+        foods: getDefaultFoods(),
+        // Settings
+        theme: 'dark',
+        bphCutoff: 17
+    };
+}
+
+function getDefaultFoods() {
+    return [
+        { id: 'whey', name: 'Whey Probiótica', ref: 60, unit: 'g', kcal: 238.5, prot: 36, nota: '3 scoops de 40g' },
+        { id: 'banana', name: 'Banana', ref: 100, unit: 'g', kcal: 89, prot: 1.1, nota: 'Pré-treino (70-95g)' },
+        { id: 'mamao', name: 'Mamão', ref: 100, unit: 'g', kcal: 40, prot: 0.5, nota: 'Café diário' },
+        { id: 'ovos_coz', name: 'Ovos cozidos', ref: 50, unit: 'g', kcal: 74, prot: 6.2, nota: '1 unidade (~50g)' },
+        { id: 'ovos_mex', name: 'Ovos mexidos', ref: 100, unit: 'g', kcal: 150, prot: 12, nota: '~2 ovos' },
+        { id: 'queijo_coalho', name: 'Queijo coalho', ref: 100, unit: 'g', kcal: 333, prot: 20, nota: 'Uso: 40-65g' },
+        { id: 'carne_moida', name: 'Carne moída', ref: 100, unit: 'g', kcal: 225, prot: 26, nota: 'Meta: 150g+ almoço' },
+        { id: 'frango', name: 'Frango desfiado', ref: 100, unit: 'g', kcal: 163, prot: 22, nota: 'Alternativa almoço' },
+        { id: 'arroz', name: 'Arroz branco', ref: 100, unit: 'g', kcal: 130, prot: 2.5, nota: 'Porção: 43-65g' },
+        { id: 'feijao', name: 'Feijão carioca', ref: 100, unit: 'g', kcal: 75, prot: 5, nota: 'Porção: 54-89g' },
+        { id: 'salada', name: 'Salada mista', ref: 100, unit: 'g', kcal: 20, prot: 1.4, nota: 'Meta: 80-100g' }
+    ];
+}
+
+const MEAL_SLOTS = [
+    { id: 'pretreino', name: 'Pré-treino', time: '05:20' },
+    { id: 'postreino', name: 'Pós-treino', time: '07:10' },
+    { id: 'cafe', name: 'Café da manhã', time: '09:15' },
+    { id: 'almoco', name: 'Almoço', time: '12:30' },
+    { id: 'lanche', name: 'Lanche', time: '16:00' },
+    { id: 'jantar', name: 'Jantar', time: '19:30' }
+];
+
+const HYDRO_BLOCKS = [
+    { id: 'bloco1', period: '05:00 – 07:00', startH: 5, endH: 7, target: 2250, strategy: 'Dexilant 500ml + treino 1.750ml' },
+    { id: 'bloco2', period: '07:00 – 09:30', startH: 7, endH: 9.5, target: 710, strategy: 'Whey 420ml + medicações 250ml' },
+    { id: 'bloco3', period: '09:30 – 13:00', startH: 9.5, endH: 13, target: 500, strategy: '⚠️ Gap crítico! Lembrete 11h' },
+    { id: 'bloco4', period: '13:00 – 17:00', startH: 13, endH: 17, target: 1170, strategy: 'Lembretes 14h, 15h, 16h, 17h' },
+    { id: 'bloco5', period: '17:00+', startH: 17, endH: 24, target: 250, strategy: '🔒 Apenas medicação noturna (BPH)' }
+];
+
+// ========== FIRESTORE ==========
+async function save() {
+    if (!U) return;
+    try {
+        await db.collection('users').doc(U.uid).set({ data: JSON.stringify(D), updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+    } catch (e) {
+        console.error('Erro ao salvar:', e);
+        toast('Erro ao salvar dados', true);
+    }
+}
+
+async function load() {
+    if (!U) return;
+    try {
+        const doc = await db.collection('users').doc(U.uid).get();
+        if (doc.exists && doc.data().data) {
+            D = JSON.parse(doc.data().data);
+            // Ensure new fields exist
+            if (!D.foods) D.foods = getDefaultFoods();
+            if (!D.goals) D.goals = defaultD().goals;
+            if (!D.vitals) D.vitals = {};
+            if (!D.dayType) D.dayType = {};
+            if (!D.water) D.water = {};
+            if (!D.days) D.days = {};
+            if (!D.bphCutoff) D.bphCutoff = 17;
+        } else {
+            D = defaultD();
+            await save();
+        }
+    } catch (e) {
+        console.error('Erro ao carregar:', e);
+        D = defaultD();
+    }
+}
+
+// ========== AUTH ==========
+function loginEmail() {
+    const email = $('login-email').value.trim();
+    const pass = $('login-pass').value;
+    if (!email || !pass) return toast('Preencha email e senha', true);
+    auth.signInWithEmailAndPassword(email, pass).catch(e => {
+        if (e.code === 'auth/user-not-found') {
+            toast('Usuário não encontrado', true);
+        } else if (e.code === 'auth/wrong-password') {
+            toast('Senha incorreta', true);
+        } else {
+            toast('Erro: ' + e.message, true);
+        }
+    });
+}
+
+function registerEmail() {
+    const email = $('login-email').value.trim();
+    const pass = $('login-pass').value;
+    if (!email || !pass) return toast('Preencha email e senha', true);
+    if (pass.length < 6) return toast('Senha mínima: 6 caracteres', true);
+    auth.createUserWithEmailAndPassword(email, pass).catch(e => toast('Erro: ' + e.message, true));
+}
+
+function loginGoogle() {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    auth.signInWithPopup(provider).catch(e => toast('Erro: ' + e.message, true));
+}
+
+function logout() {
+    if (confirm('Sair da conta?')) auth.signOut();
+}
+
+auth.onAuthStateChanged(async user => {
+    U = user;
+    if (user) {
+        await load();
+        showPage('dash');
+        $('bottom-nav').classList.remove('hidden');
+        if (D.theme === 'light') document.body.classList.add('light');
+    } else {
+        D = null;
+        showPage('login');
+        $('bottom-nav').classList.add('hidden');
+    }
+});
+
+// ========== NAVIGATION ==========
+function showPage(name) {
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    const pageEl = $('page-' + name);
+    if (pageEl) pageEl.classList.add('active');
+    cPage = name;
+
+    document.querySelectorAll('.nav-item').forEach(n => {
+        n.classList.toggle('active', n.dataset.page === name);
+    });
+
+    // Render
+    if (name === 'dash') rDash();
+    else if (name === 'meal') rMeal();
+    else if (name === 'hydro') rHydro();
+    else if (name === 'goals') rGoals();
+}
+
+// ========== HELPERS: DAY DATA ==========
+function getDayData(dt) {
+    if (!dt) dt = today();
+    if (!D.days[dt]) D.days[dt] = { slots: {} };
+    return D.days[dt];
+}
+
+function getDayType(dt) {
+    if (!dt) dt = today();
+    if (D.dayType[dt]) return D.dayType[dt];
+    const dow = getDayOfWeek(dt);
+    return dow === 0 ? 'descanso' : 'treino; // domingo = descanso
+}
+
+function setDayType(dt, type) {
+    D.dayType[dt] = type;
+    save();
+}
+
+function getGoals(dt) {
+    return D.goals[getDayType(dt)] || D.goals.treino;
+}
+
+function getDayMeals(dt) {
+    const day = getDayData(dt);
+    let totalKcal = 0, totalProt = 0;
+    MEAL_SLOTS.forEach(s => {
+        const slot = day.slots[s.id];
+        if (slot && slot.items) {
+            slot.items.forEach(item => {
+                totalKcal += item.kcal || 0;
+                totalProt += item.prot || 0;
+            });
+        }
+    });
+    return { totalKcal, totalProt };
+}
+
+function getDayWater(dt) {
+    if (!dt) dt = today();
+    if (!D.water[dt]) D.water[dt] = [];
+    return D.water[dt].reduce((s, e) => s + (e.vol || 0), 0);
+}
+
+function getWaterEntries(dt) {
+    if (!dt) dt = today();
+    if (!D.water[dt]) D.water[dt] = [];
+    return D.water[dt];
+}
+
+// ========== RENDER: DASHBOARD ==========
+function rHDash() {
+    if (!D) return;
+    const dt = today();
+    const dayType = getDayType(dt);
+    const goals = getGoals(dt);
+    const { totalKcal, totalProt } = getDayMeals(dt);
+    const totalWater = getDayWater(dt);
+    const vitals = D.vitals[dt] || {};
+
+    // Header
+    $('dash-header').innerHTML = `
+        <div class="header-top">
+            <div>
+                <div class="header-app">Gileno — Gestão Saúde</div>
+                <div class="header-date">${dateLabel(dt)}</div>
+            </div>
+            <div class="header-badge" onclick="toggleDayType()">${dayType === 'treino' ? '🏋️ Treino' : '😴 Descanso'}</div>
+        </div>
+        <div class="header-stats">
+            <div class="header-stat">
+                <div class="header-stat-label">Peso</div>
+                <div class="header-stat-value">${fmt(D.peso)}</div>
+                <div class="header-stat-unit">kg</div>
+            </div>
+            <div class="header-stat">
+                <div class="header-stat-label">FC Rep.</div>
+                <div class="header-stat-value">${vitals.fc || '—'}</div>
+                <div class="header-stat-unit">bpm</div>
+            </div>
+            <div class="header-stat">
+                <div class="header-stat-label">PA</div>
+                <div class="header-stat-value">${vitals.pa || '—'}</div>
+                <div class="header-stat-unit">mmHg</div>
+            </div>
+        </div>
+    `;
+
+    // Body
+    const kcalPct = goals.kcal > 0 ? Math.min(totalKcal / goals.kcal * 100, 100) : 0;
+    const protPct = goals.prot > 0 ? Math.min(totalProt / goals.prot * 100, 100) : 0;
+    const waterPct = goals.water > 0 ? Math.min(totalWater / goals.water * 100, 100) : 0;
+
+    // Alerts
+    let alerts = '';
+    const hour = currentHour();
+    const waterEntries = getWaterEntries(dt);
+    const lastWater = waterEntries.length > 0 ? waterEntries[waterEntries.length - 1] : null;
+
+    // Gap de hidratação
+    if (hour >= 10 && hour < 17) {
+        const recentWater = waterEntries.filter(e => {
+            const h = parseInt(e.time.split(':')[0]);
+            return h >= (hour - 2);
+        });
+        if (recentWater.length === 0) {
+            alerts += `<div class="alert alert-warn">
+                <div class="alert-icon">⚠️</div>
+                <div><div class="alert-title">Gap de hidratação!</div>
+                <div class="alert-text">Sem registro de água recente. Beba 250ml agora.</div></div>
+            </div>`;
+        }
+    }
+
+    // Proteîna abaixo
+    if (hour >= 14 && totalProt < goals.prot * 0.6) {
+        alerts += `<div class="alert alert-warn">
+            <div class="alert-icon">🥩</div>
+            <div><div class="alert-title">Proteîna abaixo de 60%</div>
+            <div class="alert-text">Reforce no lanche e jantar. Faltam ${fmtN(goals.prot - totalProt)}g.</div></div>
+        </div>`;
+    }
+
+    // Calorias abaixo
+    if (hour >= 16 && totalKcal < goals.kcal * 0.65 && dayType === 'treino') {
+        alerts += `<div class="alert alert-warn">
+            <div class="alert-icon">🔥</div>
+            <div><div class="alert-title">Déficit calórico</div>
+            <div class="alert-text">Apenas ${Math.round(kcalPct)}% da meta. Dia de treino precisa de mais calorias.</div></div>
+        </div>`;
+    }
+
+    // Meals HTML
+    let mealsHtml = '';
+    MEAL_SLOTS.forEach(s => {
+        const day = getDayData(dt);
+        const slot = day.slots[s.id];
+        const done = slot && slot.items && slot.items.length > 0;
+        let slotKcal = 0, slotProt = 0;
+        if (done) {
+            slot.items.forEach(i => { slotKcal += i.kcal || 0; slotProt += i.prot || 0; });
+        }
+        mealsHtml += `
+            <div class="meal-item ${done ? '' : 'pending'}" onclick="${done ? '' : "openMealSlot('"+s.id+"')"}">
+                <div class="meal-check ${done ? 'done' : ''}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+                </div>
+                <div class="meal-info">
+                    <div class="meal-name">${s.name}</div>
+                    <div class="meal-time">${slot && slot.time ? slot.time : s.time}</div>
+                </div>
+                ${done ? `<div class="meal-macros"><div class="meal-kcal">${fmtN(snotKcal)} kcal</div><div class="meal-prot">${fmt(slotProt)}g prot</div></div>` : ''}
+            </div>`;
+    });
+
+    // Hydration mini blocks
+    let hydroMini = '';
+    HYDRO_BLOCKS.forEach(b => {
+        const entries = waterEntries.filter(e => {
+            const h = parseFloat(e.time.replace(':', '.'));
+            const hDecimal = parseInt(e.time.split(':')[0]) + parseInt(e.time.split(':')[1]) / 60;
+            return hDecimal >= b.startH && hDecimal < b.endH;
+        });
+        const vol = entries.reduce((s, e) => s + e.vol, 0);
+        const pct = b.target > 0 ? Math.min(vol / b.target * 100, 100) : 0;
+        const color = pct >= 100 ? 'var(--blue)' : pct > 0 ? 'var(--blue)' : 'var(--border)';
+        hydroMini += `
+            <div style="text-align:center">
+                <div style="height:40px;border-radius:6px;position:relative;overflow:hidden;background:var(--border);margin-bottom:4px">
+                    <div style="position:absolute;bottom:0;width:100%;height:${pct}%;background:${color};border-radius:6px;opacity:${pct >= 100 ? 1 : 0.5}"></div>
+                </div>
+                <div style="font-size:9px;color:var(--text3)">${b.period.split('–')[0].trim()}</div>
+                <div style="font-size:9px;font-weight:600;color:${vol > 0 ? 'var(--blue)' : 'var(--text3)'}">${vol > 0 ? vol : '—'}</div>
+            </div>`;
+    });
+
+    $('dash-body').innerHTML = `
+        ${alerts}
+        <!-- Progresso -->
+        <div class="card mb-12">
+            <div style="display:flex;justify-content:space-between;margin-bottom:12px">
+                <span class="card-title" style="margin:0">Progresso Diário</span>
+                <span style="font-size:11px;color:var(--text3)">${fmtN(goals.kcal)} kcal • ${goals.prot}g prot</span>
+            </div>
+            <div class="mb-8">
+                <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                    <span style="font-size:12px;color:var(--text2)">Calorias</span>
+                    <span style="font-size:12px;font-weight:600">${fmtN(totalKcal)} / ${fmtN(goals.kcal)}</span>
+                </div>
+                <div class="progress-bar"><div class="progress-fill" style="width:${kcalPct}%;background:var(--primary)"></div></div>
+            </div>
+            <div class="mb-8">
+                <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                    <span style="font-size:12px;color:var(--text2)">Proteína</span>
+                    <span style="font-size:12px;font-weight:600">${fmt(totalProt)}g / ${goals.prot}g</span>
+                </div>
+                <div class="progress-bar"><div class="progress-fill" style="width:${protPct}%;background:var(--accent)"></div></div>
+            </div>
+            <div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                    <span style="font-size:12px;color:var(--text2)">Hidratação</span>
+                    <span style="font-size:12px;font-weight:600">${fmtN(totalWater)} / ${fmtN(goals.water)} ml</span>
+                </div>
+                <div class="progress-bar"><div class="progress-fill" style="width:${waterPct}%;background:var(--blue)"></div></div>
+            </div>
+        </div>
+
+        <!-- Refeições -->
+        <div class="card mb-12">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                <span class="card-title" style="margin:0">Refeiçães</span>
+                <button class="btn btn-primary btn-sm" onclick="showPage('meal')">+ Registrar</button>
+            </div>
+            ${mealsHtml}
+        </div>
+
+        <!-- Hidratação mini -->
+        <div class="card" onclick="showPage('hydro')" style="cursor:pointer">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                <span class="card-title" style="margin:0">💧 Hidratação</span>
+                <span style="font-size:11px;color:var(--blue);font-weight:600">Ver detalhes →</span>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px">
+                ${hydroMini}
+            </div>
+        </div>
+    `;
+}
+
+function toggleDayType() {
+    const dt = today();
+    const current = getDayType(dt);
+    setDayType(dt, current === 'treino'? 'descanso' : 'treino');
+    rDash();
+    toast('Dia alterado para ' + (getDayType(dt) === 'treino' ? '🏋️ Treino' : '😴 Descanso'));
+}
+
+function openMealSlot(slotId) {
+    selectedMealSlot = slotId;
+    showPage('meal');
+}
+
+// ========== RENDER: ADD MEAL ==========
+function rMeal() {
+    if (!D) return;
+    const dt = today();
+    const day = getDayData(dt);
+
+    // Chips
+    let chipsHtml = '';
+    MEAL_SLOTS.forEach(s => {
+        chipsHtml += `<button class="chip ${selectedMealSlot === s.id ? 'active' : ''}" onclick="selectedMealSlot='${s.id}';rMeal()">${s.name}</button>`;
+    });
+
+    // Current items
+    const slot = day.slots[selectedMealSlot] || { items: [] };
+    let itemsHtml = '';
+    let totalKcal = 0, totalProt = 0;
+    if (slot.items && slot.items.length > 0) {
+        slot.items.forEach((item, i) => {
+            totalKcal += item.kcal || 0;
+            totalProt += item.prot || 0;
+            itemsHtml += `
+                <div class="added-item">
+                    <button class="added-remove" onclick="removeMealItem(${i})">×</button>
+                    <div style="flex:1">
+                        <div style="font-size:13px;font-weight:600;color:var(--text)">${item.name}</div>
+                        <div style="font-size:11px;color:var(--text3)">${fmt(item.grams)}g</div>
+                    </div>
+                    <div class="text-right">
+                        <div style="font-size:12px;font-weight:600">${fmtN(item.kcal)} kcal</div>
+                        <div style="font-size:10px;color:var(--primary)">${fmt(item.prot)}g prot</div>
+                    </div>
+                </div>`;
+        });
+    }
+
+    // Food list
+    let foodsHtml = '';
+    D.foods.forEach(f => {
+        foodsHtml += `
+            <div class="food-item" onclick="openAddFood('${f.id}')">
+                <div class="food-info">
+                    <div class="food-name">${f.name}</div>
+                    <div class="food-detail">Ref: ${f.ref}${f.unit} • ${fmt(f.kcal)} kcal • ${fmt(f.prot)}g prot</div>
+                </div>
+                <div class="food-add-btn">+</div>
+            </div>`;
+    });
+
+    $('meal-body').innerHTML = `
+        <div class="chip-row">${chipsHtml}</div>
+
+        ${slot.items && slot.items.length > 0 ? `
+        <div class="card mb-12">
+            <div class="card-title">Itens — ${MEAL_SLOTS.find(s=>s.id===selectedMealSlot).name}</div>
+            ${itemsHtml}
+            <div class="added-total">
+                <span>Total</span>
+                <span>${fmtN(totalKcal)} kcal &nbsp; <span style="color:var(--primary)">${fmt(totalProt)}g prot</span></span>
+            </div>
+        </div>` : ''}
+
+        <div class="card">
+            <div class="card-title">Adicionar Alimento</div>
+            <div class="search-box">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="text" placeholder="Buscar alimento..." id="food-search" oninput="filterFoods()">
+            </div>
+            <div id="food-list">${foodsHtml}</div>
+        </div>
+    `;
+}
+
+function filterFoods() {
+    const q = $('food-search').value.toLowerCase();
+    let html = '';
+    D.foods.filter(f => f.name.toLowerCase().includes(q)).forEach(f => {
+        html += `
+            <div class="food-item" onclick="openAddFood('${f.id}')">
+                <div class="food-info">
+                    <div class="food-name">${f.name}</div>
+                    <div class="food-detail">Ref: ${f.ref}${f.unit} • ${fmt(f.kcal)} kcal • ${fmt(f.prot)}g prot</div>
+                </div>
+                <div class="food-add-btn">+</div>
+            </div>`;
+    });
+    $('food-list').innerHTML = html;
+}
+
+function openAddFood(foodId) {
+    const food = D.foods.find(f => f.id === foodId);
+    if (!food) return;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = `
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>${food.name}</h3>
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            </div>
+            <p style="font-size:12px;color:var(--text3);margin-bottom:12px">Ref: ${food.ref}${food.unit} = ${fmt(food.kcal)} kcal / ${fmt(food.prot)}g prot</p>
+            <div class="form-group">
+                <label class="form-label">Quantidade (gramas)</label>
+                <input type="number" id="food-grams" class="form-input" value="${food.ref}" inputmode="decimal" autofocus>
+            </div>
+            <div id="food-calc" style="font-size:13px;color:var(--text2);margin-bottom:16px">
+                = ${fmt(food.kcal)} kcal / ${fmt(food.prot)}g prot
+            </div>
+            <button class="btn btn-primary w-full" onclick="addFoodToMeal('${food.id}')">Adicionar</button>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+
+    // Real-time calc
+    const gramsInput = $('food-grams');
+    gramsInput.addEventListener('input', () => {
+        const g = parseFloat(gramsInput.value) || 0;
+        const ratio = g / food.ref;
+        $('food-calc').textContent = `= ${fmt(food.kcal * ratio)} kcal / ${fmt(food.prot * ratio)}g prot`;
+    });
+    gramsInput.select();
+}
+
+function addFoodToMeal(foodId) {
+    const food = D.foods.find(f => f.id === foodId);
+    if (!food) return;
+    const grams = parseFloat($('food-grams').value) || 0;
+    if (grams <= 0) return toast('Informe a quantidade', true);
+
+    const ratio = grams / food.ref;
+    const dt = today();
+    const day = getDayData(dt);
+    if (!day.slots[selectedMealSlot]) day.slots[selectedMealSlot] = { items: [], time: MEAL_SLOTS.find(s=>s.id===selectedMealSlot).time };
+    day.slots[selectedMealSlot].items.push({
+        id: uid(),
+        foodId: food.id,
+        name: food.name,
+        grams: grams,
+        kcal: Math.round(food.kcal * ratio * 10) / 10,
+        prot: Math.round(food.prot * ratio * 10) / 10
+    });
+
+    save();
+    document.querySelector('.modal-overlay').remove();
+    toast(food.name + ' adicionado');
+    rMeal();
+}
+
+function removeMealItem(index) {
+    const dt = today();
+    const day = getDayData(dt);
+    const slot = day.slots[selectedMealSlot];
+    if (slot && slot.items) {
+        slot.items.splice(index, 1);
+        save();
+        rMeal();
+    }
+}
+
+function saveMeal() {
+    save();
+    toast('Refeição salva!');
+    showPage('dash');
+}
+
+// ========== RENDER: HYDRATION ==========
+function rHydro() {
+    if (!D) return;
+    const dt = today();
+    const goals = getGoals(dt);
+    const entries = getWaterEntries(dt);
+    const totalWater = entries.reduce((s, e) => s + e.vol, 0);
+    const pct = goals.water > 0 ? Math.round(totalWater / goals.water * 100) : 0;
+
+    let blocksHtml = '';
+    HYDRO_BLOCKS.forEach(b => {
+        const blockEntries = entries.filter(e => {
+            const hDecimal = parseInt(e.time.split(':')[0]) + parseInt(e.time.split(':')[1]) / 60;
+            return hDecimal >= b.startH && hDecimal < b.endH;
+        });
+        const blockVol = blockEntries.reduce((s, e) => s + e.vol, 0);
+        const blockPct = b.target > 0 ? Math.min(blockVol / b.target * 100, 100) : 0;
+        const isLocked = b.startH >= D.bphCutoff;
+        const isAlert = b.id === 'bloco3';
+
+        let entriesHtml = '';
+        blockEntries.forEach(e => {
+            entriesHtml += `
+                <div class="hydro-entry">
+                    <span class="hydro-entry-time">${e.time}</span>
+                    <span class="hydro-entry-vol">${e.vol}ml</span>
+                    <span>${e.source || ''}</span>
+                    ${e.auto ? '<span class="badge badge-green">auto</span>' : ''}
+                </div>`;
+        });
+
+        const barColor = blockPct >= 100 ? 'var(--green)' : isAlert ? 'var(--yellow)' : 'var(--blue)';
+        const barBg = blockPct >= 100 ? 'var(--green-bg)' : isAlert ? 'var(--yellow-bg)' : 'var(--blue-bg)';
+
+        blocksHtml += `
+            <div class="card hydro-block" style="${isAlert && blockVol === 0 ? 'border-color:var(--yellow);box-shadow:0 0 0 2px var(--yellow-bg)' : ''}">
+                <div class="hydro-header">
+                    <div>
+                        <div class="hydro-period">${b.period}</div>
+                        <div class="hydro-strategy">${b.strategy}</div>
+                    </div>
+                    <div class="hydro-vol" style="color:${blockPct >= 100 ? 'var(--green)' : isAlert && blockVol === 0 ? 'var(--yellow)' : 'var(--text3)'}">
+                        ${blockVol}/${b.target}ml
+                    </div>
+                </div>
+                <div class="progress-bar" style="height:6px"><div class="progress-fill" style="width:${blockPct}%;background:${barColor}"></div></div>
+                ${entriesHtml ? `<div class="hydro-entries">${entriesHtml}</div>` : ''}
+                ${!isLocked && blockEntries.length === 0 ? `<button class="hydro-add-btn" onclick="openAddWater('${b.id}')">+ Registrar água</button>` : ''}
+                ${!isLocked && blockEntries.length > 0 ? `<button class="hydro-add-btn" onclick="openAddWater('${b.id}')">+ Adicionar mais</button>` : ''}
+                ${isLocked ? '<div class="hydro-locked">🔒 Bloqueado — Estratégia BPH ativa</div>' : ''}
+            </div>`;
+    });
+
+    $('hydro-body').innerHTML = `
+        <div style="background:linear-gradient(135deg,#059669,#10b981,#34d399);border-radius:12px;padding:16px;color:#fff;text-align:center;margin-bottom:16px">
+            <div style="font-size:11px;opacity:.8;text-transform:uppercase;letter-spacing:.5px">Total hoje</div>
+            <div style="font-size:32px;font-weight:700">${fmtN(totalWater)} ml</div>
+            <div style="font-size:12px;opacity:.8">de ${fmtN(goals.water)} ml (${pct}%)</div>
+            <div style="margin-top:10px">
+                <div class="progress-bar" style="height:6px;background:rgba(255,255,255,0.25)"><div class="progress-fill" style="width:${Math.min(pct,100)}%;background:rgba(255,255,255,0.9)"></div></div>
+            </div>
+        </div>
+        ${blocksHtml}
+    `;
+}
+
+function openAddWater(blockId) {
+    const block = blockId ? HYDRO_BLOCKS.find(b => b.id === blockId) : null;
+    const now = new Date();
+    const timeStr = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = `
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>Registrar Água</h3>
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            </div>
+            ${block ? `<p style="font-size:12px;color:var(--text3);margin-bottom:12px">Bloco: ${block.period}</p>` : ''}
+            <div class="form-group">
+                <label class="form-label">Volume (ml)</label>
+                <input type="number" id="water-vol" class="form-input" value="250" inputmode="numeric">
+            </div>
+            <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap">
+                ${[150, 200, 250, 350, 500, 750].map(v => `<button class="btn btn-outline btn-sm" onclick="$('water-vol').value=${v}">${v}ml</button>`).join('')}
+            </div>
+            <div class="form-group">
+                <label class="form-label">Horário</label>
+                <input type="time" id="water-time" class="form-input" value="${timeStr}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Fonte (opcional)</label>
+                <input type="text" id="water-source" class="form-input" placeholder="Ex: garrafa, treino...">
+            </div>
+            <button class="btn btn-primary w-full" onclick="addWater()">Registrar</button>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+    $('water-vol').select();
+}
+
+function addWater() {
+    const vol = parseInt($('water-vol').value) || 0;
+    if (vol <= 0) return toast('Informe o volume', true);
+    const time = $('water-time').value;
+    const source = $('water-source').value.trim();
+    const dt = today();
+
+    if (!D.water[dt]) D.water[dt] = [];
+    D.water[dt].push({ time, vol, source, auto: false });
+    D.water[dt].sort((a, b) => a.time.localeCompare(b.time));
+
+    save();
+    document.querySelector('.modal-overlay').remove();
+    toast(`💧 ${vol}ml registrado`);
+    rHydro();
+}
+
+// ========== RENDER: GOALS ==========
+function rGoals() {
+    if (!D) return;
+    const dt = today();
+    const dayType = getDayType(dt);
+
+    $('goals-body').innerHTML = `
+        <div class="goal-toggle">
+            <button class="goal-toggle-btn ${dayType === 'treino' ? 'active' : ''}" onclick="setDayType('${dt}','treino');rGoals()">🏋️ Dia de Treino</button>
+            <button class="goal-toggle-btn ${dayType === 'descanso' ? 'active' : ''}" onclick="setDayType('${dt}','descanso');rGoals()">😴 Dia de Descanso</button>
+        </div>
+
+        <div class="card mb-12">
+            <div class="goal-card">
+                <div class="goal-icon" style="background:var(--green-bg);color:var(--green)">🔥</div>
+                <div style="flex:1"><div class="goal-label">Calorias</div><div class="goal-value">${fmtN(D.goals[dayType].kcal)} kcal</div></div>
+                <button class="btn btn-outline btn-sm" onclick="editGoal('kcal','${dayType}')">Editar</button>
+            </div>
+            <div class="goal-card">
+                <div class="goal-icon" style="background:var(--yellow-bg);color:var(--yellow)">🎯</div>
+                <div style="flex:1"><div class="goal-label">Proteína</div><div class="goal-value">${D.goals[dayType].prot}g</div></div>
+                <button class="btn btn-outline btn-sm" onclick="editGoal('prot','${dayType}')">Editar</button>
+            </div>
+            <div class="goal-card" style="margin-bottom:0">
+                <div class="goal-icon" style="background:var(--blue-bg);color:var(--blue)">💧</div>
+                <div style="flex:1"><div class="goal-label">Hidratação</div><div class="goal-value">${fmtN(D.goals[dayType].water)} ml</div></div>
+                <button class="btn btn-outline btn-sm" onclick="editGoal('water','${dayType}')">Editar</button>
+            </div>
+        </div>
+
+        <div class="card mb-12">
+            <div class="card-title">Regras Automáticas</div>
+            ${['Tipo de dia detectado pelo dia da semana (Dom = descanso)',
+               'Metas ajustam automaticamente (treino vs descanso)',
+               'Alerta se carne < 150g no almoço',
+               'Alerta se queijo > 70g por refeição',
+               'Alerta se proteína < 60% às 14h',
+               'Gap hidratação: alerta se sem água por 2h+ (até 17h)'].map(r => `
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+                <span style="color:var(--green)">✓</span>
+                <span style="font-size:12px;color:var(--text)">${r}</span>
+            </div>`).join('')}
+        </div>
+
+        <div class="card mb-12">
+            <div class="card-title">Sinais Vitais Hoje</div>
+            <div class="form-group">
+                <label class="form-label">Peso (kg)</label>
+                <input type="number" class="form-input" value="${D.peso}" step="0.1" onchange="D.peso=parseFloat(this.value);save()">
+            </div>
+            <div style="display:flex;gap:8px">
+                <div class="form-group" style="flex:1">
+                    <label class="form-label">PA (ex: 112/71)</label>
+                    <input type="text" class="form-input" value="${(D.vitals[today()] || {}).pa || ''}" placeholder="120/80" onchange="saveVital('pa',this.value)">
+                </div>
+                <div class="form-group" style="flex:1">
+                    <label class="form-label">FC Repouso</label>
+                    <input type="number" class="form-input" value="${(D.vitals[today()] || {}).fc || ''}" placeholder="76" onchange="saveVital('fc',parseInt(this.value))">
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-12">
+            <div class="card-title">Configurações</div>
+            <div class="cfg-item">
+                <div><div class="cfg-label">Tema escuro</div><div class="cfg-desc">Alternar entre claro e escuro</div></div>
+                <button class="toggle ${D.theme === 'dark' ? 'on' : ''}" onclick="toggleTheme()"></button>
+            </div>
+            <div class="cfg-item">
+                <div><div class="cfg-label">Versão</div><div class="cfg-desc">v${APP_VERSION}</div></div>
+            </div>
+            <div class="cfg-item" style="border:none">
+                <div><div class="cfg-label">Conta</div><div class="cfg-desc">${U ? U.email : ''}</div></div>
+                <button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="logout()">Sair</button>
+            </div>
+        </div>
+    `;
+}
+
+function editGoal(field, dayType) {
+    const labels = { kcal: 'Calorias (kcal)', prot: 'Proteína (g)', water: 'Hidratação (ml)' };
+    const val = prompt(labels[field] + ':', D.goals[dayType][field]);
+    if (val !== null && !isNaN(parseFloat(val))) {
+        D.goals[dayType][field] = parseFloat(val);
+        save();
+        rGoals();
+        toast('Meta atualizada');
+    }
+}
+
+function saveVital(field, value) {
+    const dt = today();
+    if (!D.vitals[dt]) D.vitals[dt] = {};
+    D.vitals[dt][field] = value;
+    save();
+}
+
+function toggleTheme() {
+    D.theme = D.theme === 'dark' ? 'light' : 'dark';
+    document.body.classList.toggle('light', D.theme === 'light');
+    save();
+    rGoals();
+}
+
+// ========== SERVICE WORKER ==========
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(e => console.log('SW error:', e));
+}
+
+// ========== AUTO-SAVE INTERVAL ==========
+setInterval(() => { if (U && D) save(); }, 120000); // 2 min
+</script>
 </body>
 </html>
