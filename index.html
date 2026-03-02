@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#059669">
-<title>Gileno - GestÃ£o SaÃºde</title>
+<title>Gileno - Gestão Saúde</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 
@@ -16,7 +16,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 
 <style>
-/* ========== RESET & VARIÃVEIS ========== */
+/* ========== RESET & VARIÁVEIS ========== */
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
 --primary:#059669;--primary-light:#d1fae5;--primary-dark:#064e3b;
@@ -205,7 +205,7 @@ body:not(.light) .food-add-btn{background:var(--green-bg);color:var(--green)}
 .chip.active{background:var(--primary-light);color:var(--primary-dark);border-color:var(--primary);font-weight:700}
 body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);border-color:var(--green)}
 
-/* ========== ADDED, ITEMQ ========== */
+/* ========== ADDED ITEMS ========== */
 .added-item{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)}
 .added-item:last-child{border-bottom:none}
 .added-remove{width:24px;height:24px;border-radius:6px;background:var(--red-bg);color:var(--red);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
@@ -219,9 +219,9 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
 
 <!-- ========== PAGE: LOGIN ========== -->
 <div id="page-login" class="page active">
-    <div class="login-logo">ð¥</div>
-    <div class="login-title">GestÃ£o SaÃºde</div>
-    <div class="login-sub">SuÃ­te Gileno</div>
+    <div class="login-logo">🏥</div>
+    <div class="login-title">Gestão Saúde</div>
+    <div class="login-sub">Suíte Gileno</div>
     <div class="login-box">
         <div class="form-group">
             <label class="form-label">Email</label>
@@ -229,7 +229,7 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
         </div>
         <div class="form-group">
             <label class="form-label">Senha</label>
-            <input type="password" id="login-pass" class="form-input" placeholder="â¢â¢â¢â¢â¢â¢â¢â¢">
+            <input type="password" id="login-pass" class="form-input" placeholder="••••••••">
         </div>
         <button class="btn btn-primary w-full" onclick="loginEmail()">Entrar</button>
         <div class="login-divider">ou</div>
@@ -237,7 +237,7 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
             <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="G"> Entrar com Google
         </button>
         <p style="margin-top:16px;font-size:12px;color:var(--text3);text-align:center">
-            NÃ£o tem conta? <a href="#" onclick="registerEmail()">Criar conta</a>
+            Não tem conta? <a href="#" onclick="registerEmail()">Criar conta</a>
         </p>
     </div>
 </div>
@@ -251,8 +251,8 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
 <!-- ========== PAGE: ADD MEAL ========== -->
 <div id="page-meal" class="page">
     <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
-        <button class="btn-icon btn-outline" onclick="showPage('dash')" style="width:36px;height:36px">â</button>
-        <div style="flex:1"><div style="font-size:16px;font-weight:700">Registrar RefeiÃ§Ã£o</div></div>
+        <button class="btn-icon btn-outline" onclick="showPage('dash')" style="width:36px;height:36px">←</button>
+        <div style="flex:1"><div style="font-size:16px;font-weight:700">Registrar Refeição</div></div>
         <button class="btn btn-primary btn-sm" onclick="saveMeal()">Salvar</button>
     </div>
     <div class="page-body" id="meal-body"></div>
@@ -261,106 +261,160 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
 <!-- ========== PAGE: HYDRATION ========== -->
 <div id="page-hydro" class="page">
     <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
-        <button class="btn-icon btn-outline" onclick="showPage('dash')" style="width:36px;height:36px">â</button>
+        <button class="btn-icon btn-outline" onclick="showPage('dash')" style="width:36px;height:36px">←</button>
         <div style="flex:1">
-            <div style="font-size:16px;font-weight:700">HidrataÃ§Ã£o</div>
-            <div style="font-size:11px;color:var(--text3)"~>EstratÃ©gia BPH â Corte 17h</div>
+            <div style="font-size:16px;font-weight:700">Hidratação</div>
+            <div style="font-size:11px;color:var(--text3)">Estratégia BPH — Corte 17h</div>
         </div>
-        <button class="btn btn-primary btn-sm" onclick="openAddWater()">+ Ãgua</button>
+        <button class="btn btn-primary btn-sm" onclick="openAddWater()">+ Água</button>
     </div>
     <div class="page-body" id="hydro-body"></div>
-    
 </div>
 
 <!-- ========== PAGE: GOALS ========== -->
 <div id="page-goals" class="page">
     <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
-        <button class="btn-icon btn-outline" onclick="showPage('dash')" style="width:36px;height:36px">â</button>
+        <button class="btn-icon btn-outline" onclick="showPage('dash')" style="width:36px;height:36px">←</button>
         <div style="font-size:16px;font-weight:700">Metas & Config</div>
     </div>
     <div class="page-body" id="goals-body"></div>
 </div>
 
-<!-- ========== BOTTOM NAV========== -->
+<!-- ========== BOTTOM NAV ========== -->
 <div class="bottom-nav hidden" id="bottom-nav">
     <button class="nav-item active" onclick="showPage('dash')" data-page="dash">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-        <span>InÃ­cio</span>
+        <span>Início</span>
     </button>
     <button class="nav-item" onclick="showPage('meal')" data-page="meal">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20.5c0 1.1-.9 2-2 2H5a2 2 0 0 1-2-2V9l7-6 7 6z"/></svg>
-        <span>RefeiÃ§Ã£o</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3zm0 0v7"/></svg>
+        <span>Refeição</span>
     </button>
     <button class="nav-item" onclick="showPage('hydro')" data-page="hydro">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15v-4H8l4-9v4h2l-4 9z"/></svg>
-        <span>HidrataÃ§Ã£o</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>
+        <span3EÁgua</span>
     </button>
     <button class="nav-item" onclick="showPage('goals')" data-page="goals">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1 1 0 0 0 .16 1.1L21 17.72a.8.8 0 0 1 0 1.11l-1.56 1.56a.8.8 0 0 1-1.11 0l-1.62-1.46a1 1 0 0 0-1.1-.16l-.52.23a1 1 0 0 0-.67.97V21a.8.8 0 0 1-.8.8h-2.2a.8.8 0 0 1-.8-.8v-1.02a1 1 0 0 0-.67-.97l-.52-.23a1 1 0 0 0-1.09.16l-1.63 1.46a.8.8 0 0 1-1.11 0L4.94 19a.8.8 0 0 1 0-1.11l1.45-1.62a1 1 0 0 0 .16-1.09l-.23-.52a1 1 0 0 0-.97-.66H3a.8.8 0 0 1-.8-.8v-2.2a.8.8 0 0 1 .8-.8h1.02a1 1 0 0 0 .97-.67l.23-.52a1 1 0 0 0-.16-1.1L4.62 7.72a.8.8 0 0 1 0-1.11l1.56-1.56a.8.8 0 0 1 1.11 0l1.62 1.46a1 1 0 0 0 1.09.16l.52-.23A1 1 0 0 0 11 5.43V3.79a.8.8 0 0 1 .8-.8h2.2a.8.8 0 0 1 .8.8v1.64a1 1 0 0 0 .66.97l.52.23a1 1 0 0 0 1.09-.16l1.63-1.46a.8.8 0 0 1 1.11 0l1.56 1.56a.8.8 0 0 1 0 1.11l-1.45 1.62a1 1 0 0 0-.16 1.1l.23.52a1 1 0 0 0 .97.67H21a.8.8 0 0 1 .8.8v2.2a.8.8 0 0 1-.8.8h-1.02a1 1 0 0 0-.97.67z"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
         <span>Metas</span>
     </button>
 </div>
 
 <script>
-// ========== CONFIG & STATE ==========
-const FC = {
-  apiKey: 'AIzaSyB10Lq_UXxZH_uicWAPR-kx3yFymP3wAk',
-  authDomain: 'gileno-gestao-saude.firebaseapp.com',
-  projectId: 'gileno-gestao-saude',
-  storageBucket: 'gileno-gestao-saude.firebasestorage.app',
-  messagingSenderId: '110174674946',
-  appId: '1:110174674946:web:16c0c1f3504fb0b54f45d9'
-  
+// ========== FIREBASE CONFIG ==========
+const firebaseConfig = {
+    apiKey: "AIzaSyAgUD1MkFsrIoLyMgSo76LyfOUh6cpSVrI",
+    authDomain: "gileno-gestao-saude.firebaseapp.com",
+    projectId: "gileno-gestao-saude",
+    storageBucket: "gileno-gestao-saude.firebasestorage.app",
+    messagingSenderId: "400772585840",
+    appId: "1:400772585840:web:850435acce6e16df3cd7b5"
 };
-
-// Init Firebase
-firebase.initializeApp(FC);
+firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
 
-// State
-let UID = null;
-let D = { days: {}, dayType: {}, goals: {}, hydration: {}, cfg: {} };
-let CurrentDate = null;
+// ========== VERSÃO ==========
+const APP_VERSION = '1.0.0';
 
-// DATA CONSTANTS
+// ========== GLOBALS ==========
+let U = null; // user
+let D = null; // data object
+let cPage = 'login';
+let editingMealIndex = -1;
+let selectedMealSlot = 'almoco';
+
+// ========== HELPERS ==========
+const $ = id => document.getElementById(id);
+const uid = () => Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
+const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); };
+const fmt = v => v.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 1 });
+const fmtN = v => Math.round(v).toLocaleString('pt-BR');
+
+function toast(msg, isError) {
+    const t = document.createElement('div');
+    t.className = 'toast' + (isError ? ' error' : '');
+    t.textContent = msg;
+    $('toast-container').appendChild(t);
+    setTimeout(() => t.remove(), 3000);
+}
+
+function dateLabel(dateStr) {
+    if (!dateStr) dateStr = today();
+    const [y,m,d] = dateStr.split('-').map(Number);
+    const dt = new Date(y, m-1, d);
+    const dias = ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
+    const meses = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+    return dias[dt.getDay()] + ', ' + d + ' ' + meses[m-1];
+}
+
+function getDayOfWeek(dateStr) {
+    if (!dateStr) dateStr = today();
+    const [y,m,d] = dateStr.split('-').map(Number);
+    return new Date(y, m-1, d).getDay();
+}
+
+function currentHour() { return new Date().getHours(); }
+
+// ========== DATA STRUCTURE ==========
+function defaultD() {
+    return {
+        // Profile
+        userName: 'Gileno',
+        peso: 71.8,
+        metaPeso: [65, 68],
+        // Meals by date: { '2026-03-01': { slots: { pretreino: { items: [...], time: '05:20' }, ... } } }
+        days: {},
+        // Water by date: { '2026-03-01': [ { time: '05:15', vol: 500, source: 'Dexilant', auto: true }, ... ] }
+        water: {},
+        // Goals
+        goals: {
+            treino: { kcal: 2000, prot: 180, water: 4750 },
+            descanso: { kcal: 1450, prot: 160, water: 4250 }
+        },
+        // Day type: { '2026-03-01': 'treino' }
+        dayType: {},
+        // Vitals: { '2026-03-01': { peso: 71.8, pa: '112/71', fc: 76 } }
+        vitals: {},
+        // Foods database
+        foods: getDefaultFoods(),
+        // Settings
+        theme: 'dark',
+        bphCutoff: 17
+    };
+}
+
+function getDefaultFoods() {
+    return [
+        { id: 'whey', name: 'Whey Probiótica', ref: 60, unit: 'g', kcal: 238.5, prot: 36, nota: '3 scoops de 40g' },
+        { id: 'banana', name: 'Banana', ref: 100, unit: 'g', kcal: 89, prot: 1.1, nota: 'Pré-treino (70-95g)' },
+        { id: 'mamao', name: 'Mamão', ref: 100, unit: 'g', kcal: 40, prot: 0.5, nota: 'Café diário' },
+        { id: 'ovos_coz', name: 'Ovos cozidos', ref: 50, unit: 'g', kcal: 74, prot: 6.2, nota: '1 unidade (~50g)' },
+        { id: 'ovos_mex', name: 'Ovos mexidos', ref: 100, unit: 'g', kcal: 150, prot: 12, nota: '~2 ovos' },
+        { id: 'queijo_coalho', name: 'Queijo coalho', ref: 100, unit: 'g', kcal: 333, prot: 20, nota: 'Uso: 40-65g' },
+        { id: 'carne_moida', name: 'Carne moída', ref: 100, unit: 'g', kcal: 225, prot: 26, nota: 'Meta: 150g+ almoço' },
+        { id: 'frango', name: 'Frango desfiado', ref: 100, unit: 'g', kcal: 163, prot: 22, nota: 'Alternativa almoço' },
+        { id: 'arroz', name: 'Arroz branco', ref: 100, unit: 'g', kcal: 130, prot: 2.5, nota: 'Porção: 43-65g' },
+        { id: 'feijao', name: 'Feijão carioca', ref: 100, unit: 'g', kcal: 75, prot: 5, nota: 'Porção: 54-89g' },
+        { id: 'salada', name: 'Salada mista', ref: 100, unit: 'g', kcal: 20, prot: 1.4, nota: 'Meta: 80-100g' }
+    ];
+}
+
 const MEAL_SLOTS = [
-  { id: 'caÎIË[YN	ÐØY°êHHX[0èÉË[YN	Ì
-Ì	ÈKÈY	ØØYIË[YN	ÐØY°êH°êK]Z[ÉË[YN	Ì
-ÎL	ÈKÈY	ÜIË[YN	Ô°êK]Z[ÉË[YN	Ì	ÈKÈY	ÛYX[IË[YN	Ð[[ðéÛÉË[YN	ÌL	ÈKÈY	ÜÛXÚÌIË[YN	Ó[ÚHLÚ	Ë[YN	ÌLÎ	ÈKÈY	ÜÛXÚÌË[YN	Ó[ÚHMZ	Ë[YN	ÌMN	ÈKÈY	ÜÜÉË[YN	Ô0ìÜË]Z[ÉË[YN	ÌNN	ÈKÈY	ÛYX[Ë[YN	Ò[\Ë[YN	Ì	ÈBNÂÛÛÝQ×ÔÓUSHÂÈY	Û[Ü[ÉË[YN	ÓX[0èÉË[YTÝ\
-[YQ[LKÈY	ØY\ÛÛË[YN	Õ\IË[YTÝ\L[YQ[MÈKÈY	Ù][[ÉË[YN	ÓÚ]IË[YTÝ\MË[YQ[ÈBNÂÛÛÝVWÕTTÈHÂÈY	ÝZ[ÉË[YN	ÑXHHZ[ÉËXÛÛ	ü'éd	ÈKÈY	Ù\ØØ[ÛÉË[YN	ÑXHH\ØØ[ÛÉËXÛÛ	ü'éâ	ÈBNÂÛÛÝÓÑÑUPTÑHHÂÈ[YN	Ð]ZXH
-ÉËØØ[MKÝ
-KØ\][]	ÜÜ±(ðèÛÉÈKÈ[YN	ÕÚ^HÝZ[ÌÉËØØ[LÝØ\]K[]	ÜØÛÛÜ	ÈKÈ[YN	Ð[[HMLÉËØØ[LÌËÝKØ\ÌË][]	Ý[YYIÈKÈ[YN	ÓÛÜÈHØ[[HÉËØØ[ÌÝ
+    { id: 'pretreino', name: 'Pré-treino', time: '05:20' },
+    { id: 'postreino', name: 'Pós-treino', time: '07:10' },
+    { id: 'cafe', name: 'Café da manhã', time: '09:15' },
+    { id: 'almoco', name: 'Almoço', time: '12:30' },
+    { id: 'lanche', name: 'Lanche', time: '16:00' },
+    { id: 'jantar', name: 'Jantar', time: '19:30' }
+];
 
-Ø\]
-K[]	ÜÜ°éðèÛÉÈKÈ[YN	Ð\Þ[YÜ[LÉËØØ[LLÝØ\Ë]K[]	ÜÜ°éðèÛÉÈKÈ[YN	ÑZZ°èÛÈÉËØØ[LÝ
-Ø\M][]	ÜÜ°éðèÛÉÈKÈ[YN	Ô0èÈH]H
-LÉËØØ[LÌKÝ
-KØ\]K[]	Ù]XIÜÈKÈ[YN	ÓÝÈ[Z\ÉËØØ[
-ÍKÝ
-ËØ\]
-KË[]	Ý[YYIÈKÈ[YN	ÐÛ\HHÝÉËØØ[MËÝËØ\][]	Ý[YYIÈKÈ[YN	ÓZ]H\Û]YÈ[	ËØØ[
-ÌÝ
-Ø\K][]	ÜÜ°éðèÛÉÈKÈ[YN	Ö[ÙÝ\HÜYÛÈLÉËØØ[MËÝKØ\Ë]
-KË[]	Ý[YYIÈKÈ[YN	Ô]YZZÈ[ÛÈ
-ÉËØØ[
-ÌÝLKØ\][]	Ù]XIÈKÈ[YN	Ð[Y[Ú[HÌÉËØØ[MÍÝØ\
-K]MK[]	ÜÜ±(ðèÛÉÈKÈ[YN	Ð\ÜØYÜMMÉËØØ[MÝ
-KØ\]
-K[]	Ù[0êIÈKÈ[YN	Ð[[ÛYØ\ÈHÈ
-ÉËØØ[
-ÝLØ\K]K[]	Ý[YY\ÉÈKÈ[YN	Ð]]KQØÙHMLÉËØØ[LKÝØ\Ì]K[]	ÜÜ°éðèÛÉÈKÈ[YN	ÓXXðèÛÈNÉËØØ[MKÝKØ\K]Ë[]	Ý[YYIÈKÈ[YN	Ô\ÝHH[Y[Ú[HÉËØØ[LÝ
-KØ\Ë]L[]	ØÛÛ\ÈKÈ[YN	Ð]]H[Û\ØHMLÉËØØ[LLËÝKØ\]K[]	ÜÜ°éðèÛÉÈKÈ[YN	ÓX\ÜØH[YÜ[LÉËØØ[LÍËÝ
-KØ\Ë]K[]	ÜÜ±(ðèÛÉÈKÈ[YN	ÔØ[pèÛÈLÉËØØ[LÌKÝØ\]
-K[]	Ù[0êIÈKÈ[YN	Ð][H[H0èYÝXHLÉËØØ[MËÝËØ\]K[]	Û]IÈKÈ[YN	Ð°êH°êKUZ[È[	ËØØ[
-ÝØ\MË][]	ØØ[XØIÈKNÂÛÛÝQ×ÑÓÐSHÂÝ[LÝ]ÙMËÝ]YÞN	Ð	Ë\[ÙÎÂÈY	Û[Ü[ÉË[YN	ÓX[0èÉË[YTÝ\
-[YQ[L[Z]LÝN	ÒY]péðèÛÈ]IÈKÈY	ØY\ÛÛË[YN	Õ\IË[YTÝ\L[YQ[MË[Z]LLÝN	ÒY]péðèÛÈ]IÈKÈY	Ù][[ÉË[YN	ÓÚ]H
-
-IËÝN	ÐÛÜH\0ìÜÈMÚ	Ë[YTÝ\MË[YQ[Ë[Z]LÝ]YÞN	ü'å$\[\ÈYYX, target: 2250, strategy: 'Dexilant 500ml + treino 1.750ml' },
-    { id: 'bloco2', period: '07:00 â 09:30', startH: 7, endH: 9.5, target: 710, strategy: 'Whey 420ml + medicaÃ§Ãµes 250ml' },
-    { id: 'bloco3', period: '09:30 â 13:00', startH: 9.5, endH: 13, target: 500, strategy: 'â ï¸ Gap crÃ­tico! Lembrete 11h' },
-    { id: 'bloco4', period: '13:00 â 17:00', startH: 13, endH: 17, target: 1170, strategy: 'Lembretes 14h, 15h, 16h, 17h' },
-    { id: 'bloco5', period: '17:00+', startH: 17, endH: 24, target: 250, strategy: 'ð Apenas medicaÃ§Ã£o noturna (BPH)' }
+const HYDRO_BLOCKS = [
+    { id: 'bloco1', period: '05:00 – 07:00', startH: 5, endH: 7, target: 2250, strategy: 'Dexilant 500ml + treino 1.750ml' },
+    { id: 'bloco2', period: '07:00 – 09:30', startH: 7, endH: 9.5, target: 710, strategy: 'Whey 420ml + medicações 250ml' },
+    { id: 'bloco3', period: '09:30 – 13:00', startH: 9.5, endH: 13, target: 500, strategy: '⚠️ Gap crítico! Lembrete 11h' },
+    { id: 'bloco4', period: '13:00 – 17:00', startH: 13, endH: 17, target: 1170, strategy: 'Lembretes 14h, 15h, 16h, 17h' },
+    { id: 'bloco5', period: '17:00+', startH: 17, endH: 24, target: 250, strategy: '🔒 Apenas medicação noturna (BPH)' }
 ];
 
 // ========== FIRESTORE ==========
@@ -405,7 +459,7 @@ function loginEmail() {
     if (!email || !pass) return toast('Preencha email e senha', true);
     auth.signInWithEmailAndPassword(email, pass).catch(e => {
         if (e.code === 'auth/user-not-found') {
-            toast('UsuÃ¡rio nÃ£o encontrado', true);
+            toast('Usuário não encontrado', true);
         } else if (e.code === 'auth/wrong-password') {
             toast('Senha incorreta', true);
         } else {
@@ -418,14 +472,25 @@ function registerEmail() {
     const email = $('login-email').value.trim();
     const pass = $('login-pass').value;
     if (!email || !pass) return toast('Preencha email e senha', true);
-    if (pass.length < 6) return toast('Senha mÃ­nima: 6 caracteres', true);
+    if (pass.length < 6) return toast('Senha mínima: 6 caracteres', true);
     auth.createUserWithEmailAndPassword(email, pass).catch(e => toast('Erro: ' + e.message, true));
 }
 
 function loginGoogle() {
     const provider = new firebase.auth.GoogleAuthProvider();
-    auth.signInWithPopup(provider).catch(e => toast('Erro: ' + e.message, true));
+    auth.signInWithRedirect(provider).catch(e => toast('Erro: ' + e.message, true));
 }
+
+// Handle redirect result
+auth.getRedirectResult().then(result => {
+    if (result.user) {
+        // Login successful, onAuthStateChanged will handle the rest
+    }
+}).catch(e => {
+    if (e.code !== 'auth/redirect-cancelled-by-user') {
+        toast('Erro no login: ' + e.message, true);
+    }
+});
 
 function logout() {
     if (confirm('Sair da conta?')) auth.signOut();
@@ -482,7 +547,7 @@ function setDayType(dt, type) {
     save();
 }
 
-function getGoals(dv) {
+function getGoals(dt) {
     return D.goals[getDayType(dt)] || D.goals.treino;
 }
 
@@ -527,10 +592,10 @@ function rDash() {
     $('dash-header').innerHTML = `
         <div class="header-top">
             <div>
-                <div class="header-app">Gileno â GestÃ£o SaÃºde</div>
+                <div class="header-app">Gileno — Gestão Saúde</div>
                 <div class="header-date">${dateLabel(dt)}</div>
             </div>
-            <div class="header-badge" onclick="toggleDayType()">${dayType === 'treino' ? 'ðï¸ Treino' : 'ð´ Descanso'}</div>
+            <div class="header-badge" onclick="toggleDayType()">${dayType === 'treino' ? '🏋️ Treino' : '😴 Descanso'}</div>
         </div>
         <div class="header-stats">
             <div class="header-stat">
@@ -540,12 +605,12 @@ function rDash() {
             </div>
             <div class="header-stat">
                 <div class="header-stat-label">FC Rep.</div>
-                <div class="header-stat-value">${vitals.fc || 'â'}</div>
+                <div class="header-stat-value">${vitals.fc || '—'}</div>
                 <div class="header-stat-unit">bpm</div>
             </div>
             <div class="header-stat">
                 <div class="header-stat-label">PA</div>
-                <div class="header-stat-value">${vitals.pa || 'â'}</div>
+                <div class="header-stat-value">${vitals.pa || '—'}</div>
                 <div class="header-stat-unit">mmHg</div>
             </div>
         </div>
@@ -562,7 +627,7 @@ function rDash() {
     const waterEntries = getWaterEntries(dt);
     const lastWater = waterEntries.length > 0 ? waterEntries[waterEntries.length - 1] : null;
 
-    // Gap de hidrataÃ§Ã£o
+    // Gap de hidratação
     if (hour >= 10 && hour < 17) {
         const recentWater = waterEntries.filter(e => {
             const h = parseInt(e.time.split(':')[0]);
@@ -570,18 +635,18 @@ function rDash() {
         });
         if (recentWater.length === 0) {
             alerts += `<div class="alert alert-warn">
-                <div class="alert-icon">â ï¸</div>
-                <div><div class="alert-title">Gap de hidrataÃ§Ã£o!</div>
-                <div class="alert-text">Sem registro de Ã¡gua recente. Beba 250ml agora.</div></div>
+                <div class="alert-icon">⚠️</div>
+                <div><div class="alert-title">Gap de hidratação!</div>
+                <div class="alert-text">Sem registro de água recente. Beba 250ml agora.</div></div>
             </div>`;
         }
     }
 
-    // ProteÃ­na abaixo
+    // Proteína abaixo
     if (hour >= 14 && totalProt < goals.prot * 0.6) {
         alerts += `<div class="alert alert-warn">
-            <div class="alert-icon">ð¥©</div>
-            <div><div class="alert-title">ProteÃ­na abaixo de 60%</div>
+            <div class="alert-icon">🥩</div>
+            <div><div class="alert-title">Proteína abaixo de 60%</div>
             <div class="alert-text">Reforce no lanche e jantar. Faltam ${fmtN(goals.prot - totalProt)}g.</div></div>
         </div>`;
     }
@@ -589,8 +654,8 @@ function rDash() {
     // Calorias abaixo
     if (hour >= 16 && totalKcal < goals.kcal * 0.65 && dayType === 'treino') {
         alerts += `<div class="alert alert-warn">
-            <div class="alert-icon">ð¥</div>
-            <div><div class="alert-title">DÃ©ficit calÃ³rico</div>
+            <div class="alert-icon">🔥</div>
+            <div><div class="alert-title">Déficit calórico</div>
             <div class="alert-text">Apenas ${Math.round(kcalPct)}% da meta. Dia de treino precisa de mais calorias.</div></div>
         </div>`;
     }
@@ -634,8 +699,8 @@ function rDash() {
                 <div style="height:40px;border-radius:6px;position:relative;overflow:hidden;background:var(--border);margin-bottom:4px">
                     <div style="position:absolute;bottom:0;width:100%;height:${pct}%;background:${color};border-radius:6px;opacity:${pct >= 100 ? 1 : 0.5}"></div>
                 </div>
-                <div style="font-size:9px;color:var(--text3)">${b.period.split('â')[0].trim()}</div>
-                <div style="font-size:9px;font-weight:600;color:${vol > 0 ? 'var(--blue)' : 'var(--text3)'}">${vol > 0 ? vol : 'â'}</div>
+                <div style="font-size:9px;color:var(--text3)">${b.period.split('–')[0].trim()}</div>
+                <div style="font-size:9px;font-weight:600;color:${vol > 0 ? 'var(--blue)' : 'var(--text3)'}">${vol > 0 ? vol : '—'}</div>
             </div>`;
     });
 
@@ -644,8 +709,8 @@ function rDash() {
         <!-- Progresso -->
         <div class="card mb-12">
             <div style="display:flex;justify-content:space-between;margin-bottom:12px">
-                <span class="card-title" style="margin:0">Progresso DiÃ¡rio</span>
-                <span style="font-size:11px;color:var(--text3)">${fmtN(goals.kcal)} kcal â¢ ${goals.prot}g prot</span>
+                <span class="card-title" style="margin:0">Progresso Diário</span>
+                <span style="font-size:11px;color:var(--text3)">${fmtN(goals.kcal)} kcal • ${goals.prot}g prot</span>
             </div>
             <div class="mb-8">
                 <div style="display:flex;justify-content:space-between;margin-bottom:4px">
@@ -656,34 +721,34 @@ function rDash() {
             </div>
             <div class="mb-8">
                 <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-                    <span style="font-size:12px;color:var(--text2)">ProteÃ­na</span>
+                    <span style="font-size:12px;color:var(--text2)">Proteína</span>
                     <span style="font-size:12px;font-weight:600">${fmt(totalProt)}g / ${goals.prot}g</span>
                 </div>
                 <div class="progress-bar"><div class="progress-fill" style="width:${protPct}%;background:var(--accent)"></div></div>
             </div>
             <div>
                 <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-                    <span style="font-size:12px;color:var(--text2)">HidrataÃ§Ã£o</span>
+                    <span style="font-size:12px;color:var(--text2)">Hidratação</span>
                     <span style="font-size:12px;font-weight:600">${fmtN(totalWater)} / ${fmtN(goals.water)} ml</span>
                 </div>
                 <div class="progress-bar"><div class="progress-fill" style="width:${waterPct}%;background:var(--blue)"></div></div>
             </div>
         </div>
 
-        <!-- RefeiÃ§Ãµes -->
+        <!-- Refeições -->
         <div class="card mb-12">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-                <span class="card-title" style="margin:0">RefeiÃ§Ãµes</span>
+                <span class="card-title" style="margin:0">Refeições</span>
                 <button class="btn btn-primary btn-sm" onclick="showPage('meal')">+ Registrar</button>
             </div>
             ${mealsHtml}
         </div>
 
-        <!-- HidrataÃ§Ã£o mini -->
+        <!-- Hidratação mini -->
         <div class="card" onclick="showPage('hydro')" style="cursor:pointer">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-                <span class="card-title" style="margin:0">ð§ HidrataÃ§Ã£o</span>
-                <span style="font-size:11px;color:var(--blue);font-weight:600">Ver detalhes â</span>
+                <span class="card-title" style="margin:0">💧 Hidratação</span>
+                <span style="font-size:11px;color:var(--blue);font-weight:600">Ver detalhes →</span>
             </div>
             <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px">
                 ${hydroMini}
@@ -697,7 +762,7 @@ function toggleDayType() {
     const current = getDayType(dt);
     setDayType(dt, current === 'treino' ? 'descanso' : 'treino');
     rDash();
-    toast('Dia alterado para ' + (getDayType(dt) === 'treino' ? 'ðï¸ Treino' : 'ð´ Descanso'));
+    toast('Dia alterado para ' + (getDayType(dt) === 'treino' ? '🏋️ Treino' : '😴 Descanso'));
 }
 
 function openMealSlot(slotId) {
@@ -727,7 +792,7 @@ function rMeal() {
             totalProt += item.prot || 0;
             itemsHtml += `
                 <div class="added-item">
-                    <button class="added-remove" onclick="removeMealItem(${i})">Ã</button>
+                    <button class="added-remove" onclick="removeMealItem(${i})">×</button>
                     <div style="flex:1">
                         <div style="font-size:13px;font-weight:600;color:var(--text)">${item.name}</div>
                         <div style="font-size:11px;color:var(--text3)">${fmt(item.grams)}g</div>
@@ -747,7 +812,7 @@ function rMeal() {
             <div class="food-item" onclick="openAddFood('${f.id}')">
                 <div class="food-info">
                     <div class="food-name">${f.name}</div>
-                    <div class="food-detail">Ref: ${f.ref}${f.unit} â¢ ${fmt(f.kcal)} kcal â¢ ${fmt(f.prot)}g prot</div>
+                    <div class="food-detail">Ref: ${f.ref}${f.unit} • ${fmt(f.kcal)} kcal • ${fmt(f.prot)}g prot</div>
                 </div>
                 <div class="food-add-btn">+</div>
             </div>`;
@@ -758,7 +823,7 @@ function rMeal() {
 
         ${slot.items && slot.items.length > 0 ? `
         <div class="card mb-12">
-            <div class="card-title">Itens â ${MEAL_SLOTS.find(s=>s.id===selectedMealSlot).name}</div>
+            <div class="card-title">Itens — ${MEAL_SLOTS.find(s=>s.id===selectedMealSlot).name}</div>
             ${itemsHtml}
             <div class="added-total">
                 <span>Total</span>
@@ -785,7 +850,7 @@ function filterFoods() {
             <div class="food-item" onclick="openAddFood('${f.id}')">
                 <div class="food-info">
                     <div class="food-name">${f.name}</div>
-                    <div class="food-detail">Ref: ${f.ref}${f.unit} â¢ ${fmt(f.kcal)} kcal â¢ ${fmt(f.prot)}g prot</div>
+                    <div class="food-detail">Ref: ${f.ref}${f.unit} • ${fmt(f.kcal)} kcal • ${fmt(f.prot)}g prot</div>
                 </div>
                 <div class="food-add-btn">+</div>
             </div>`;
@@ -804,11 +869,11 @@ function openAddFood(foodId) {
         <div class="modal-box">
             <div class="modal-header">
                 <h3>${food.name}</h3>
-                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">Ã</button>
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
             </div>
             <p style="font-size:12px;color:var(--text3);margin-bottom:12px">Ref: ${food.ref}${food.unit} = ${fmt(food.kcal)} kcal / ${fmt(food.prot)}g prot</p>
             <div class="form-group">
-                <label class="form-label">Quantidade (gramas)</label>
+   "0            <label class="form-label">Quantidade (gramas)</label>
                 <input type="number" id="food-grams" class="form-input" value="${food.ref}" inputmode="decimal" autofocus>
             </div>
             <div id="food-calc" style="font-size:13px;color:var(--text2);margin-bottom:16px">
@@ -867,7 +932,7 @@ function removeMealItem(index) {
 
 function saveMeal() {
     save();
-    toast('RefeiÃ§Ã£o salva!');
+    toast('Refeição salva!');
     showPage('dash');
 }
 
@@ -918,9 +983,9 @@ function rHydro() {
                 </div>
                 <div class="progress-bar" style="height:6px"><div class="progress-fill" style="width:${blockPct}%;background:${barColor}"></div></div>
                 ${entriesHtml ? `<div class="hydro-entries">${entriesHtml}</div>` : ''}
-                ${!isLocked && blockEntries.length === 0 ? `<button class="hydro-add-btn" onclick="openAddWater('${b.id}')">+ Registrar Ã¡gua</button>` : ''}
+                ${!isLocked && blockEntries.length === 0 ? `<button class="hydro-add-btn" onclick="openAddWater('${b.id}')">+ Registrar água</button>` : ''}
                 ${!isLocked && blockEntries.length > 0 ? `<button class="hydro-add-btn" onclick="openAddWater('${b.id}')">+ Adicionar mais</button>` : ''}
-                ${isLocked ? '<div class="hydro-locked">ð Bloqueado â EstratÃ©gia BPH ativa</div>' : ''}
+                ${isLocked ? '<div class="hydro-locked">🔒 Bloqueado — Estratégia BPH ativa</div>' : ''}
             </div>`;
     });
 
@@ -948,8 +1013,8 @@ function openAddWater(blockId) {
     overlay.innerHTML = `
         <div class="modal-box">
             <div class="modal-header">
-                <h3>Registrar Ãgua</h3>
-                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">Ã</button>
+                <h3>Registrar Água</h3>
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
             </div>
             ${block ? `<p style="font-size:12px;color:var(--text3);margin-bottom:12px">Bloco: ${block.period}</p>` : ''}
             <div class="form-group">
@@ -960,7 +1025,7 @@ function openAddWater(blockId) {
                 ${[150, 200, 250, 350, 500, 750].map(v => `<button class="btn btn-outline btn-sm" onclick="$('water-vol').value=${v}">${v}ml</button>`).join('')}
             </div>
             <div class="form-group">
-                <label class="form-label">HorÃ¡rio</label>
+                <label class="form-label">Horário</label>
                 <input type="time" id="water-time" class="form-input" value="${timeStr}">
             </div>
             <div class="form-group">
@@ -987,7 +1052,7 @@ function addWater() {
 
     save();
     document.querySelector('.modal-overlay').remove();
-    toast(`ð§ ${vol}ml registrado`);
+    toast(`💧 ${vol}ml registrado`);
     rHydro();
 }
 
@@ -999,38 +1064,38 @@ function rGoals() {
 
     $('goals-body').innerHTML = `
         <div class="goal-toggle">
-            <button class="goal-toggle-btn ${dayType === 'treino' ? 'active' : ''}" onclick="setDayType('${dt}','treino');rGoals()">ðï¸ Dia de Treino</button>
-            <button class="goal-toggle-btn ${dayType === 'descanso' ? 'active' : ''}" onclick="setDayType('${dt}','descanso');rGoals()">ð´ Dia de Descanso</button>
+            <button class="goal-toggle-btn ${dayType === 'treino' ? 'active' : ''}" onclick="setDayType('${dt}','treino');rGoals()">🏋️ Dia de Treino</button>
+            <button class="goal-toggle-btn ${dayType === 'descanso' ? 'active' : ''}" onclick="setDayType('${dt}','descanso');rGoals()">😴 Dia de Descanso</button>
         </div>
 
         <div class="card mb-12">
             <div class="goal-card">
-                <div class="goal-icon" style="background:var(--green-bg);color:var(--green)">ð¥</div>
+                <div class="goal-icon" style="background:var(--green-bg);color:var(--green)">🔥</div>
                 <div style="flex:1"><div class="goal-label">Calorias</div><div class="goal-value">${fmtN(D.goals[dayType].kcal)} kcal</div></div>
                 <button class="btn btn-outline btn-sm" onclick="editGoal('kcal','${dayType}')">Editar</button>
             </div>
             <div class="goal-card">
-                <div class="goal-icon" style="background:var(--yellow-bg);color:var(--yellow)">ð¯</div>
-                <div style="flex:1"><div class="goal-label">ProteÃ­na</div><div class="goal-value">${D.goals[dayType].prot}g</div></div>
+                <div class="goal-icon" style="background:var(--yellow-bg);color:var(--yellow)">🎯</div>
+                <div style="flex:1"><div class="goal-label">Proteína</div><div class="goal-value">${D.goals[dayType].prot}g</div></div>
                 <button class="btn btn-outline btn-sm" onclick="editGoal('prot','${dayType}')">Editar</button>
             </div>
             <div class="goal-card" style="margin-bottom:0">
-                <div class="goal-icon" style="background:var(--blue-bg);color:var(--blue)">ð§</div>
-                <div style="flex:1"><div class="goal-label">HidrataÃ§Ã£o</div><div class="goal-value">${fmtN(D.goals[dayType].water)} ml</div></div>
+                <div class="goal-icon" style="background:var(--blue-bg);color:var(--blue)">💧</div>
+                <div style="flex:1"><div class="goal-label">Hidratação</div><div class="goal-value">${fmtN(D.goals[dayType].water)} ml</div></div>
                 <button class="btn btn-outline btn-sm" onclick="editGoal('water','${dayType}')">Editar</button>
             </div>
         </div>
 
         <div class="card mb-12">
-            <div class="card-title">Regras AutomÃ¡ticas</div>
+            <div class="card-title">Regras Automáticas</div>
             ${['Tipo de dia detectado pelo dia da semana (Dom = descanso)',
                'Metas ajustam automaticamente (treino vs descanso)',
-               'Alerta se carne < 150g no almoÃ§o',
-               'Alerta se queijo > 70g por refeiÃ§Ã£o',
-               'Alerta se proteÃ­na < 60% Ã s 14h',
-               'Gap hidrataÃ§Ã£o: alerta se sem Ã¡gua por 2h+ (atÃ© 17h)'].map(r => `
+               'Alerta se carne < 150g no almoço',
+               'Alerta se queijo > 70g por refeição',
+               'Alerta se proteína < 60% às 14h',
+               'Gap hidratação: alerta se sem água por 2h+ (até 17h)'].map(r => `
             <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
-                <span style="color:var(--green)">â</span>
+                <span style="color:var(--green)">✓</span>
                 <span style="font-size:12px;color:var(--text)">${r}</span>
             </div>`).join('')}
         </div>
@@ -1054,13 +1119,13 @@ function rGoals() {
         </div>
 
         <div class="card mb-12">
-            <div class="card-title">ConfiguraÃ§Ãµes</div>
+            <div class="card-title">Configurações</div>
             <div class="cfg-item">
                 <div><div class="cfg-label">Tema escuro</div><div class="cfg-desc">Alternar entre claro e escuro</div></div>
                 <button class="toggle ${D.theme === 'dark' ? 'on' : ''}" onclick="toggleTheme()"></button>
             </div>
             <div class="cfg-item">
-                <div><div class="cfg-label">VersÃ£o</div><div class="cfg-desc">v${APP_VERSION}</div></div>
+                <div><div class="cfg-label">Versão</div><div class="cfg-desc">v${APP_VERSION}</div></div>
             </div>
             <div class="cfg-item" style="border:none">
                 <div><div class="cfg-label">Conta</div><div class="cfg-desc">${U ? U.email : ''}</div></div>
@@ -1071,7 +1136,7 @@ function rGoals() {
 }
 
 function editGoal(field, dayType) {
-    const labels = { kcal: 'Calorias (kcal)', prot: 'ProteÃ­na (g)', water: 'HidrataÃ§Ã£o (ml)' };
+    const labels = { kcal: 'Calorias (kcal)', prot: 'Proteína (g)', water: 'Hidratação (ml)' };
     const val = prompt(labels[field] + ':', D.goals[dayType][field]);
     if (val !== null && !isNaN(parseFloat(val))) {
         D.goals[dayType][field] = parseFloat(val);
