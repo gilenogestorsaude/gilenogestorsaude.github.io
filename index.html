@@ -292,7 +292,7 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
     </button>
     <button class="nav-item" onclick="showPage('hydro')" data-page="hydro">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>
-        <span3EÁgua</span>
+        <span>Água</span>
     </button>
     <button class="nav-item" onclick="showPage('goals')" data-page="goals">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
@@ -476,39 +476,50 @@ function registerEmail() {
     auth.createUserWithEmailAndPassword(email, pass).catch(e => toast('Erro: ' + e.message, true));
 }
 
-function loginGoogle() {
-    const provider = new firebase.auth.GoogleAuthProvider();
-    auth.signInWithRedirect(provider).catch(e => toast('Erro: ' + e.message, true));
-}
+let authReady = false;
+let redirectPending = false;
 
-// Handle redirect result
-auth.getRedirectResult().then(result => {
-    if (result.user) {
-        // Login successful, onAuthStateChanged will handle the rest
-    }
-}).catch(e => {
-    if (e.code !== 'auth/redirect-cancelled-by-user') {
-        toast('Erro no login: ' + e.message, true);
-    }
-});
+function loginGoogle() {
+    redirectPending = true;
+    sessionStorage.setItem('gs_redirect', '1');
+    const provider = new firebase.auth.GoogleAuthProvider();
+    auth.signInWithRedirect(provider);
+}
 
 function logout() {
     if (confirm('Sair da conta?')) auth.signOut();
 }
 
-auth.onAuthStateChanged(async user => {
-    U = user;
-    if (user) {
-        await load();
-        showPage('dash');
-        $('bottom-nav').classList.remove('hidden');
-        if (D.theme === 'light') document.body.classList.add('light');
-    } else {
-        D = null;
-        showPage('login');
-        $('bottom-nav').classList.add('hidden');
+// Check if we're returning from a redirect
+(async function initAuth() {
+    const wasRedirect = sessionStorage.getItem('gs_redirect');
+    if (wasRedirect) {
+        sessionStorage.removeItem('gs_redirect');
+        try {
+            await auth.getRedirectResult();
+        } catch(e) {
+            if (e.code !== 'auth/redirect-cancelled-by-user') {
+                toast('Erro no login: ' + e.message, true);
+            }
+        }
     }
-});
+
+    auth.onAuthStateChanged(async user => {
+        if (authReady && U === user) return; // prevent duplicate calls
+        authReady = true;
+        U = user;
+        if (user) {
+            await load();
+            showPage('dash');
+            $('bottom-nav').classList.remove('hidden');
+            if (D && D.theme === 'light') document.body.classList.add('light');
+        } else {
+            D = null;
+            showPage('login');
+            $('bottom-nav').classList.add('hidden');
+        }
+    });
+})();
 
 // ========== NAVIGATION ==========
 function showPage(name) {
@@ -873,7 +884,7 @@ function openAddFood(foodId) {
             </div>
             <p style="font-size:12px;color:var(--text3);margin-bottom:12px">Ref: ${food.ref}${food.unit} = ${fmt(food.kcal)} kcal / ${fmt(food.prot)}g prot</p>
             <div class="form-group">
-   "0            <label class="form-label">Quantidade (gramas)</label>
+                <label class="form-label">Quantidade (gramas)</label>
                 <input type="number" id="food-grams" class="form-input" value="${food.ref}" inputmode="decimal" autofocus>
             </div>
             <div id="food-calc" style="font-size:13px;color:var(--text2);margin-bottom:16px">
