@@ -476,50 +476,37 @@ function registerEmail() {
     auth.createUserWithEmailAndPassword(email, pass).catch(e => toast('Erro: ' + e.message, true));
 }
 
-let authReady = false;
-let redirectPending = false;
-
 function loginGoogle() {
-    redirectPending = true;
-    sessionStorage.setItem('gs_redirect', '1');
     const provider = new firebase.auth.GoogleAuthProvider();
-    auth.signInWithRedirect(provider);
+    auth.signInWithPopup(provider).catch(e => {
+        // Se popup bloqueado, abre em nova aba manual
+        if (e.code === 'auth/popup-blocked' || e.code === 'auth/popup-closed-by-user') {
+            toast('Popup bloqueado. Permitir popups para este site.', true);
+        } else if (e.code === 'auth/cancelled-popup-request') {
+            // ignore
+        } else {
+            toast('Erro: ' + e.message, true);
+        }
+    });
 }
 
 function logout() {
     if (confirm('Sair da conta?')) auth.signOut();
 }
 
-// Check if we're returning from a redirect
-(async function initAuth() {
-    const wasRedirect = sessionStorage.getItem('gs_redirect');
-    if (wasRedirect) {
-        sessionStorage.removeItem('gs_redirect');
-        try {
-            await auth.getRedirectResult();
-        } catch(e) {
-            if (e.code !== 'auth/redirect-cancelled-by-user') {
-                toast('Erro no login: ' + e.message, true);
-            }
-        }
+auth.onAuthStateChanged(async user => {
+    U = user;
+    if (user) {
+        await load();
+        showPage('dash');
+        $('bottom-nav').classList.remove('hidden');
+        if (D && D.theme === 'light') document.body.classList.add('light');
+    } else {
+        D = null;
+        showPage('login');
+        $('bottom-nav').classList.add('hidden');
     }
-
-    auth.onAuthStateChanged(async user => {
-        if (authReady && U === user) return; // prevent duplicate calls
-        authReady = true;
-        U = user;
-        if (user) {
-            await load();
-            showPage('dash');
-            $('bottom-nav').classList.remove('hidden');
-            if (D && D.theme === 'light') document.body.classList.add('light');
-        } else {
-            D = null;
-            showPage('login');
-            $('bottom-nav').classList.add('hidden');
-        }
-    });
-})();
+});
 
 // ========== NAVIGATION ==========
 function showPage(name) {
