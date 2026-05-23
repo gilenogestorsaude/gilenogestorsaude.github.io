@@ -341,7 +341,7 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.1.2';
+const APP_VERSION = '1.1.3';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -781,12 +781,17 @@ function rDash() {
         const day = getDayData(dt);
         const slot = day.slots[s.id];
         const done = slot && slot.items && slot.items.length > 0;
-        let slotKcal = 0, slotProt = 0;
+        let slotKcal = 0, slotProt = 0, slotCarbo = 0, slotGord = 0;
         if (done) {
-            slot.items.forEach(i => { slotKcal += i.kcal || 0; slotProt += i.prot || 0; });
+            slot.items.forEach(i => {
+                slotKcal  += i.kcal  || 0;
+                slotProt  += i.prot  || 0;
+                slotCarbo += i.carbo || 0;
+                slotGord  += i.gord  || 0;
+            });
         }
         mealsHtml += `
-            <div class="meal-item ${done ? '' : 'pending'}" onclick="${done ? '' : "openMealSlot('"+s.id+"')"}">
+            <div class="meal-item ${done ? '' : 'pending'}" onclick="openMealSlot('${s.id}')" style="cursor:pointer">
                 <div class="meal-check ${done ? 'done' : ''}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
                 </div>
@@ -794,7 +799,10 @@ function rDash() {
                     <div class="meal-name">${s.name}</div>
                     <div class="meal-time">${slot && slot.time ? slot.time : s.time}</div>
                 </div>
-                ${done ? `<div class="meal-macros"><div class="meal-kcal">${fmtN(slotKcal)} kcal</div><div class="meal-prot">${fmt(slotProt)}g prot</div></div>` : ''}
+                ${done ? `<div class="meal-macros" style="font-size:10px;line-height:1.3">
+                    <div class="meal-kcal" style="font-size:12px">${fmtN(slotKcal)} kcal</div>
+                    <div class="meal-prot">${fmt(slotProt)}g P • ${fmt(slotCarbo)}g C • ${fmt(slotGord)}g G</div>
+                </div>` : ''}
             </div>`;
     });
 
@@ -943,22 +951,30 @@ function rMeal() {
     let itemsHtml = '';
     let totalKcal = 0, totalProt = 0;
     if (slot.items && slot.items.length > 0) {
+        let totalCarbo = 0, totalGord = 0;
         slot.items.forEach((item, i) => {
-            totalKcal += item.kcal || 0;
-            totalProt += item.prot || 0;
+            totalKcal  += item.kcal  || 0;
+            totalProt  += item.prot  || 0;
+            totalCarbo += item.carbo || 0;
+            totalGord  += item.gord  || 0;
             itemsHtml += `
                 <div class="added-item">
                     <button class="added-remove" onclick="removeMealItem(${i})">×</button>
-                    <div style="flex:1">
+                    <div style="flex:1;min-width:0">
                         <div style="font-size:13px;font-weight:600;color:var(--text)">${item.name}</div>
                         <div style="font-size:11px;color:var(--text3)">${fmt(item.grams)}g</div>
                     </div>
-                    <div class="text-right">
-                        <div style="font-size:12px;font-weight:600">${fmtN(item.kcal)} kcal</div>
-                        <div style="font-size:10px;color:var(--primary)">${fmt(item.prot)}g prot</div>
+                    <div class="text-right" style="font-size:10px;line-height:1.4">
+                        <div style="font-size:12px;font-weight:700;color:var(--text)">${fmtN(item.kcal)} kcal</div>
+                        <div style="color:var(--primary)">${fmt(item.prot)}g prot</div>
+                        <div style="color:#3b82f6">${fmt(item.carbo||0)}g carb</div>
+                        <div style="color:#a855f7">${fmt(item.gord||0)}g gord</div>
                     </div>
                 </div>`;
         });
+        // expoe os totais de carbo/gord pra usar no rodape do card
+        window._slotCarbo = totalCarbo;
+        window._slotGord  = totalGord;
     }
 
     // Food list
@@ -974,9 +990,13 @@ function rMeal() {
         <div class="card mb-12">
             <div class="card-title">Itens — ${MEAL_SLOTS.find(s=>s.id===selectedMealSlot).name}</div>
             ${itemsHtml}
-            <div class="added-total">
-                <span>Total</span>
-                <span>${fmtN(totalKcal)} kcal &nbsp; <span style="color:var(--primary)">${fmt(totalProt)}g prot</span></span>
+            <div class="added-total" style="flex-direction:column;align-items:stretch;gap:4px">
+                <div style="display:flex;justify-content:space-between"><span>Total kcal</span><span>${fmtN(totalKcal)} kcal</span></div>
+                <div style="display:flex;justify-content:space-between;font-size:12px;font-weight:600">
+                    <span style="color:var(--primary)">${fmt(totalProt)}g prot</span>
+                    <span style="color:#3b82f6">${fmt(window._slotCarbo || 0)}g carb</span>
+                    <span style="color:#a855f7">${fmt(window._slotGord || 0)}g gord</span>
+                </div>
             </div>
         </div>` : ''}
 
@@ -1023,6 +1043,9 @@ function openAddFood(foodId) {
     const food = D.foods.find(f => f.id === foodId);
     if (!food) return;
 
+    const carbo = food.carbo || 0;
+    const gord  = food.gord  || 0;
+
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
@@ -1032,25 +1055,33 @@ function openAddFood(foodId) {
                 <h3>${food.name}</h3>
                 <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
             </div>
-            <p style="font-size:12px;color:var(--text3);margin-bottom:12px">Ref: ${food.ref}${food.unit} = ${fmt(food.kcal)} kcal / ${fmt(food.prot)}g prot</p>
+            <p style="font-size:12px;color:var(--text3);margin-bottom:12px">
+                Ref: ${food.ref}${food.unit} = ${fmt(food.kcal)} kcal / ${fmt(food.prot)}g prot / ${fmt(carbo)}g carb / ${fmt(gord)}g gord
+            </p>
             <div class="form-group">
-                <label class="form-label">Quantidade (gramas)</label>
+                <label class="form-label">Quantidade (${food.unit || 'g'})</label>
                 <input type="number" id="food-grams" class="form-input" value="${food.ref}" inputmode="decimal" autofocus>
             </div>
-            <div id="food-calc" style="font-size:13px;color:var(--text2);margin-bottom:16px">
-                = ${fmt(food.kcal)} kcal / ${fmt(food.prot)}g prot
+            <div id="food-calc" style="background:var(--bg);border-radius:8px;padding:10px 12px;margin-bottom:16px;font-size:13px;color:var(--text)">
+                <div style="display:flex;justify-content:space-between;margin-bottom:2px"><span style="color:var(--text2)">Calorias</span><span style="font-weight:600" id="calc-kcal">${fmt(food.kcal)}</span></div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:2px"><span style="color:var(--text2)">Proteína</span><span style="font-weight:600;color:var(--primary)" id="calc-prot">${fmt(food.prot)}g</span></div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:2px"><span style="color:var(--text2)">Carboidrato</span><span style="font-weight:600;color:#3b82f6" id="calc-carbo">${fmt(carbo)}g</span></div>
+                <div style="display:flex;justify-content:space-between"><span style="color:var(--text2)">Gordura</span><span style="font-weight:600;color:#a855f7" id="calc-gord">${fmt(gord)}g</span></div>
             </div>
             <button class="btn btn-primary w-full" onclick="addFoodToMeal('${food.id}')">Adicionar</button>
         </div>
     `;
     document.body.appendChild(overlay);
 
-    // Real-time calc
+    // Real-time calc — atualiza os 4 macros conforme muda a quantidade
     const gramsInput = $('food-grams');
     gramsInput.addEventListener('input', () => {
         const g = parseFloat(gramsInput.value) || 0;
         const ratio = g / food.ref;
-        $('food-calc').textContent = `= ${fmt(food.kcal * ratio)} kcal / ${fmt(food.prot * ratio)}g prot`;
+        $('calc-kcal').textContent  = fmt(food.kcal  * ratio);
+        $('calc-prot').textContent  = fmt(food.prot  * ratio) + 'g';
+        $('calc-carbo').textContent = fmt(carbo * ratio) + 'g';
+        $('calc-gord').textContent  = fmt(gord  * ratio) + 'g';
     });
     gramsInput.select();
 }
