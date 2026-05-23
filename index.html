@@ -341,7 +341,7 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.1.3';
+const APP_VERSION = '1.1.4';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1136,7 +1136,7 @@ function openFoodEditor(foodId) {
             <div style="display:flex;gap:8px">
                 <div class="form-group" style="flex:1">
                     <label class="form-label">Qtd ref</label>
-                    <input type="number" id="food-edit-ref" class="form-input" placeholder="100" value="${f.ref}" min="1" inputmode="decimal">
+                    <input type="number" id="food-edit-ref" class="form-input" placeholder="100" value="${f.ref}" data-prev="${f.ref}" min="1" inputmode="decimal">
                 </div>
                 <div class="form-group" style="flex:1">
                     <label class="form-label">Unidade</label>
@@ -1147,7 +1147,11 @@ function openFoodEditor(foodId) {
                     </select>
                 </div>
             </div>
-            <div style="font-size:11px;color:var(--text3);margin-bottom:8px;margin-top:-6px">Valores nutricionais por <strong>${f.ref || 100}${f.unit || 'g'}</strong> de referência:</div>
+            <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text2);margin-bottom:8px;padding:6px 8px;background:var(--bg);border-radius:6px">
+                <input type="checkbox" id="food-edit-scale" checked style="margin:0;flex-shrink:0">
+                <label for="food-edit-scale" style="cursor:pointer;line-height:1.3">Escalar macros automaticamente ao mudar a referência <span style="color:var(--text3)">(desmarque se quiser só corrigir o ref sem mexer nos valores nutricionais)</span></label>
+            </div>
+            <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Valores nutricionais por <strong id="food-ref-label">${f.ref || 100}${f.unit || 'g'}</strong> de referência:</div>
             <div style="display:flex;gap:8px">
                 <div class="form-group" style="flex:1">
                     <label class="form-label">Calorias (kcal)</label>
@@ -1168,6 +1172,9 @@ function openFoodEditor(foodId) {
                     <input type="number" id="food-edit-gord" class="form-input" placeholder="0" value="${f.gord !== '' && f.gord !== undefined ? f.gord : ''}" min="0" step="0.1" inputmode="decimal">
                 </div>
             </div>
+            <div id="food-norm-preview" style="background:var(--bg);padding:8px 12px;border-radius:8px;font-size:11px;color:var(--text3);margin-bottom:12px;line-height:1.5">
+                Equivalente a 100g: — kcal / — prot / — carbo / — gord
+            </div>
             <div class="form-group">
                 <label class="form-label">Nota — opcional</label>
                 <input type="text" id="food-edit-nota" class="form-input" placeholder="Ex: tapioca pequena, com queijo" value="${f.nota || ''}">
@@ -1180,6 +1187,73 @@ function openFoodEditor(foodId) {
         </div>
     `;
     document.body.appendChild(overlay);
+
+    // Inicializa listeners: escala automatica + preview por 100g + atualizacao do label
+    setupFoodEditorListeners();
+    updateFoodNormPreview();
+}
+
+function setupFoodEditorListeners() {
+    const refInp = $('food-edit-ref');
+    if (!refInp) return;
+
+    // Quando muda o ref: escalar macros se toggle ON
+    refInp.addEventListener('input', () => {
+        const prev = parseFloat(refInp.dataset.prev) || 0;
+        const curr = parseFloat(refInp.value) || 0;
+        const scale = $('food-edit-scale');
+        const scaleOn = scale && scale.checked;
+        if (scaleOn && prev > 0 && curr > 0 && prev !== curr) {
+            const ratio = curr / prev;
+            ['kcal', 'prot', 'carbo', 'gord'].forEach(key => {
+                const inp = $('food-edit-' + key);
+                const v = parseFloat(inp.value);
+                if (!isNaN(v) && v > 0) {
+                    inp.value = Math.round(v * ratio * 10) / 10;
+                }
+            });
+        }
+        refInp.dataset.prev = curr;
+        $('food-ref-label').textContent = curr + ($('food-edit-unit').value || 'g');
+        updateFoodNormPreview();
+    });
+
+    // Quando muda unidade: atualiza label
+    $('food-edit-unit').addEventListener('change', () => {
+        $('food-ref-label').textContent = (parseFloat(refInp.value) || 0) + $('food-edit-unit').value;
+    });
+
+    // Quando muda qualquer macro: atualiza preview por 100g
+    ['kcal', 'prot', 'carbo', 'gord'].forEach(key => {
+        const inp = $('food-edit-' + key);
+        if (inp) inp.addEventListener('input', updateFoodNormPreview);
+    });
+}
+
+function updateFoodNormPreview() {
+    const ref = parseFloat(($('food-edit-ref') || {}).value) || 0;
+    const box = $('food-norm-preview');
+    if (!box) return;
+    if (ref <= 0) {
+        box.textContent = 'Defina a quantidade de referência > 0 pra ver o equivalente.';
+        return;
+    }
+    const ratio = 100 / ref;
+    const kcal  = parseFloat(($('food-edit-kcal')  || {}).value) || 0;
+    const prot  = parseFloat(($('food-edit-prot')  || {}).value) || 0;
+    const carbo = parseFloat(($('food-edit-carbo') || {}).value) || 0;
+    const gord  = parseFloat(($('food-edit-gord')  || {}).value) || 0;
+    const k100 = kcal * ratio;
+    const warn = k100 > 900;
+    box.innerHTML = `
+        <div>Equivalente por <strong>100g</strong>:
+            <strong style="color:var(--text)">${fmt(k100)}</strong> kcal /
+            <strong style="color:var(--primary)">${fmt(prot * ratio)}g</strong> prot /
+            <strong style="color:#3b82f6">${fmt(carbo * ratio)}g</strong> carbo /
+            <strong style="color:#a855f7">${fmt(gord * ratio)}g</strong> gord
+        </div>
+        ${warn ? `<div style="color:var(--red);font-weight:600;margin-top:4px">⚠️ ${Math.round(k100)} kcal/100g é muito alto — limite biológico ~900. Verifique se Ref e valores estão consistentes.</div>` : ''}
+    `;
 }
 
 // Autocomplete TACO no campo Nome do modal de food
@@ -1212,16 +1286,19 @@ function applyTACO(id) {
     if (!item) return;
     $('food-edit-name').value = item.name;
     $('food-edit-ref').value = 100;
+    $('food-edit-ref').dataset.prev = 100;  // sincroniza prev pra evitar escala espuria
     $('food-edit-unit').value = 'g';
-    $('food-edit-kcal').value = item.kcal || 0;
-    $('food-edit-prot').value = item.prot || 0;
+    $('food-edit-kcal').value  = item.kcal  || 0;
+    $('food-edit-prot').value  = item.prot  || 0;
     $('food-edit-carbo').value = item.carbo || 0;
-    $('food-edit-gord').value = item.gord || 0;
+    $('food-edit-gord').value  = item.gord  || 0;
     if (!$('food-edit-nota').value) {
         $('food-edit-nota').value = `TACO #${item.id} — ${item.cat || ''}`;
     }
+    $('food-ref-label').textContent = '100g';
     $('taco-suggestions').style.display = 'none';
     $('taco-badge').style.display = 'block';
+    updateFoodNormPreview();
 }
 
 function saveFoodEditor(foodId) {
@@ -1240,6 +1317,17 @@ function saveFoodEditor(foodId) {
     if (isNaN(prot) || prot < 0) return toast('Proteína inválida', true);
     if (carbo < 0) return toast('Carboidrato inválido', true);
     if (gord < 0) return toast('Gordura inválida', true);
+
+    // Validador de sanidade: kcal/100g acima de 900 eh implausivel
+    const kcalPer100 = (kcal / ref) * 100;
+    if (kcalPer100 > 900) {
+        if (!confirm(
+            `Esse alimento tem ${Math.round(kcalPer100)} kcal por 100g.\n\n` +
+            `O limite biológico de alimentos puros (óleo, açúcar, manteiga) fica em torno de 900 kcal/100g.\n\n` +
+            `Provavelmente o campo "Qtd ref" está incorreto vs os valores nutricionais.\n\n` +
+            `Continuar mesmo assim?`
+        )) return;
+    }
 
     if (foodId) {
         // editar
