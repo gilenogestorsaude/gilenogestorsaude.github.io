@@ -1,8 +1,11 @@
-const CACHE_VERSION = '1.0.6';
+const CACHE_VERSION = '1.0.7';
 const CACHE_NAME = 'gestao-saude-' + CACHE_VERSION;
 const URLS_TO_CACHE = [
-    '/',
-    '/index.html'
+    './',
+    './index.html',
+    './manifest.json',
+    './apple-touch-icon.png',
+    './logo-512.png'
 ];
 
 self.addEventListener('install', e => {

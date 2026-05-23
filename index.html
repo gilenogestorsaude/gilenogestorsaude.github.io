@@ -324,7 +324,7 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.0.6';
+const APP_VERSION = '1.0.7';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1233,7 +1233,8 @@ if ('serviceWorker' in navigator) {
 }
 
 // ========== AUTO-SAVE INTERVAL ==========
-setInterval(() => { if (U && D) save(); }, 120000); // 2 min
+// Removido em v1.0.7 — save() ja eh chamado em cada mutacao (addWater, addMeal, editGoal, saveVital, toggleTheme, setDayType).
+// O interval de 2min duplicava writes no Firestore sem ganho.
 </script>
 </body>
 </html>
