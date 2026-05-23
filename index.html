@@ -341,7 +341,7 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.1.4';
+const APP_VERSION = '1.1.5';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -445,6 +445,53 @@ function defaultD() {
     };
 }
 
+// Tabela de migration: id -> {valores antigos v1.0.6 esperados, valores novos TACO}
+// Usada por migrateDefaultFoodsToTACO() pra detectar foods nao editados e atualizar
+const TACO_MIGRATION = {
+    whey:          { old: {kcal: 238.5, prot: 36},   neu: {name: 'Whey Probiótica', ref: 60, unit: 'g', kcal: 238.5, prot: 36, carbo: 12, gord: 4, nota: '3 scoops de 40g (suplemento — fora da TACO)'} },
+    banana:        { old: {kcal: 89,    prot: 1.1},  neu: {name: 'Banana nanica', ref: 100, unit: 'g', kcal: 91.5, prot: 1.4, carbo: 23.8, gord: 0.1, nota: 'Pré-treino (70-95g) — TACO #179'} },
+    mamao:         { old: {kcal: 40,    prot: 0.5},  neu: {name: 'Mamão Papaia', ref: 100, unit: 'g', kcal: 40.2, prot: 0.5, carbo: 10.4, gord: 0.1, nota: 'Café diário — TACO #226'} },
+    ovos_coz:      { old: {kcal: 74,    prot: 6.2},  neu: {name: 'Ovo de galinha cozido', ref: 50, unit: 'g', kcal: 72.9, prot: 6.7, carbo: 0.3, gord: 4.8, nota: '1 unidade (~50g) — TACO #488'} },
+    ovos_mex:      { old: {kcal: 150,   prot: 12},   neu: {name: 'Ovo frito/mexido', ref: 100, unit: 'g', kcal: 240.2, prot: 15.6, carbo: 1.2, gord: 18.6, nota: '~2 ovos — TACO #490'} },
+    queijo_coalho: { old: {kcal: 333,   prot: 20},   neu: {name: 'Queijo coalho', ref: 100, unit: 'g', kcal: 333, prot: 20, carbo: 1, gord: 27, nota: 'Uso: 40-65g (não consta TACO — valores aproximados)'} },
+    carne_moida:   { old: {kcal: 225,   prot: 26},   neu: {name: 'Carne moída bovina', ref: 100, unit: 'g', kcal: 225, prot: 26, carbo: 0, gord: 14, nota: 'Meta: 150g+ almoço (não consta TACO — valores aproximados)'} },
+    frango:        { old: {kcal: 163,   prot: 22},   neu: {name: 'Peito de frango grelhado', ref: 100, unit: 'g', kcal: 159.2, prot: 32.0, carbo: 0, gord: 2.5, nota: 'Sem pele, grelhado — TACO #410'} },
+    arroz:         { old: {kcal: 130,   prot: 2.5},  neu: {name: 'Arroz branco cozido', ref: 100, unit: 'g', kcal: 128.3, prot: 2.5, carbo: 28.1, gord: 0.2, nota: 'Tipo 1 — TACO #3'} },
+    feijao:        { old: {kcal: 75,    prot: 5},    neu: {name: 'Feijão carioca cozido', ref: 100, unit: 'g', kcal: 76.4, prot: 4.8, carbo: 13.6, gord: 0.5, nota: 'Cozido — TACO #561'} },
+    salada:        { old: {kcal: 20,    prot: 1.4},  neu: {name: 'Alface lisa', ref: 100, unit: 'g', kcal: 13.8, prot: 1.7, carbo: 2.4, gord: 0.1, nota: 'Crua — TACO #79'} }
+};
+
+// Migration v1.1.5: atualiza defaults antigos pra valores TACO (so se nao foram editados).
+// Heuristica conservadora: kcal e prot DEVEM bater EXATAMENTE com os v1.0.6 originais
+// (tolerancia 0.05) E carbo+gord devem ser 0 (sinal de que user nunca editou ou que so
+// passou pela migration v1.1.2 que zerou esses campos). Se user editou qualquer coisa,
+// food fica intacto.
+function migrateDefaultFoodsToTACO() {
+    if (!D || !D.foods) return 0;
+    let count = 0;
+    D.foods.forEach(f => {
+        const def = TACO_MIGRATION[f.id];
+        if (!def) return;
+        const kcalMatch = Math.abs((f.kcal || 0) - def.old.kcal) < 0.05;
+        const protMatch = Math.abs((f.prot || 0) - def.old.prot) < 0.05;
+        const carboZero = (f.carbo || 0) === 0;
+        const gordZero  = (f.gord  || 0) === 0;
+        if (kcalMatch && protMatch && carboZero && gordZero) {
+            // Match exato — pode atualizar com seguranca
+            f.name  = def.neu.name;
+            f.ref   = def.neu.ref;
+            f.unit  = def.neu.unit;
+            f.kcal  = def.neu.kcal;
+            f.prot  = def.neu.prot;
+            f.carbo = def.neu.carbo;
+            f.gord  = def.neu.gord;
+            f.nota  = def.neu.nota;
+            count++;
+        }
+    });
+    return count;
+}
+
 function getDefaultFoods() {
     // Valores migrados pra fonte oficial TACO (UNICAMP, 4a ed.) em v1.1.2.
     // IDs entre [] referenciam a linha original na TACO normalizada (taco.json).
@@ -507,7 +554,7 @@ async function load() {
             if (!D.bphCutoff) D.bphCutoff = 17;
             if (!D.meds) D.meds = [];
             if (!D.medsTaken) D.medsTaken = {};
-            // v1.1.2 — adiciona carbo/gord aos foods existentes (default 0 — usuario edita ou usa autocomplete TACO)
+            // v1.1.2 — adiciona carbo/gord aos foods existentes (default 0)
             if (D.foods) {
                 D.foods.forEach(f => {
                     if (typeof f.carbo !== 'number') f.carbo = 0;
@@ -519,6 +566,15 @@ async function load() {
                 if (D.goals[t] && typeof D.goals[t].carbo !== 'number') D.goals[t].carbo = 0;
                 if (D.goals[t] && typeof D.goals[t].gord !== 'number') D.goals[t].gord = 0;
             });
+            // v1.1.5 — MIGRATION CORRETIVA: usuarios antigos (pre-v1.1.2) tinham defaults
+            // com valores v1.0.6 + carbo/gord zerados. Aqui atualizamos esses ids pra valores
+            // TACO se eles ainda batem EXATAMENTE com os defaults antigos (= user nao editou).
+            // Se user editou os valores manualmente, deixamos intactos.
+            const migrated = migrateDefaultFoodsToTACO();
+            if (migrated > 0) {
+                // marca pra avisar o user no proximo render
+                D._migrationToast = `${migrated} alimento(s) atualizado(s) com valores oficiais TACO`;
+            }
         } else {
             D = defaultD();
             await save();
@@ -661,6 +717,13 @@ function getWaterEntries(dt) {
 // ========== RENDER: DASHBOARD ==========
 function rDash() {
     if (!D) return;
+    // Toast de migration (v1.1.5)
+    if (D._migrationToast) {
+        const msg = D._migrationToast;
+        delete D._migrationToast;
+        save();
+        setTimeout(() => toast('✓ ' + msg), 800);
+    }
     const dt = today();
     const dayType = getDayType(dt);
     const goals = getGoals(dt);
@@ -1001,9 +1064,12 @@ function rMeal() {
         </div>` : ''}
 
         <div class="card">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:6px">
                 <span class="card-title" style="margin:0">Adicionar Alimento</span>
-                <button class="btn btn-primary btn-sm" onclick="openFoodEditor()">+ Novo</button>
+                <div style="display:flex;gap:6px">
+                    <button class="btn btn-outline btn-sm" onclick="forceMigrateTACO()" title="Atualiza alimentos padrão para valores TACO oficiais">🔄 TACO</button>
+                    <button class="btn btn-primary btn-sm" onclick="openFoodEditor()">+ Novo</button>
+                </div>
             </div>
             <div class="search-box">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -1352,6 +1418,47 @@ function saveFoodEditor(foodId) {
     document.querySelector('.modal-overlay').remove();
     toast(foodId ? 'Alimento atualizado' : '✓ Alimento adicionado');
     if (cPage === 'meal') rMeal();
+}
+
+// Forca a migration manualmente (botao 🔄 TACO).
+// Se o auto nao pegou todos por causa de heuristica conservadora, este forca a substituicao
+// de todos os defaults que ainda mantem o id original, perguntando confirmacao.
+function forceMigrateTACO() {
+    if (!D || !D.foods) return;
+    const candidatos = D.foods.filter(f => TACO_MIGRATION[f.id]);
+    if (candidatos.length === 0) {
+        return toast('Nenhum alimento padrão pra atualizar');
+    }
+    const naoMigrados = candidatos.filter(f => {
+        const def = TACO_MIGRATION[f.id].neu;
+        return f.kcal !== def.kcal || f.prot !== def.prot || (f.carbo || 0) !== def.carbo || (f.gord || 0) !== def.gord;
+    });
+    if (naoMigrados.length === 0) {
+        return toast('Todos já estão com valores TACO ✓');
+    }
+    const nomes = naoMigrados.slice(0, 5).map(f => f.name).join(', ') + (naoMigrados.length > 5 ? '…' : '');
+    if (!confirm(
+        `Atualizar ${naoMigrados.length} alimento(s) padrão para valores oficiais TACO?\n\n` +
+        `Itens: ${nomes}\n\n` +
+        `Atenção: isso sobrescreve qualquer edição manual que você tenha feito nesses alimentos. ` +
+        `Alimentos cadastrados por você (não-default) ficam intactos.`
+    )) return;
+    let count = 0;
+    naoMigrados.forEach(f => {
+        const def = TACO_MIGRATION[f.id].neu;
+        f.name  = def.name;
+        f.ref   = def.ref;
+        f.unit  = def.unit;
+        f.kcal  = def.kcal;
+        f.prot  = def.prot;
+        f.carbo = def.carbo;
+        f.gord  = def.gord;
+        f.nota  = def.nota;
+        count++;
+    });
+    save();
+    rMeal();
+    toast(`✓ ${count} alimento(s) atualizado(s) com valores TACO`);
 }
 
 function deleteFood(foodId) {
