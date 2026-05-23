@@ -280,6 +280,19 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
     <div class="page-body" id="hydro-body"></div>
 </div>
 
+<!-- ========== PAGE: MEDICAMENTOS ========== -->
+<div id="page-meds" class="page">
+    <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+        <button class="btn-icon btn-outline" onclick="showPage('dash')" style="width:36px;height:36px">←</button>
+        <div style="flex:1">
+            <div style="font-size:16px;font-weight:700">Medicamentos</div>
+            <div style="font-size:11px;color:var(--text3)">Cadastro e adesão diária</div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="openAddMed()">+ Novo</button>
+    </div>
+    <div class="page-body" id="meds-body"></div>
+</div>
+
 <!-- ========== PAGE: GOALS ========== -->
 <div id="page-goals" class="page">
     <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
@@ -303,6 +316,10 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>
         <span>Água</span>
     </button>
+    <button class="nav-item" onclick="showPage('meds')" data-page="meds">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.5 20.5a4.95 4.95 0 0 1-7-7l10-10a4.95 4.95 0 0 1 7 7z"/><line x1="8.5" y1="8.5" x2="15.5" y2="15.5"/></svg>
+        <span>Meds</span>
+    </button>
     <button class="nav-item" onclick="showPage('goals')" data-page="goals">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
         <span>Metas</span>
@@ -324,7 +341,7 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.0.7';
+const APP_VERSION = '1.1.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -387,6 +404,11 @@ function defaultD() {
         vitals: {},
         // Foods database
         foods: getDefaultFoods(),
+        // Medicamentos / suplementos
+        // meds: [{ id, nome, dosagem, horarios: ['08:00', '20:00'], estoque?, notas?, ativo: true }]
+        meds: [],
+        // medsTaken: { '2026-05-23': { medId: ['08:05', '20:10'] } }
+        medsTaken: {},
         // Settings
         theme: 'dark',
         bphCutoff: 17
@@ -451,6 +473,8 @@ async function load() {
             if (!D.water) D.water = {};
             if (!D.days) D.days = {};
             if (!D.bphCutoff) D.bphCutoff = 17;
+            if (!D.meds) D.meds = [];
+            if (!D.medsTaken) D.medsTaken = {};
         } else {
             D = defaultD();
             await save();
@@ -532,6 +556,7 @@ function showPage(name) {
     if (name === 'dash') rDash();
     else if (name === 'meal') rMeal();
     else if (name === 'hydro') rHydro();
+    else if (name === 'meds') rMeds();
     else if (name === 'goals') rGoals();
 }
 
@@ -679,6 +704,29 @@ function rDash() {
         </div>`;
     }
 
+    // Medicamentos atrasados
+    const medsDoses = getMedsToday();
+    const medsLate = medsDoses.filter(d => d.status === 'late');
+    if (medsLate.length > 0) {
+        const nomes = [...new Set(medsLate.map(d => d.nome + ' ' + d.horario))].slice(0, 3).join(', ');
+        alerts += `<div class="alert alert-warn">
+            <div class="alert-icon">💊</div>
+            <div><div class="alert-title">Medicamento(s) atrasado(s)</div>
+            <div class="alert-text">${medsLate.length} dose(s) pendente(s): ${nomes}${medsLate.length > 3 ? '…' : ''}</div></div>
+        </div>`;
+    }
+
+    // Estoque baixo
+    const estoqueBaixo = (D.meds || []).filter(m => m.ativo !== false && typeof m.estoque === 'number' && m.estoque <= 7 && m.estoque > 0);
+    if (estoqueBaixo.length > 0) {
+        const nomes = estoqueBaixo.slice(0, 3).map(m => `${m.nome} (${m.estoque})`).join(', ');
+        alerts += `<div class="alert alert-warn">
+            <div class="alert-icon">📦</div>
+            <div><div class="alert-title">Estoque baixo</div>
+            <div class="alert-text">Repor: ${nomes}${estoqueBaixo.length > 3 ? '…' : ''}</div></div>
+        </div>`;
+    }
+
     // Meals HTML
     let mealsHtml = '';
     MEAL_SLOTS.forEach(s => {
@@ -761,6 +809,29 @@ function rDash() {
                 <button class="btn btn-primary btn-sm" onclick="showPage('meal')">+ Registrar</button>
             </div>
             ${mealsHtml}
+        </div>
+
+        <!-- Medicamentos -->
+        <div class="card mb-12">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                <span class="card-title" style="margin:0">💊 Medicamentos hoje</span>
+                <button class="btn btn-primary btn-sm" onclick="showPage('meds')">${(D.meds||[]).length === 0 ? '+ Cadastrar' : 'Gerenciar'}</button>
+            </div>
+            ${(D.meds||[]).length === 0
+                ? `<div style="font-size:12px;color:var(--text3);text-align:center;padding:12px 0">Nenhum medicamento cadastrado.</div>`
+                : (medsDoses.length === 0
+                    ? `<div style="font-size:12px;color:var(--text3);text-align:center;padding:12px 0">Nenhum horário de dose configurado nos medicamentos ativos.</div>`
+                    : medsDoses.map(d => `
+                        <div class="meal-item ${d.status === 'taken' ? '' : 'pending'}" onclick="toggleMedTaken('${d.medId}','${d.horario}')" style="cursor:pointer">
+                            <div class="meal-check ${d.status === 'taken' ? 'done' : ''}" style="${d.status === 'late' ? 'border-color:var(--red)' : ''}">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+                            </div>
+                            <div class="meal-info">
+                                <div class="meal-name">${d.nome}${d.dosagem ? ` <span style="font-weight:400;color:var(--text3);font-size:11px">${d.dosagem}</span>` : ''}</div>
+                                <div class="meal-time" style="${d.status === 'late' ? 'color:var(--red);font-weight:600' : ''}">${d.horario}${d.status === 'late' ? ' • atrasado' : (d.status === 'taken' ? ' • ✓ tomado' : '')}</div>
+                            </div>
+                        </div>`).join(''))
+            }
         </div>
 
         <!-- Hidratação mini -->
@@ -1170,6 +1241,250 @@ function saveVital(field, value) {
     if (!D.vitals[dt]) D.vitals[dt] = {};
     D.vitals[dt][field] = value;
     save();
+}
+
+// ========== MEDICAMENTOS — HELPERS ==========
+function getDayMedsTaken(dt) {
+    if (!dt) dt = today();
+    if (!D.medsTaken[dt]) D.medsTaken[dt] = {};
+    return D.medsTaken[dt];
+}
+
+// Retorna lista de "doses de hoje" — cada med × cada horário, com status
+// status: 'taken' (ja tomou), 'late' (passou >30min do horario e nao tomou), 'pending' (no horario ou futuro)
+function getMedsToday() {
+    if (!D.meds || D.meds.length === 0) return [];
+    const dt = today();
+    const taken = getDayMedsTaken(dt);
+    const now = new Date();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    const doses = [];
+    D.meds.forEach(m => {
+        if (m.ativo === false) return;
+        (m.horarios || []).forEach(h => {
+            const [hh, mm] = h.split(':').map(Number);
+            const horarioMin = hh * 60 + mm;
+            const wasTaken = (taken[m.id] || []).length > 0
+                && (taken[m.id] || []).some(t => {
+                    // considera "tomada" se o registro mais proximo do horario esta dentro de +-90min
+                    const [th, tm] = t.split(':').map(Number);
+                    return Math.abs((th * 60 + tm) - horarioMin) <= 90;
+                });
+            let status = 'pending';
+            if (wasTaken) status = 'taken';
+            else if (nowMin - horarioMin > 30) status = 'late';
+            doses.push({ medId: m.id, nome: m.nome, dosagem: m.dosagem, horario: h, status });
+        });
+    });
+    return doses.sort((a, b) => a.horario.localeCompare(b.horario));
+}
+
+function toggleMedTaken(medId, horario) {
+    const dt = today();
+    if (!D.medsTaken[dt]) D.medsTaken[dt] = {};
+    if (!D.medsTaken[dt][medId]) D.medsTaken[dt][medId] = [];
+    const arr = D.medsTaken[dt][medId];
+    // procura registro proximo ao horario (+-90min) — se achar, remove (desmarca); senao, adiciona com hora atual
+    const [hh, mm] = horario.split(':').map(Number);
+    const horarioMin = hh * 60 + mm;
+    const idx = arr.findIndex(t => {
+        const [th, tm] = t.split(':').map(Number);
+        return Math.abs((th * 60 + tm) - horarioMin) <= 90;
+    });
+    if (idx >= 0) {
+        arr.splice(idx, 1);
+    } else {
+        const now = new Date();
+        const nowStr = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+        arr.push(nowStr);
+        arr.sort();
+        // Decrementa estoque se ativo
+        const med = D.meds.find(m => m.id === medId);
+        if (med && typeof med.estoque === 'number' && med.estoque > 0) {
+            med.estoque -= 1;
+        }
+    }
+    save();
+    if (cPage === 'dash') rDash();
+    if (cPage === 'meds') rMeds();
+    toast(idx >= 0 ? 'Desmarcado' : '✓ Registrado');
+}
+
+// ========== MEDICAMENTOS — RENDER ==========
+function rMeds() {
+    if (!D) return;
+    const meds = D.meds || [];
+
+    if (meds.length === 0) {
+        $('meds-body').innerHTML = `
+            <div class="card text-center" style="padding:32px 20px">
+                <div style="font-size:48px;margin-bottom:12px">💊</div>
+                <div style="font-size:16px;font-weight:700;margin-bottom:6px">Nenhum medicamento cadastrado</div>
+                <div style="font-size:13px;color:var(--text3);margin-bottom:20px">Adicione seus medicamentos e suplementos pra controlar a adesão diária.</div>
+                <button class="btn btn-primary" onclick="openAddMed()">+ Adicionar primeiro</button>
+            </div>`;
+        return;
+    }
+
+    // Status de hoje
+    const doses = getMedsToday();
+    const tomados = doses.filter(d => d.status === 'taken').length;
+    const total = doses.length;
+    const atrasados = doses.filter(d => d.status === 'late').length;
+
+    let summaryHtml = '';
+    if (total > 0) {
+        summaryHtml = `
+            <div class="card mb-12">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                    <span class="card-title" style="margin:0">Adesão de hoje</span>
+                    <span style="font-size:11px;color:var(--text3)">${tomados} de ${total} tomados</span>
+                </div>
+                <div class="progress-bar"><div class="progress-fill" style="width:${total > 0 ? (tomados / total * 100) : 0}%;background:var(--primary)"></div></div>
+                ${atrasados > 0 ? `<div style="margin-top:8px;font-size:12px;color:var(--red)">⚠️ ${atrasados} dose(s) atrasada(s)</div>` : ''}
+            </div>`;
+    }
+
+    let listHtml = '';
+    meds.forEach(m => {
+        const horariosStr = (m.horarios || []).join(' • ') || 'Sem horário';
+        const estoqueInfo = (typeof m.estoque === 'number')
+            ? `<span style="font-size:11px;color:${m.estoque <= 7 ? 'var(--red)' : 'var(--text3)'}">📦 ${m.estoque} doses${m.estoque <= 7 ? ' — repor' : ''}</span>`
+            : '';
+        const inativo = m.ativo === false;
+        listHtml += `
+            <div class="card mb-8" style="${inativo ? 'opacity:.5' : ''}">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+                    <div style="flex:1;min-width:0">
+                        <div style="font-size:15px;font-weight:700;color:var(--text)">${m.nome}${inativo ? ' (inativo)' : ''}</div>
+                        <div style="font-size:12px;color:var(--text2);margin-top:2px">${m.dosagem || '—'}</div>
+                        <div style="font-size:12px;color:var(--text3);margin-top:4px">🕐 ${horariosStr}</div>
+                        ${m.notas ? `<div style="font-size:11px;color:var(--text3);margin-top:4px;font-style:italic">${m.notas}</div>` : ''}
+                        ${estoqueInfo ? `<div style="margin-top:6px">${estoqueInfo}</div>` : ''}
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:4px">
+                        <button class="btn btn-outline btn-sm" onclick="openAddMed('${m.id}')">Editar</button>
+                        <button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="deleteMed('${m.id}')">Excluir</button>
+                    </div>
+                </div>
+            </div>`;
+    });
+
+    $('meds-body').innerHTML = `
+        ${summaryHtml}
+        ${listHtml}
+    `;
+}
+
+function openAddMed(medId) {
+    const editing = medId ? D.meds.find(m => m.id === medId) : null;
+    const m = editing || { nome: '', dosagem: '', horarios: [], estoque: '', notas: '', ativo: true };
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = `
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>${editing ? 'Editar' : 'Novo'} medicamento</h3>
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Nome</label>
+                <input type="text" id="med-nome" class="form-input" placeholder="Ex: Addera D3" value="${m.nome}" autofocus>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Dosagem</label>
+                <input type="text" id="med-dosagem" class="form-input" placeholder="Ex: 7.000 UI" value="${m.dosagem || ''}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Horários (separados por vírgula)</label>
+                <input type="text" id="med-horarios" class="form-input" placeholder="Ex: 08:00, 20:00" value="${(m.horarios || []).join(', ')}">
+                <div style="font-size:11px;color:var(--text3);margin-top:4px">Formato HH:MM • use vírgula entre múltiplos horários</div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Estoque (doses) — opcional</label>
+                <input type="number" id="med-estoque" class="form-input" placeholder="Ex: 30" value="${m.estoque !== '' && m.estoque !== undefined ? m.estoque : ''}" min="0" inputmode="numeric">
+                <div style="font-size:11px;color:var(--text3);margin-top:4px">Se preenchido, decrementa ao marcar "tomei"; alerta se ≤ 7</div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Notas — opcional</label>
+                <textarea id="med-notas" class="form-input" rows="2" placeholder="Ex: tomar com gordura">${m.notas || ''}</textarea>
+            </div>
+            <div class="cfg-item" style="border:none;padding:8px 0">
+                <div><div class="cfg-label">Ativo</div><div class="cfg-desc">Desativar pausa o medicamento sem excluir</div></div>
+                <button class="toggle ${m.ativo !== false ? 'on' : ''}" id="med-ativo-toggle" onclick="this.classList.toggle('on')"></button>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:16px">
+                <button class="btn btn-outline" style="flex:1" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+                <button class="btn btn-primary" style="flex:1" onclick="saveMed('${medId || ''}')">Salvar</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+}
+
+function saveMed(medId) {
+    const nome = $('med-nome').value.trim();
+    const dosagem = $('med-dosagem').value.trim();
+    const horariosRaw = $('med-horarios').value.trim();
+    const estoqueRaw = $('med-estoque').value.trim();
+    const notas = $('med-notas').value.trim();
+    const ativo = $('med-ativo-toggle').classList.contains('on');
+
+    if (!nome) return toast('Nome é obrigatório', true);
+
+    // Parse horarios — aceita "08:00, 20:00" ou "08:00,20:00" ou "08:00 20:00"
+    const horarios = horariosRaw
+        .split(/[,;\s]+/)
+        .map(s => s.trim())
+        .filter(s => /^\d{1,2}:\d{2}$/.test(s))
+        .map(s => {
+            const [h, m] = s.split(':').map(Number);
+            return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+        })
+        .sort();
+
+    const estoque = estoqueRaw === '' ? undefined : parseInt(estoqueRaw);
+
+    if (medId) {
+        // editar
+        const med = D.meds.find(x => x.id === medId);
+        if (!med) return toast('Medicamento não encontrado', true);
+        med.nome = nome;
+        med.dosagem = dosagem;
+        med.horarios = horarios;
+        if (estoque === undefined) delete med.estoque; else med.estoque = estoque;
+        med.notas = notas;
+        med.ativo = ativo;
+    } else {
+        // novo
+        D.meds.push({
+            id: uid(),
+            nome,
+            dosagem,
+            horarios,
+            ...(estoque !== undefined && { estoque }),
+            notas,
+            ativo
+        });
+    }
+
+    save();
+    document.querySelector('.modal-overlay').remove();
+    toast(medId ? 'Medicamento atualizado' : '✓ Medicamento adicionado');
+    if (cPage === 'meds') rMeds();
+    if (cPage === 'dash') rDash();
+}
+
+function deleteMed(medId) {
+    const med = D.meds.find(m => m.id === medId);
+    if (!med) return;
+    if (!confirm(`Excluir "${med.nome}"? Histórico de adesão será mantido.`)) return;
+    D.meds = D.meds.filter(m => m.id !== medId);
+    save();
+    rMeds();
+    toast('Medicamento excluído');
 }
 
 function toggleTheme() {
