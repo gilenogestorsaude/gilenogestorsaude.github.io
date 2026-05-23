@@ -341,7 +341,7 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.1.1';
+const APP_VERSION = '1.1.2';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -349,6 +349,36 @@ let D = null; // data object
 let cPage = 'login';
 let editingMealIndex = -1;
 let selectedMealSlot = 'almoco';
+let TACO = []; // Tabela TACO (UNICAMP) carregada on-demand pra autocomplete
+
+// Carrega TACO uma vez (em background) — usado pelo autocomplete do modal de food
+async function loadTACO() {
+    if (TACO.length > 0) return TACO;
+    try {
+        const res = await fetch('./taco.json', { cache: 'force-cache' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        TACO = await res.json();
+        return TACO;
+    } catch (e) {
+        console.warn('TACO load falhou:', e);
+        TACO = [];
+        return TACO;
+    }
+}
+
+// Busca por substring no nome (case-insensitive, acento-tolerante)
+function normalizeStr(s) {
+    return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+function searchTACO(query, limit) {
+    if (!query || query.length < 2) return [];
+    const q = normalizeStr(query);
+    const out = [];
+    for (let i = 0; i < TACO.length && out.length < (limit || 8); i++) {
+        if (normalizeStr(TACO[i].name).includes(q)) out.push(TACO[i]);
+    }
+    return out;
+}
 
 // ========== HELPERS ==========
 const $ = id => document.getElementById(id);
@@ -393,10 +423,10 @@ function defaultD() {
         days: {},
         // Water by date: { '2026-03-01': [ { time: '05:15', vol: 500, source: 'Dexilant', auto: true }, ... ] }
         water: {},
-        // Goals
+        // Goals — kcal/prot/water sempre setados; carbo/gord opcionais (0 = sem meta, so mostra valor)
         goals: {
-            treino: { kcal: 2000, prot: 180, water: 4750 },
-            descanso: { kcal: 1450, prot: 160, water: 4250 }
+            treino:   { kcal: 2000, prot: 180, water: 4750, carbo: 0, gord: 0 },
+            descanso: { kcal: 1450, prot: 160, water: 4250, carbo: 0, gord: 0 }
         },
         // Day type: { '2026-03-01': 'treino' }
         dayType: {},
@@ -416,18 +446,20 @@ function defaultD() {
 }
 
 function getDefaultFoods() {
+    // Valores migrados pra fonte oficial TACO (UNICAMP, 4a ed.) em v1.1.2.
+    // IDs entre [] referenciam a linha original na TACO normalizada (taco.json).
     return [
-        { id: 'whey', name: 'Whey Probiótica', ref: 60, unit: 'g', kcal: 238.5, prot: 36, nota: '3 scoops de 40g' },
-        { id: 'banana', name: 'Banana', ref: 100, unit: 'g', kcal: 89, prot: 1.1, nota: 'Pré-treino (70-95g)' },
-        { id: 'mamao', name: 'Mamão', ref: 100, unit: 'g', kcal: 40, prot: 0.5, nota: 'Café diário' },
-        { id: 'ovos_coz', name: 'Ovos cozidos', ref: 50, unit: 'g', kcal: 74, prot: 6.2, nota: '1 unidade (~50g)' },
-        { id: 'ovos_mex', name: 'Ovos mexidos', ref: 100, unit: 'g', kcal: 150, prot: 12, nota: '~2 ovos' },
-        { id: 'queijo_coalho', name: 'Queijo coalho', ref: 100, unit: 'g', kcal: 333, prot: 20, nota: 'Uso: 40-65g' },
-        { id: 'carne_moida', name: 'Carne moída', ref: 100, unit: 'g', kcal: 225, prot: 26, nota: 'Meta: 150g+ almoço' },
-        { id: 'frango', name: 'Frango desfiado', ref: 100, unit: 'g', kcal: 163, prot: 22, nota: 'Alternativa almoço' },
-        { id: 'arroz', name: 'Arroz branco', ref: 100, unit: 'g', kcal: 130, prot: 2.5, nota: 'Porção: 43-65g' },
-        { id: 'feijao', name: 'Feijão carioca', ref: 100, unit: 'g', kcal: 75, prot: 5, nota: 'Porção: 54-89g' },
-        { id: 'salada', name: 'Salada mista', ref: 100, unit: 'g', kcal: 20, prot: 1.4, nota: 'Meta: 80-100g' }
+        { id: 'whey',          name: 'Whey Probiótica',      ref: 60,  unit: 'g', kcal: 238.5, prot: 36,   carbo: 12,   gord: 4,    nota: '3 scoops de 40g (suplemento — fora da TACO)' },
+        { id: 'banana',        name: 'Banana nanica',        ref: 100, unit: 'g', kcal: 91.5,  prot: 1.4,  carbo: 23.8, gord: 0.1,  nota: 'Pré-treino (70-95g) — TACO #179' },
+        { id: 'mamao',         name: 'Mamão Papaia',         ref: 100, unit: 'g', kcal: 40.2,  prot: 0.5,  carbo: 10.4, gord: 0.1,  nota: 'Café diário — TACO #226' },
+        { id: 'ovos_coz',      name: 'Ovo de galinha cozido',ref: 50,  unit: 'g', kcal: 72.9,  prot: 6.7,  carbo: 0.3,  gord: 4.8,  nota: '1 unidade (~50g) — TACO #488' },
+        { id: 'ovos_mex',      name: 'Ovo frito/mexido',     ref: 100, unit: 'g', kcal: 240.2, prot: 15.6, carbo: 1.2,  gord: 18.6, nota: '~2 ovos — TACO #490' },
+        { id: 'queijo_coalho', name: 'Queijo coalho',        ref: 100, unit: 'g', kcal: 333,   prot: 20,   carbo: 1,    gord: 27,   nota: 'Uso: 40-65g (não consta TACO — valores aproximados)' },
+        { id: 'carne_moida',   name: 'Carne moída bovina',   ref: 100, unit: 'g', kcal: 225,   prot: 26,   carbo: 0,    gord: 14,   nota: 'Meta: 150g+ almoço (não consta TACO — valores aproximados)' },
+        { id: 'frango',        name: 'Peito de frango grelhado', ref: 100, unit: 'g', kcal: 159.2, prot: 32.0, carbo: 0,    gord: 2.5,  nota: 'Sem pele, grelhado — TACO #410' },
+        { id: 'arroz',         name: 'Arroz branco cozido',  ref: 100, unit: 'g', kcal: 128.3, prot: 2.5,  carbo: 28.1, gord: 0.2,  nota: 'Tipo 1 — TACO #3' },
+        { id: 'feijao',        name: 'Feijão carioca cozido',ref: 100, unit: 'g', kcal: 76.4,  prot: 4.8,  carbo: 13.6, gord: 0.5,  nota: 'Cozido — TACO #561' },
+        { id: 'salada',        name: 'Alface lisa',          ref: 100, unit: 'g', kcal: 13.8,  prot: 1.7,  carbo: 2.4,  gord: 0.1,  nota: 'Crua — TACO #79' }
     ];
 }
 
@@ -475,6 +507,18 @@ async function load() {
             if (!D.bphCutoff) D.bphCutoff = 17;
             if (!D.meds) D.meds = [];
             if (!D.medsTaken) D.medsTaken = {};
+            // v1.1.2 — adiciona carbo/gord aos foods existentes (default 0 — usuario edita ou usa autocomplete TACO)
+            if (D.foods) {
+                D.foods.forEach(f => {
+                    if (typeof f.carbo !== 'number') f.carbo = 0;
+                    if (typeof f.gord !== 'number') f.gord = 0;
+                });
+            }
+            // v1.1.2 — adiciona metaCarbo/metaGord opcionais (0 = sem meta, so mostra valor no dashboard)
+            ['treino', 'descanso'].forEach(t => {
+                if (D.goals[t] && typeof D.goals[t].carbo !== 'number') D.goals[t].carbo = 0;
+                if (D.goals[t] && typeof D.goals[t].gord !== 'number') D.goals[t].gord = 0;
+            });
         } else {
             D = defaultD();
             await save();
@@ -534,6 +578,8 @@ auth.onAuthStateChanged(async user => {
         showPage('dash');
         $('bottom-nav').classList.remove('hidden');
         if (D && D.theme === 'light') document.body.classList.add('light');
+        // Carrega TACO em background (nao bloqueia render)
+        loadTACO();
     } else {
         D = null;
         showPage('login');
@@ -585,17 +631,19 @@ function getGoals(dt) {
 
 function getDayMeals(dt) {
     const day = getDayData(dt);
-    let totalKcal = 0, totalProt = 0;
+    let totalKcal = 0, totalProt = 0, totalCarbo = 0, totalGord = 0;
     MEAL_SLOTS.forEach(s => {
         const slot = day.slots[s.id];
         if (slot && slot.items) {
             slot.items.forEach(item => {
-                totalKcal += item.kcal || 0;
-                totalProt += item.prot || 0;
+                totalKcal  += item.kcal  || 0;
+                totalProt  += item.prot  || 0;
+                totalCarbo += item.carbo || 0;
+                totalGord  += item.gord  || 0;
             });
         }
     });
-    return { totalKcal, totalProt };
+    return { totalKcal, totalProt, totalCarbo, totalGord };
 }
 
 function getDayWater(dt) {
@@ -616,7 +664,7 @@ function rDash() {
     const dt = today();
     const dayType = getDayType(dt);
     const goals = getGoals(dt);
-    const { totalKcal, totalProt } = getDayMeals(dt);
+    const { totalKcal, totalProt, totalCarbo, totalGord } = getDayMeals(dt);
     const totalWater = getDayWater(dt);
     const vitals = D.vitals[dt] || {};
 
@@ -793,6 +841,24 @@ function rDash() {
                 </div>
                 <div class="progress-bar"><div class="progress-fill" style="width:${protPct}%;background:var(--accent)"></div></div>
             </div>
+            <div class="mb-8">
+                <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                    <span style="font-size:12px;color:var(--text2)">Carboidrato</span>
+                    <span style="font-size:12px;font-weight:600">${fmt(totalCarbo)}g${goals.carbo > 0 ? ' / ' + goals.carbo + 'g' : ''}</span>
+                </div>
+                ${goals.carbo > 0
+                    ? `<div class="progress-bar"><div class="progress-fill" style="width:${Math.min(totalCarbo / goals.carbo * 100, 100)}%;background:#3b82f6"></div></div>`
+                    : `<div style="font-size:10px;color:var(--text3);font-style:italic">Sem meta definida — defina em Metas</div>`}
+            </div>
+            <div class="mb-8">
+                <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                    <span style="font-size:12px;color:var(--text2)">Gordura total</span>
+                    <span style="font-size:12px;font-weight:600">${fmt(totalGord)}g${goals.gord > 0 ? ' / ' + goals.gord + 'g' : ''}</span>
+                </div>
+                ${goals.gord > 0
+                    ? `<div class="progress-bar"><div class="progress-fill" style="width:${Math.min(totalGord / goals.gord * 100, 100)}%;background:#a855f7"></div></div>`
+                    : `<div style="font-size:10px;color:var(--text3);font-style:italic">Sem meta definida — defina em Metas</div>`}
+            </div>
             <div>
                 <div style="display:flex;justify-content:space-between;margin-bottom:4px">
                     <span style="font-size:12px;color:var(--text2)">Hidratação</span>
@@ -929,11 +995,13 @@ function rMeal() {
 }
 
 function foodItemHtml(f) {
+    const carboStr = (f.carbo || f.carbo === 0) ? ` / ${fmt(f.carbo)}g carbo` : '';
+    const gordStr  = (f.gord  || f.gord  === 0) ? ` / ${fmt(f.gord)}g gord` : '';
     return `
         <div class="food-item">
             <div class="food-info" onclick="openAddFood('${f.id}')" style="cursor:pointer">
                 <div class="food-name">${f.name}</div>
-                <div class="food-detail">Ref: ${f.ref}${f.unit} • ${fmt(f.kcal)} kcal • ${fmt(f.prot)}g prot</div>
+                <div class="food-detail">Ref: ${f.ref}${f.unit} • ${fmt(f.kcal)} kcal / ${fmt(f.prot)}g prot${carboStr}${gordStr}</div>
             </div>
             <button onclick="event.stopPropagation();openFoodEditor('${f.id}')" style="width:28px;height:28px;border-radius:7px;background:transparent;border:1px solid var(--border);color:var(--text3);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-right:6px" title="Editar">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
@@ -1002,8 +1070,10 @@ function addFoodToMeal(foodId) {
         foodId: food.id,
         name: food.name,
         grams: grams,
-        kcal: Math.round(food.kcal * ratio * 10) / 10,
-        prot: Math.round(food.prot * ratio * 10) / 10
+        kcal:  Math.round(food.kcal  * ratio * 10) / 10,
+        prot:  Math.round(food.prot  * ratio * 10) / 10,
+        carbo: Math.round((food.carbo || 0) * ratio * 10) / 10,
+        gord:  Math.round((food.gord  || 0) * ratio * 10) / 10
     });
 
     save();
@@ -1015,7 +1085,7 @@ function addFoodToMeal(foodId) {
 // ========== FOODS — CRUD ==========
 function openFoodEditor(foodId) {
     const editing = foodId ? D.foods.find(f => f.id === foodId) : null;
-    const f = editing || { name: '', ref: 100, unit: 'g', kcal: '', prot: '', nota: '' };
+    const f = editing || { name: '', ref: 100, unit: 'g', kcal: '', prot: '', carbo: '', gord: '', nota: '' };
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
@@ -1026,13 +1096,15 @@ function openFoodEditor(foodId) {
                 <h3>${editing ? 'Editar' : 'Novo'} alimento</h3>
                 <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
             </div>
-            <div class="form-group">
-                <label class="form-label">Nome</label>
-                <input type="text" id="food-edit-name" class="form-input" placeholder="Ex: Tapioca" value="${f.name}" autofocus>
+            <div class="form-group" style="position:relative">
+                <label class="form-label">Nome ${!editing ? '<span style="color:var(--primary);font-weight:600">— digite pra buscar na TACO</span>' : ''}</label>
+                <input type="text" id="food-edit-name" class="form-input" placeholder="Ex: Tapioca, banana, arroz…" value="${f.name}" autocomplete="off" oninput="onFoodNameInput()" autofocus>
+                <div id="taco-suggestions" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);max-height:260px;overflow-y:auto;z-index:10;box-shadow:0 4px 12px rgba(0,0,0,0.3);margin-top:2px"></div>
+                <div id="taco-badge" style="display:none;margin-top:4px;font-size:11px;color:var(--primary);font-weight:600">✓ Valores oficiais TACO (UNICAMP) preenchidos</div>
             </div>
             <div style="display:flex;gap:8px">
                 <div class="form-group" style="flex:1">
-                    <label class="form-label">Quantidade de referência</label>
+                    <label class="form-label">Qtd ref</label>
                     <input type="number" id="food-edit-ref" class="form-input" placeholder="100" value="${f.ref}" min="1" inputmode="decimal">
                 </div>
                 <div class="form-group" style="flex:1">
@@ -1044,14 +1116,25 @@ function openFoodEditor(foodId) {
                     </select>
                 </div>
             </div>
+            <div style="font-size:11px;color:var(--text3);margin-bottom:8px;margin-top:-6px">Valores nutricionais por <strong>${f.ref || 100}${f.unit || 'g'}</strong> de referência:</div>
             <div style="display:flex;gap:8px">
                 <div class="form-group" style="flex:1">
-                    <label class="form-label">Calorias (por ref)</label>
-                    <input type="number" id="food-edit-kcal" class="form-input" placeholder="Ex: 240" value="${f.kcal !== '' ? f.kcal : ''}" min="0" step="0.1" inputmode="decimal">
+                    <label class="form-label">Calorias (kcal)</label>
+                    <input type="number" id="food-edit-kcal" class="form-input" placeholder="0" value="${f.kcal !== '' && f.kcal !== undefined ? f.kcal : ''}" min="0" step="0.1" inputmode="decimal">
                 </div>
                 <div class="form-group" style="flex:1">
-                    <label class="form-label">Proteína em g (por ref)</label>
-                    <input type="number" id="food-edit-prot" class="form-input" placeholder="Ex: 2" value="${f.prot !== '' ? f.prot : ''}" min="0" step="0.1" inputmode="decimal">
+                    <label class="form-label">Proteína (g)</label>
+                    <input type="number" id="food-edit-prot" class="form-input" placeholder="0" value="${f.prot !== '' && f.prot !== undefined ? f.prot : ''}" min="0" step="0.1" inputmode="decimal">
+                </div>
+            </div>
+            <div style="display:flex;gap:8px">
+                <div class="form-group" style="flex:1">
+                    <label class="form-label">Carboidrato (g)</label>
+                    <input type="number" id="food-edit-carbo" class="form-input" placeholder="0" value="${f.carbo !== '' && f.carbo !== undefined ? f.carbo : ''}" min="0" step="0.1" inputmode="decimal">
+                </div>
+                <div class="form-group" style="flex:1">
+                    <label class="form-label">Gordura total (g)</label>
+                    <input type="number" id="food-edit-gord" class="form-input" placeholder="0" value="${f.gord !== '' && f.gord !== undefined ? f.gord : ''}" min="0" step="0.1" inputmode="decimal">
                 </div>
             </div>
             <div class="form-group">
@@ -1068,18 +1151,64 @@ function openFoodEditor(foodId) {
     document.body.appendChild(overlay);
 }
 
+// Autocomplete TACO no campo Nome do modal de food
+function onFoodNameInput() {
+    const inp = $('food-edit-name');
+    const box = $('taco-suggestions');
+    if (!inp || !box) return;
+    const q = inp.value.trim();
+    if (q.length < 2) {
+        box.style.display = 'none';
+        return;
+    }
+    const matches = searchTACO(q, 8);
+    if (matches.length === 0) {
+        box.style.display = 'none';
+        return;
+    }
+    box.innerHTML = matches.map(m => `
+        <div onclick="applyTACO(${m.id})" style="padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer">
+            <div style="font-size:13px;font-weight:600;color:var(--text)">${m.name}</div>
+            <div style="font-size:11px;color:var(--text3)">${m.cat || ''} • ${m.kcal||0} kcal / ${m.prot||0}g prot / ${m.carbo||0}g carb / ${m.gord||0}g gord <span style="color:var(--text3)">(por 100g)</span></div>
+        </div>
+    `).join('');
+    box.style.display = 'block';
+}
+
+// Aplica valores TACO ao modal
+function applyTACO(id) {
+    const item = TACO.find(t => t.id === id);
+    if (!item) return;
+    $('food-edit-name').value = item.name;
+    $('food-edit-ref').value = 100;
+    $('food-edit-unit').value = 'g';
+    $('food-edit-kcal').value = item.kcal || 0;
+    $('food-edit-prot').value = item.prot || 0;
+    $('food-edit-carbo').value = item.carbo || 0;
+    $('food-edit-gord').value = item.gord || 0;
+    if (!$('food-edit-nota').value) {
+        $('food-edit-nota').value = `TACO #${item.id} — ${item.cat || ''}`;
+    }
+    $('taco-suggestions').style.display = 'none';
+    $('taco-badge').style.display = 'block';
+}
+
 function saveFoodEditor(foodId) {
     const name = $('food-edit-name').value.trim();
     const ref = parseFloat($('food-edit-ref').value);
     const unit = $('food-edit-unit').value;
     const kcal = parseFloat($('food-edit-kcal').value);
     const prot = parseFloat($('food-edit-prot').value);
+    const carbo = parseFloat($('food-edit-carbo').value) || 0;
+    const gord = parseFloat($('food-edit-gord').value) || 0;
     const nota = $('food-edit-nota').value.trim();
 
     if (!name) return toast('Nome é obrigatório', true);
     if (!ref || ref <= 0) return toast('Quantidade de referência deve ser > 0', true);
     if (isNaN(kcal) || kcal < 0) return toast('Calorias inválidas', true);
     if (isNaN(prot) || prot < 0) return toast('Proteína inválida', true);
+    if (carbo < 0) return toast('Carboidrato inválido', true);
+    if (gord < 0) return toast('Gordura inválida', true);
 
     if (foodId) {
         // editar
@@ -1090,12 +1219,14 @@ function saveFoodEditor(foodId) {
         food.unit = unit;
         food.kcal = kcal;
         food.prot = prot;
+        food.carbo = carbo;
+        food.gord = gord;
         food.nota = nota;
     } else {
         // novo — gera id slug a partir do nome
         const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').substr(0, 20);
         const id = slug + '_' + uid().substr(0, 5);
-        D.foods.push({ id, name, ref, unit, kcal, prot, nota });
+        D.foods.push({ id, name, ref, unit, kcal, prot, carbo, gord, nota });
     }
 
     save();
@@ -1277,6 +1408,16 @@ function rGoals() {
                 <div style="flex:1"><div class="goal-label">Proteína</div><div class="goal-value">${D.goals[dayType].prot}g</div></div>
                 <button class="btn btn-outline btn-sm" onclick="editGoal('prot','${dayType}')">Editar</button>
             </div>
+            <div class="goal-card">
+                <div class="goal-icon" style="background:rgba(59,130,246,0.12);color:#3b82f6">🌾</div>
+                <div style="flex:1"><div class="goal-label">Carboidrato — opcional</div><div class="goal-value">${D.goals[dayType].carbo > 0 ? D.goals[dayType].carbo + 'g' : '<span style="font-size:13px;color:var(--text3);font-weight:400">sem meta</span>'}</div></div>
+                <button class="btn btn-outline btn-sm" onclick="editGoal('carbo','${dayType}')">Editar</button>
+            </div>
+            <div class="goal-card">
+                <div class="goal-icon" style="background:rgba(168,85,247,0.12);color:#a855f7">🥑</div>
+                <div style="flex:1"><div class="goal-label">Gordura total — opcional</div><div class="goal-value">${D.goals[dayType].gord > 0 ? D.goals[dayType].gord + 'g' : '<span style="font-size:13px;color:var(--text3);font-weight:400">sem meta</span>'}</div></div>
+                <button class="btn btn-outline btn-sm" onclick="editGoal('gord','${dayType}')">Editar</button>
+            </div>
             <div class="goal-card" style="margin-bottom:0">
                 <div class="goal-icon" style="background:var(--blue-bg);color:var(--blue)">💧</div>
                 <div style="flex:1"><div class="goal-label">Hidratação</div><div class="goal-value">${fmtN(D.goals[dayType].water)} ml</div></div>
@@ -1334,8 +1475,8 @@ function rGoals() {
 }
 
 function editGoal(field, dayType) {
-    const labels = { kcal: 'Calorias (kcal)', prot: 'Proteína (g)', water: 'Hidratação (ml)' };
-    const val = prompt(labels[field] + ':', D.goals[dayType][field]);
+    const labels = { kcal: 'Calorias (kcal)', prot: 'Proteína (g)', water: 'Hidratação (ml)', carbo: 'Carboidrato (g) — 0 = sem meta', gord: 'Gordura total (g) — 0 = sem meta' };
+    const val = prompt(labels[field] + ':', D.goals[dayType][field] || 0);
     if (val !== null && !isNaN(parseFloat(val))) {
         D.goals[dayType][field] = parseFloat(val);
         save();

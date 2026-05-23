@@ -1,9 +1,10 @@
-const CACHE_VERSION = '1.1.1';
+const CACHE_VERSION = '1.1.2';
 const CACHE_NAME = 'gestao-saude-' + CACHE_VERSION;
 const URLS_TO_CACHE = [
     './',
     './index.html',
     './manifest.json',
+    './taco.json',
     './apple-touch-icon.png',
     './logo-512.png'
 ];
