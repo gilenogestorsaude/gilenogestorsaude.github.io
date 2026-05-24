@@ -293,6 +293,19 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
     <div class="page-body" id="treino-body"></div>
 </div>
 
+<!-- ========== PAGE: SINAIS VITAIS ========== -->
+<div id="page-vitais" class="page">
+    <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+        <button class="btn-icon btn-outline" onclick="showPage('dash')" style="width:36px;height:36px">←</button>
+        <div style="flex:1">
+            <div style="font-size:16px;font-weight:700">📊 Sinais Vitais</div>
+            <div style="font-size:11px;color:var(--text3)" id="vitais-subtitle">Peso, PA, FC</div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="openVitalEditor()">+ Registrar</button>
+    </div>
+    <div class="page-body" id="vitais-body"></div>
+</div>
+
 <!-- ========== PAGE: CONSULTAS MÉDICAS ========== -->
 <div id="page-consultas" class="page">
     <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
@@ -367,7 +380,7 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -695,6 +708,7 @@ function showPage(name) {
     else if (name === 'meds') rMeds();
     else if (name === 'treino') rTreino();
     else if (name === 'consultas') rConsultas();
+    else if (name === 'vitais') rVitais();
     else if (name === 'goals') rGoals();
 }
 
@@ -860,6 +874,17 @@ function rDash() {
             <div class="alert-icon">💊</div>
             <div><div class="alert-title">Medicamento(s) atrasado(s)</div>
             <div class="alert-text">${medsLate.length} dose(s) pendente(s): ${nomes}${medsLate.length > 3 ? '…' : ''}</div></div>
+        </div>`;
+    }
+
+    // Pesagem esquecida (so se ja tem habito — pelo menos 3 registros, e ultimo > 7 dias)
+    const dSinceWeight = getDaysSinceLastWeight();
+    const totalPesagens = D.vitals ? Object.values(D.vitals).filter(v => v && v.peso).length : 0;
+    if (dSinceWeight != null && dSinceWeight > 7 && totalPesagens >= 3) {
+        alerts += `<div class="alert alert-warn" onclick="showPage('vitais')" style="cursor:pointer">
+            <div class="alert-icon">⚖️</div>
+            <div><div class="alert-title">Pesagem esquecida</div>
+            <div class="alert-text">Você não pesa há ${dSinceWeight} dias — toque pra registrar</div></div>
         </div>`;
     }
 
@@ -1093,6 +1118,44 @@ function rDash() {
                         Última: <strong style="color:var(--text)">${last.especialidade || 'Consulta'}</strong> há ${dPast} dia${dPast === 1 ? '' : 's'}
                     </div>
                     <div style="font-size:11px;color:var(--text3);margin-top:2px">${consultas.length} consulta${consultas.length === 1 ? '' : 's'} • sem próxima agendada</div>
+                `;
+            })()}
+        </div>
+
+        <!-- Sinais vitais -->
+        <div class="card mb-12">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                <span class="card-title" style="margin:0">📊 Sinais Vitais</span>
+                <div style="display:flex;gap:6px">
+                    <button class="btn btn-outline btn-sm" onclick="showPage('vitais')">Histórico</button>
+                    <button class="btn btn-primary btn-sm" onclick="openVitalEditor()">+ Medir</button>
+                </div>
+            </div>
+            ${(() => {
+                const last = getLastVital();
+                const stats = getPesoStats();
+                if (!last) {
+                    return `<div style="font-size:12px;color:var(--text3);text-align:center;padding:8px 0">Nenhuma medição registrada.</div>`;
+                }
+                const dRel = daysSince(last.data);
+                const dStr = dRel === 0 ? 'hoje' : (dRel === 1 ? 'ontem' : `há ${dRel} dias`);
+                let setaSemHtml = '';
+                if (stats && stats.variacaoSemana != null) {
+                    const v = stats.variacaoSemana;
+                    if (v === 0) setaSemHtml = `<span style="color:var(--text2)">= 0,0 kg</span>`;
+                    else if (v > 0) setaSemHtml = `<span style="color:var(--red)">↑ +${fmt(v)} kg</span>`;
+                    else setaSemHtml = `<span style="color:var(--green)">↓ ${fmt(v)} kg</span>`;
+                }
+                const partes = [];
+                if (last.peso) partes.push(`<strong>${fmt(last.peso)}</strong> kg`);
+                if (last.pa) partes.push(`PA ${last.pa}`);
+                if (last.fc) partes.push(`FC ${last.fc}`);
+                return `
+                    <div style="padding:10px;background:var(--bg);border-radius:6px">
+                        <div style="font-size:10px;color:var(--text3);font-weight:600;letter-spacing:.5px">ÚLTIMA — ${dStr}</div>
+                        <div style="font-size:14px;font-weight:700;color:var(--text);margin-top:2px">${partes.join(' • ') || '—'}</div>
+                        ${setaSemHtml ? `<div style="font-size:11px;margin-top:2px">Esta semana: ${setaSemHtml}</div>` : ''}
+                    </div>
                 `;
             })()}
         </div>
@@ -1792,7 +1855,10 @@ function rGoals() {
         </div>
 
         <div class="card mb-12">
-            <div class="card-title">Sinais Vitais Hoje</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+                <span class="card-title" style="margin:0">Sinais Vitais Hoje</span>
+                <button class="btn btn-outline btn-sm" onclick="showPage('vitais')">📊 Ver histórico</button>
+            </div>
             <div class="form-group">
                 <label class="form-label">Peso (kg)</label>
                 <input type="number" class="form-input" value="${D.peso}" step="0.1" onchange="D.peso=parseFloat(this.value);save()">
@@ -2179,6 +2245,264 @@ function duplicateTreino(id) {
     document.body.appendChild(overlay);
     rTreinoEditor();
     toast('Sessão duplicada — ajuste cargas/reps');
+}
+
+// ========== SINAIS VITAIS ==========
+// Schema reusa D.vitals existente: { 'YYYY-MM-DD': { peso, pa, fc } }
+// Free mostra ultimos 30 dias. Premium futuro: historico ilimitado + grafico + alertas inteligentes.
+
+const VITAIS_FREE_DAYS = 30;
+
+function getVitaisDays() {
+    // Retorna [{data, peso, pa, fc}] ordenado por data desc, dentro da janela Free.
+    if (!D.vitals) return [];
+    const out = [];
+    Object.entries(D.vitals).forEach(([data, v]) => {
+        if (!v) return;
+        if (!v.peso && !v.pa && !v.fc) return; // pula dias totalmente vazios
+        const d = daysSince(data);
+        if (d === null || d < 0) return;
+        if (d > VITAIS_FREE_DAYS - 1) return; // limite Free
+        out.push({ data, peso: v.peso || null, pa: v.pa || null, fc: v.fc || null });
+    });
+    return out.sort((a, b) => b.data.localeCompare(a.data));
+}
+
+function getLastVital() {
+    const days = getVitaisDays();
+    return days.length > 0 ? days[0] : null;
+}
+
+function getDaysSinceLastWeight() {
+    if (!D.vitals) return null;
+    const datas = Object.keys(D.vitals).filter(d => D.vitals[d] && D.vitals[d].peso).sort().reverse();
+    if (datas.length === 0) return null;
+    return daysSince(datas[0]);
+}
+
+function getPesoStats() {
+    const days = getVitaisDays().filter(d => d.peso != null);
+    if (days.length === 0) return null;
+    const pesos = days.map(d => d.peso);
+    const min = Math.min(...pesos);
+    const max = Math.max(...pesos);
+    const avg = pesos.reduce((a, b) => a + b, 0) / pesos.length;
+    const atual = days[0].peso; // mais recente
+    const primeiroDaJanela = days[days.length - 1].peso;
+    const variacao = atual - primeiroDaJanela;
+    // Variação semanal: pega último peso e peso mais próximo de 7 dias atrás
+    let pesoSemanaPassada = null;
+    for (let i = 1; i < days.length; i++) {
+        const d = daysSince(days[i].data);
+        if (d >= 6 && d <= 8) { pesoSemanaPassada = days[i].peso; break; }
+        if (d > 8) { pesoSemanaPassada = days[i].peso; break; }
+    }
+    const variacaoSemana = pesoSemanaPassada != null ? atual - pesoSemanaPassada : null;
+    return { atual, min, max, avg, variacao, variacaoSemana, total: days.length };
+}
+
+function rVitais() {
+    if (!D) return;
+    const days = getVitaisDays();
+    const stats = getPesoStats();
+    const last = getLastVital();
+
+    // Subtítulo
+    const subEl = $('vitais-subtitle');
+    if (subEl) {
+        if (last) {
+            const d = daysSince(last.data);
+            const dStr = d === 0 ? 'hoje' : (d === 1 ? 'há 1 dia' : `há ${d} dias`);
+            subEl.textContent = `Última medição ${dStr} • ${days.length} registro${days.length === 1 ? '' : 's'} em ${VITAIS_FREE_DAYS}d`;
+        } else {
+            subEl.textContent = 'Nenhuma medição registrada ainda';
+        }
+    }
+
+    if (days.length === 0) {
+        $('vitais-body').innerHTML = `
+            <div class="card text-center" style="padding:32px 20px">
+                <div style="font-size:48px;margin-bottom:12px">📊</div>
+                <div style="font-size:16px;font-weight:700;margin-bottom:6px">Nenhum sinal vital registrado</div>
+                <div style="font-size:13px;color:var(--text3);margin-bottom:20px">Registre peso, pressão arterial e FC pra acompanhar tendências.</div>
+                <button class="btn btn-primary" onclick="openVitalEditor()">+ Registrar primeira medição</button>
+            </div>`;
+        return;
+    }
+
+    // Card resumo (stats)
+    let statsHtml = '';
+    if (stats) {
+        const setaSem = stats.variacaoSemana == null ? '—' :
+            (stats.variacaoSemana === 0 ? '= 0,0' :
+            (stats.variacaoSemana > 0 ? `↑ +${fmt(stats.variacaoSemana)}` : `↓ ${fmt(stats.variacaoSemana)}`));
+        const corSem = stats.variacaoSemana == null ? 'var(--text3)' :
+            (stats.variacaoSemana > 0 ? 'var(--red)' :
+            (stats.variacaoSemana < 0 ? 'var(--green)' : 'var(--text2)'));
+        statsHtml = `
+            <div class="card mb-12">
+                <div class="card-title">Resumo de peso (últimos ${VITAIS_FREE_DAYS} dias)</div>
+                <div style="display:flex;gap:8px;margin-top:8px">
+                    <div style="flex:1;text-align:center;padding:10px;background:var(--bg);border-radius:8px">
+                        <div style="font-size:10px;color:var(--text3)">Atual</div>
+                        <div style="font-size:20px;font-weight:700">${fmt(stats.atual)}</div>
+                        <div style="font-size:10px;color:var(--text3)">kg</div>
+                    </div>
+                    <div style="flex:1;text-align:center;padding:10px;background:var(--bg);border-radius:8px">
+                        <div style="font-size:10px;color:var(--text3)">Média ${VITAIS_FREE_DAYS}d</div>
+                        <div style="font-size:20px;font-weight:700">${fmt(stats.avg)}</div>
+                        <div style="font-size:10px;color:var(--text3)">kg</div>
+                    </div>
+                    <div style="flex:1;text-align:center;padding:10px;background:var(--bg);border-radius:8px">
+                        <div style="font-size:10px;color:var(--text3)">Semana</div>
+                        <div style="font-size:20px;font-weight:700;color:${corSem}">${setaSem}</div>
+                        <div style="font-size:10px;color:var(--text3)">kg</div>
+                    </div>
+                </div>
+                <div style="font-size:11px;color:var(--text3);margin-top:8px">Min: ${fmt(stats.min)} • Max: ${fmt(stats.max)} • ${stats.total} pesagens</div>
+            </div>`;
+    }
+
+    // Lista cronológica
+    let listHtml = '';
+    days.forEach(d => {
+        const dRel = daysSince(d.data);
+        const dStr = dRel === 0 ? 'hoje' : (dRel === 1 ? 'ontem' : `há ${dRel} dias`);
+        const partes = [];
+        if (d.peso) partes.push(`<span style="color:var(--text)"><strong>${fmt(d.peso)}</strong> <span style="color:var(--text3)">kg</span></span>`);
+        if (d.pa) partes.push(`<span style="color:#3b82f6">PA <strong>${d.pa}</strong></span>`);
+        if (d.fc) partes.push(`<span style="color:#a855f7">FC <strong>${d.fc}</strong> bpm</span>`);
+        listHtml += `
+            <div class="card mb-8" onclick="openVitalEditor('${d.data}')" style="cursor:pointer">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+                    <div style="flex:1;min-width:0">
+                        <div style="font-size:13px;font-weight:600;color:var(--text)">${formatDataTreino(d.data)}</div>
+                        <div style="font-size:11px;color:var(--text3)">${dStr}</div>
+                    </div>
+                    <div style="text-align:right;font-size:12px;line-height:1.5">
+                        ${partes.join('<br>') || '<span style="color:var(--text3)">sem dados</span>'}
+                    </div>
+                </div>
+            </div>`;
+    });
+
+    // Hint Premium
+    const premiumHint = `
+        <div class="card" style="background:var(--surface2);border:1px dashed var(--border);margin-top:12px">
+            <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text3)">
+                <span style="font-size:16px">💎</span>
+                <span>Free mostra ${VITAIS_FREE_DAYS} dias. Premium: histórico ilimitado + gráfico de tendência + alertas inteligentes (PA fora de faixa por X dias).</span>
+            </div>
+        </div>`;
+
+    $('vitais-body').innerHTML = `${statsHtml}${listHtml}${premiumHint}`;
+}
+
+let editingVital = null;
+
+function openVitalEditor(dataParam) {
+    const dt = dataParam || today();
+    const existing = (D.vitals && D.vitals[dt]) || {};
+    editingVital = {
+        data: dt,
+        peso: existing.peso || '',
+        pa: existing.pa || '',
+        fc: existing.fc || ''
+    };
+    const isEditing = !!(existing.peso || existing.pa || existing.fc);
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'vital-editor';
+    overlay.onclick = e => { if (e.target === overlay) closeVitalEditor(); };
+    overlay.innerHTML = `
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>${isEditing ? 'Editar' : 'Registrar'} medição</h3>
+                <button class="modal-close" onclick="closeVitalEditor()">×</button>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Data</label>
+                <input type="date" id="vital-data" class="form-input" value="${editingVital.data}"
+                       oninput="editingVital.data = this.value">
+                <div style="font-size:11px;color:var(--text3);margin-top:4px">Pode registrar retroativamente — qualquer data dentro dos últimos ${VITAIS_FREE_DAYS} dias</div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Peso (kg)</label>
+                <input type="number" id="vital-peso" class="form-input" value="${editingVital.peso}" placeholder="Ex: 66,5" step="0.1" min="20" max="300" inputmode="decimal"
+                       oninput="editingVital.peso = parseFloat(this.value) || ''">
+            </div>
+            <div style="display:flex;gap:8px">
+                <div class="form-group" style="flex:1">
+                    <label class="form-label">PA</label>
+                    <input type="text" id="vital-pa" class="form-input" value="${editingVital.pa}" placeholder="120/80"
+                           oninput="editingVital.pa = this.value">
+                </div>
+                <div class="form-group" style="flex:1">
+                    <label class="form-label">FC (bpm)</label>
+                    <input type="number" id="vital-fc" class="form-input" value="${editingVital.fc}" placeholder="76" min="20" max="220" inputmode="numeric"
+                           oninput="editingVital.fc = parseInt(this.value) || ''">
+                </div>
+            </div>
+            <div style="font-size:11px;color:var(--text3);margin-bottom:12px">Todos opcionais — registre apenas o que mediu.</div>
+            <div style="display:flex;gap:8px;margin-top:8px">
+                ${isEditing ? `<button class="btn btn-outline" style="flex:1;color:var(--red)" onclick="deleteVitalDay()">Excluir</button>` : ''}
+                <button class="btn btn-outline" style="flex:1" onclick="closeVitalEditor()">Cancelar</button>
+                <button class="btn btn-primary" style="flex:1" onclick="saveVitalEditor()">Salvar</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+}
+
+function closeVitalEditor() {
+    const overlay = $('vital-editor');
+    if (overlay) overlay.remove();
+    editingVital = null;
+}
+
+function saveVitalEditor() {
+    if (!editingVital.data) return toast('Data é obrigatória', true);
+    const peso = editingVital.peso === '' ? null : parseFloat(editingVital.peso);
+    const fc = editingVital.fc === '' ? null : parseInt(editingVital.fc);
+    const pa = (editingVital.pa || '').trim() || null;
+    if (peso == null && !pa && fc == null) {
+        return toast('Informe ao menos um valor (peso, PA ou FC)', true);
+    }
+    if (peso != null && (peso < 20 || peso > 300)) return toast('Peso fora do range plausível (20-300 kg)', true);
+    if (fc != null && (fc < 20 || fc > 220)) return toast('FC fora do range plausível (20-220 bpm)', true);
+
+    if (!D.vitals) D.vitals = {};
+    if (!D.vitals[editingVital.data]) D.vitals[editingVital.data] = {};
+    const v = D.vitals[editingVital.data];
+    if (peso != null) v.peso = peso; else delete v.peso;
+    if (pa) v.pa = pa; else delete v.pa;
+    if (fc != null) v.fc = fc; else delete v.fc;
+
+    // Se a data for hoje E peso foi atualizado, sincroniza D.peso (campo "atual")
+    if (editingVital.data === today() && peso != null) {
+        D.peso = peso;
+    }
+
+    save();
+    closeVitalEditor();
+    toast('✓ Medição salva');
+    if (cPage === 'vitais') rVitais();
+    if (cPage === 'dash') rDash();
+    if (cPage === 'goals') rGoals();
+}
+
+function deleteVitalDay() {
+    if (!editingVital) return;
+    if (!confirm(`Excluir todos os dados de ${formatDataTreino(editingVital.data)}?`)) return;
+    if (D.vitals && D.vitals[editingVital.data]) {
+        delete D.vitals[editingVital.data];
+    }
+    save();
+    closeVitalEditor();
+    toast('Medição excluída');
+    if (cPage === 'vitais') rVitais();
+    if (cPage === 'dash') rDash();
 }
 
 // ========== CONSULTAS MÉDICAS ==========
