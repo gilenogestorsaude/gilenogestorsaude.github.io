@@ -167,28 +167,127 @@ Diferencial concreto pra industrial izados (whey de marca, barrinhas, suplemento
 
 ---
 
-## 9. Anexar exames laboratoriais + extração por IA (Premium individual)
+## 9. Consultas Médicas — Camada Premium (alto valor clínico)
 
-Upload de PDF do exame → Claude API ou GPT Vision extrai valores → gráfico histórico (glicemia, colesterol, vitamina D, etc).
+**Status:** decidido em 2026-05-23 que Free entrega cadastro básico de consultas (S4, já implementado em v1.3.0) e Premium entrega a camada avançada que torna o app indispensável pra cuidar da saúde.
 
-**Esforço:** 3-5h. Inclui storage Firebase Storage (PDFs ficam aqui) + extração estruturada por IA + UI de visualização temporal.
+### Free (já entregue na v1.3.0)
+- Cadastro: data, médico, especialidade, queixa, conduta, prescrição, próxima consulta, notas
+- Lista cronológica das **últimas 50 consultas**
+- Alerta no dashboard de consulta nos próximos 7 dias
+- Separação Agendadas × Histórico
+- Modal de edição completo
 
-Alto valor clínico — médico fica feliz quando paciente leva exames organizados.
+### Premium (roadmap)
+
+#### 9.1. Histórico ilimitado
+Free limita visualização das últimas 50; Premium remove limite.
+Implementação: paginação lazy + remoção do slice no `rConsultas()`.
+**Esforço:** 30 min. Trivial. Só vale a pena quando há paywall implementado.
+
+#### 9.2. Anexar PDFs de exames + extração por IA *(killer feature)*
+Upload de PDF do exame laboratorial → Claude API ou GPT Vision extrai valores estruturados → guarda no Firestore relacionado à consulta → mostra evolução temporal (glicemia, colesterol total, HDL, LDL, vitamina D, TSH, PSA, hemoglobina, etc).
+
+**Esforço:** 4-6h. Inclui:
+- Firebase Storage pra hospedar PDFs (cota free: 5 GB)
+- Extração via Claude API (~R$ 0,02-0,08 por PDF de 1-2 páginas)
+- UI de visualização: lista de exames anexos por consulta + dossiê histórico de marcadores
+- Tratamento de extração ambígua (review pelo user antes de salvar)
+
+**Valor pra cliente:** médico fica MUITO feliz quando paciente leva exames organizados + evolução temporal — é a coisa que cardiologista, endocrino, urologista mais pedem e raramente recebem.
+
+#### 9.3. Notificação push de consulta próxima
+Free tem alerta in-app (precisa abrir o app pra ver). Premium tem push real via Firebase Cloud Messaging que chega no celular mesmo com app fechado.
+
+**Esforço:** 2-3h. VAPID keys + service worker handler + modal de permissão. Compartilhado com #3 do roadmap geral.
+
+#### 9.4. Gerar dossiê médico em PDF *(diferencial REAL)*
+Botão "Exportar histórico médico em PDF" que gera dossiê profissional com:
+- Identificação (nome, idade, contatos de emergência)
+- Medicamentos atuais em uso (consome `D.meds`)
+- Alergias e condições crônicas (campo novo)
+- Última PA / FC / peso (consome vitals)
+- Últimas 10 consultas resumidas (especialidade, data, queixa, conduta)
+- Últimos exames anexados (resumo de marcadores)
+- Sinais vitais — gráfico de tendência (se Premium)
+
+**Esforço:** 4-5h. jsPDF + Chart.js + template profissional + opção "compartilhar via WhatsApp/email".
+
+**Valor:** leva pra consulta com qualquer médico → "Doutor, aqui está meu histórico organizado" → experiência transformadora pro paciente.
+
+#### 9.5. Lembretes inteligentes via IA
+Claude API roda análise periódica (semanal/mensal) sobre o histórico:
+- "Última visita ao urologista foi há 8 meses — agendar?"
+- "PA elevada em 3 das últimas 5 medições — considere consulta com cardio"
+- "Glicose vem subindo gradualmente — vale pedir hemoglobina glicada"
+
+**Esforço:** 3-4h. Função Cloud (Firebase Functions) + prompt engineering + integração com `D.consultas + D.vitals + exames`.
+
+**Custo operacional:** ~R$ 0,10-0,30 por análise por usuário (Claude Haiku barato). Inclui no preço Premium.
+
+#### 9.6. Compartilhamento com cuidadores/família
+Permite usuário Premium compartilhar leitura do histórico médico com email autorizado (esposa, filho, cuidador). Útil pra idosos ou pacientes em tratamento sério.
+
+**Esforço:** 3-4h. Schema Firestore muda (autorização separada por email), UI de gestão de compartilhamento, isolamento de leitura (cuidador vê mas não edita).
+
+#### 9.7. Comparativo temporal de exames
+Quando há múltiplos exames do mesmo tipo, mostra gráfico de evolução: colesterol total ao longo de 2 anos, TSH ao longo de 5 consultas, PSA por consulta urológica, etc.
+
+**Esforço:** 2-3h. Depende de #9.2 estar implementado (precisa dos valores extraídos). Chart.js + UI de seleção de marcador.
+
+#### 9.8. Múltiplas tags/categorias por consulta
+Free tem só especialidade. Premium permite categorizar com tags: "rotina anual", "preventivo", "urgência", "follow-up", "segunda opinião", etc. Útil pra filtrar e analisar padrões.
+
+**Esforço:** 1-2h. Trivial.
+
+### Por que essa estratégia funciona
+
+**Free hookat** com cadastro completo (resolve a dor básica: "ter histórico médico organizado").
+**Premium diferencia** com IA + automação + PDF dossiê (resolve dor profunda: "ser um paciente bem preparado, com dados na mão").
+**Paciente fideliza** porque cancelar Premium = perder exames anexados, gráficos, dossiê = friction alto.
+
+### Sequenciamento sugerido (depois do Free lançado)
+
+1. **9.3 Push notifications** (compartilhado com roadmap geral, baixo custo) — primeiro
+2. **9.2 Anexar PDFs + extração IA** — feature ÂNCORA, o que justifica a assinatura
+3. **9.4 Dossiê PDF** — multiplica valor das #9.2
+4. **9.5 Lembretes IA** — retenção, hábito
+5. **9.7 Comparativo de marcadores** — depende de #9.2 ter histórico
+6. **9.1 Histórico ilimitado** — quando precisar
+7. **9.6 Família** — quando tiver demanda
+8. **9.8 Tags** — refinamento
 
 ---
 
 ## Prioridades sugeridas (ordem de implementação após Free)
 
-1. **Notificações push** (#3) — concretiza promessa do site, atrai usuário a virar Premium
-2. **PDF semanal/mensal** (#4) — valor visível imediato
-3. **Detalhamento nutricional** (#1) — barato de implementar, dados já estão guardados
-4. **Análise IA** (#2) — diferencial técnico forte
-5. **Código de barras** (#8) — UX delightful
-6. **Múltiplos perfis** (#7) — expande TAM (família)
-7. **Apple Health / Google Fit** (#6) — atrai público fitness
-8. **Exames laboratoriais** (#9) — diferencial clínico
-9. **Marketplace de profissionais** (#5) — só depois de tudo acima + massa crítica de usuários
+Reordenado em 2026-05-23 após decisão estratégica de fazer "Consultas Médicas" como pilar Premium (item #9 robusto).
+
+1. **Notificações push** (#3) — concretiza promessa "alertas e lembretes" do site, retém Free, atrai Premium. Compartilhado entre roadmap geral e item #9.3.
+2. **Anexar PDFs de exames + IA** (#9.2) — **feature âncora** do Premium. O que justifica pagar.
+3. **Dossiê médico em PDF** (#9.4) — multiplica valor de #9.2. Diferencial REAL pra paciente.
+4. **PDF semanal/mensal de saúde geral** (#4) — valor visível imediato, formato similar a #9.4.
+5. **Detalhamento nutricional** (#1) — barato, dados já guardados no taco.json.
+6. **Análise IA dos hábitos** (#2) — diferencial técnico. Compartilhado com #9.5 (lembretes médicos).
+7. **Comparativo temporal de exames** (#9.7) — depende de #9.2 ter histórico acumulado.
+8. **Código de barras** (#8) — UX delightful no diário nutricional.
+9. **Múltiplos perfis** (#7) — expande TAM (família).
+10. **Apple Health / Google Fit** (#6) — atrai público fitness.
+11. **Compartilhar família** (#9.6) — pra idosos / cuidadores.
+12. **Marketplace de profissionais** (#5) — só depois de tudo acima + massa crítica de usuários (100-500 ativos).
+
+### Pilares do Premium pra justificar assinatura mensal
+
+| Pilar | Componentes |
+|---|---|
+| **Inteligência** | #2 análise hábitos, #9.5 lembretes médicos IA, #9.2 extração de exames |
+| **Automação** | #3 push, #6 integrações, #8 código de barras |
+| **Portabilidade** | #4 PDF semanal, #9.4 dossiê médico, exportações |
+| **Amplitude** | #1 nutricional avançado, #7 família, #9.1 histórico ilimitado |
+| **Profundidade clínica** | #9.2/9.4/9.5/9.7 — toda a camada de consultas Premium |
+
+A camada **Profundidade clínica** (item #9 expandido) é o que torna o Gileno Gestão Saúde **diferente** de qualquer app de tracking de nutrição/treino do mercado.
 
 ---
 
-*Última atualização: 2026-05-23 (v1.1.2)*
+*Última atualização: 2026-05-23 (após decisão Free × Premium pra Consultas — v1.3.0)*
