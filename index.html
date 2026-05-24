@@ -280,6 +280,19 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
     <div class="page-body" id="hydro-body"></div>
 </div>
 
+<!-- ========== PAGE: TREINO ========== -->
+<div id="page-treino" class="page">
+    <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+        <button class="btn-icon btn-outline" onclick="showPage('dash')" style="width:36px;height:36px">←</button>
+        <div style="flex:1">
+            <div style="font-size:16px;font-weight:700">🏋️ Treino</div>
+            <div style="font-size:11px;color:var(--text3)" id="treino-subtitle">Histórico de sessões</div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="openTreinoEditor()">+ Nova</button>
+    </div>
+    <div class="page-body" id="treino-body"></div>
+</div>
+
 <!-- ========== PAGE: MEDICAMENTOS ========== -->
 <div id="page-meds" class="page">
     <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
@@ -341,7 +354,7 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.1.5';
+const APP_VERSION = '1.2.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -439,6 +452,9 @@ function defaultD() {
         meds: [],
         // medsTaken: { '2026-05-23': { medId: ['08:05', '20:10'] } }
         medsTaken: {},
+        // Treinos (sessoes registradas, uma por instancia)
+        // treinos: [{ id, data: 'YYYY-MM-DD', nome, exercicios: [{id, nome, series: [{reps, carga}]}], notas?, duracao?, createdAt }]
+        treinos: [],
         // Settings
         theme: 'dark',
         bphCutoff: 17
@@ -554,6 +570,7 @@ async function load() {
             if (!D.bphCutoff) D.bphCutoff = 17;
             if (!D.meds) D.meds = [];
             if (!D.medsTaken) D.medsTaken = {};
+            if (!D.treinos) D.treinos = [];
             // v1.1.2 — adiciona carbo/gord aos foods existentes (default 0)
             if (D.foods) {
                 D.foods.forEach(f => {
@@ -659,6 +676,7 @@ function showPage(name) {
     else if (name === 'meal') rMeal();
     else if (name === 'hydro') rHydro();
     else if (name === 'meds') rMeds();
+    else if (name === 'treino') rTreino();
     else if (name === 'goals') rGoals();
 }
 
@@ -750,7 +768,7 @@ function rDash() {
                 <div class="header-user-name">${userName}</div>
                 <div class="header-date">${dateLabel(dt)}</div>
             </div>
-            <button class="header-badge" onclick="toggleDayType()">${dayType === 'treino' ? '🏋️ Treino' : '😴 Descanso'}</button>
+            <button class="header-badge" onclick="showPage('treino')" title="Abrir página de treino">${dayType === 'treino' ? '🏋️ Treino' : '😴 Descanso'}</button>
         </div>
         <div class="header-stats">
             <div class="header-stat">
@@ -969,6 +987,45 @@ function rDash() {
                             </div>
                         </div>`).join(''))
             }
+        </div>
+
+        <!-- Treino -->
+        <div class="card mb-12">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                <span class="card-title" style="margin:0">🏋️ Treino</span>
+                <div style="display:flex;gap:6px">
+                    <button class="btn btn-outline btn-sm" onclick="showPage('treino')">Ver tudo</button>
+                    <button class="btn btn-primary btn-sm" onclick="openTreinoEditor()">+ Registrar</button>
+                </div>
+            </div>
+            ${(() => {
+                const last = getLastTreino();
+                const week = getTreinosWeek();
+                if (!last) {
+                    return `<div style="font-size:12px;color:var(--text3);text-align:center;padding:8px 0">Nenhuma sessão registrada ainda.</div>`;
+                }
+                const dias = daysSince(last.data);
+                const dStr = dias === 0 ? 'hoje' : (dias === 1 ? 'há 1 dia' : `há ${dias} dias`);
+                const stat = treinoStats(last);
+                const alert = (dayType === 'treino' && dias > 0) ? `
+                    <div style="margin-top:8px;padding:8px 10px;background:rgba(245,158,11,0.12);border-radius:6px;font-size:11px;color:#fbbf24">
+                        ⏰ Hoje é dia de treino e você ainda não registrou — toque "+ Registrar"
+                    </div>` : '';
+                return `
+                    <div style="display:flex;gap:8px;margin-bottom:8px">
+                        <div style="flex:1;text-align:center;padding:8px;background:var(--bg);border-radius:6px">
+                            <div style="font-size:10px;color:var(--text3)">Esta semana</div>
+                            <div style="font-size:18px;font-weight:700;color:var(--primary)">${week.length}</div>
+                        </div>
+                        <div style="flex:2;text-align:left;padding:8px 10px;background:var(--bg);border-radius:6px">
+                            <div style="font-size:10px;color:var(--text3)">Última: ${dStr}</div>
+                            <div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${last.nome}</div>
+                            <div style="font-size:10px;color:var(--text3)">${stat.exercicios} ex • ${stat.series} séries • ${fmtN(stat.volume)}kg vol</div>
+                        </div>
+                    </div>
+                    ${alert}
+                `;
+            })()}
         </div>
 
         <!-- Hidratação mini -->
@@ -1716,6 +1773,343 @@ function saveVital(field, value) {
     if (!D.vitals[dt]) D.vitals[dt] = {};
     D.vitals[dt][field] = value;
     save();
+}
+
+// ========== TREINO — HELPERS ==========
+function daysSince(dataStr) {
+    if (!dataStr) return null;
+    const [y, m, d] = dataStr.split('-').map(Number);
+    const dt = new Date(y, m - 1, d);
+    const now = new Date();
+    const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    return Math.floor((today0 - dt) / (1000 * 60 * 60 * 24));
+}
+
+function getLastTreino() {
+    if (!D.treinos || D.treinos.length === 0) return null;
+    return D.treinos.slice().sort((a, b) => {
+        if (a.data !== b.data) return b.data.localeCompare(a.data);
+        return (b.createdAt || 0) - (a.createdAt || 0);
+    })[0];
+}
+
+function getTreinosWeek() {
+    if (!D.treinos || D.treinos.length === 0) return [];
+    const lim = daysSince; // captura ref pra evitar redef
+    return D.treinos.filter(t => {
+        const d = daysSince(t.data);
+        return d !== null && d >= 0 && d < 7;
+    });
+}
+
+function treinoVolume(t) {
+    if (!t || !t.exercicios) return 0;
+    let v = 0;
+    t.exercicios.forEach(ex => {
+        (ex.series || []).forEach(s => {
+            v += (s.reps || 0) * (s.carga || 0);
+        });
+    });
+    return Math.round(v);
+}
+
+function treinoStats(t) {
+    if (!t || !t.exercicios) return { exercicios: 0, series: 0, volume: 0 };
+    const exercicios = t.exercicios.length;
+    let series = 0;
+    t.exercicios.forEach(ex => series += (ex.series || []).length);
+    return { exercicios, series, volume: treinoVolume(t) };
+}
+
+function formatDataTreino(dataStr) {
+    // 'YYYY-MM-DD' -> 'Sab 23 Mai'
+    if (!dataStr) return '';
+    const [y, m, d] = dataStr.split('-').map(Number);
+    const dt = new Date(y, m - 1, d);
+    const dias = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+    const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+    return `${dias[dt.getDay()]} ${d} ${meses[m - 1]}`;
+}
+
+// ========== TREINO — RENDER PÁGINA ==========
+function rTreino() {
+    if (!D) return;
+    const treinos = (D.treinos || []).slice().sort((a, b) => {
+        if (a.data !== b.data) return b.data.localeCompare(a.data);
+        return (b.createdAt || 0) - (a.createdAt || 0);
+    });
+
+    const last = getLastTreino();
+    const week = getTreinosWeek();
+    const dias = last ? daysSince(last.data) : null;
+
+    // Subtítulo do header
+    if (last) {
+        const subEl = $('treino-subtitle');
+        if (subEl) {
+            const dStr = dias === 0 ? 'hoje' : (dias === 1 ? 'há 1 dia' : `há ${dias} dias`);
+            subEl.textContent = `Última: ${last.nome} (${dStr}) • ${week.length} esta semana`;
+        }
+    }
+
+    if (treinos.length === 0) {
+        $('treino-body').innerHTML = `
+            <div class="card text-center" style="padding:32px 20px">
+                <div style="font-size:48px;margin-bottom:12px">🏋️</div>
+                <div style="font-size:16px;font-weight:700;margin-bottom:6px">Nenhum treino registrado</div>
+                <div style="font-size:13px;color:var(--text3);margin-bottom:20px">Registre suas sessões com exercícios, séries, reps e cargas pra acompanhar evolução.</div>
+                <button class="btn btn-primary" onclick="openTreinoEditor()">+ Registrar primeira sessão</button>
+            </div>`;
+        return;
+    }
+
+    // Card resumo
+    let resumoHtml = '';
+    if (last) {
+        const stat = treinoStats(last);
+        const dStr = dias === 0 ? 'hoje' : (dias === 1 ? 'há 1 dia' : `há ${dias} dias`);
+        resumoHtml = `
+            <div class="card mb-12">
+                <div class="card-title">Resumo</div>
+                <div style="display:flex;gap:12px;margin-bottom:10px">
+                    <div style="flex:1;text-align:center;padding:10px;background:var(--bg);border-radius:8px">
+                        <div style="font-size:11px;color:var(--text3)">Esta semana</div>
+                        <div style="font-size:22px;font-weight:700;color:var(--primary)">${week.length}</div>
+                        <div style="font-size:10px;color:var(--text3)">${week.length === 1 ? 'sessão' : 'sessões'}</div>
+                    </div>
+                    <div style="flex:1;text-align:center;padding:10px;background:var(--bg);border-radius:8px">
+                        <div style="font-size:11px;color:var(--text3)">Total registrado</div>
+                        <div style="font-size:22px;font-weight:700">${treinos.length}</div>
+                        <div style="font-size:10px;color:var(--text3)">sessões</div>
+                    </div>
+                </div>
+                <div style="font-size:12px;color:var(--text2)">
+                    Última: <strong style="color:var(--text)">${last.nome}</strong> ${dStr} • ${stat.exercicios} exercícios • ${stat.series} séries • ${fmtN(stat.volume)}kg vol
+                </div>
+            </div>`;
+    }
+
+    // Lista de sessões
+    let listHtml = '';
+    treinos.forEach(t => {
+        const stat = treinoStats(t);
+        const exNomes = t.exercicios.slice(0, 3).map(e => e.nome).filter(Boolean).join(', ') + (t.exercicios.length > 3 ? '…' : '');
+        listHtml += `
+            <div class="card mb-8" onclick="openTreinoEditor('${t.id}')" style="cursor:pointer">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px">
+                    <div style="flex:1;min-width:0">
+                        <div style="font-size:14px;font-weight:700;color:var(--text)">${t.nome}</div>
+                        <div style="font-size:11px;color:var(--text3)">${formatDataTreino(t.data)}${t.duracao ? ' • ' + t.duracao + ' min' : ''}</div>
+                    </div>
+                    <button class="btn btn-outline btn-sm" onclick="event.stopPropagation();duplicateTreino('${t.id}')" title="Duplicar pra hoje">📋</button>
+                </div>
+                <div style="font-size:11px;color:var(--text2);margin-bottom:4px">${exNomes || '—'}</div>
+                <div style="font-size:11px;color:var(--text3)">
+                    ${stat.exercicios} ex • ${stat.series} séries • ${fmtN(stat.volume)}kg volume
+                </div>
+            </div>`;
+    });
+
+    $('treino-body').innerHTML = `${resumoHtml}${listHtml}`;
+}
+
+// ========== TREINO — MODAL DE EDIÇÃO ==========
+let editingTreino = null;
+
+function openTreinoEditor(treinoId) {
+    if (treinoId) {
+        const found = D.treinos.find(t => t.id === treinoId);
+        if (!found) return;
+        editingTreino = JSON.parse(JSON.stringify(found));
+    } else {
+        // Novo: pega nome do último treino como sugestão
+        const last = getLastTreino();
+        editingTreino = {
+            id: uid(),
+            data: today(),
+            nome: last ? last.nome : '',
+            exercicios: [],
+            notas: '',
+            duracao: null,
+            createdAt: Date.now()
+        };
+    }
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'treino-editor';
+    overlay.onclick = e => { if (e.target === overlay) closeTreinoEditor(); };
+    document.body.appendChild(overlay);
+    rTreinoEditor();
+}
+
+function closeTreinoEditor() {
+    const overlay = $('treino-editor');
+    if (overlay) overlay.remove();
+    editingTreino = null;
+}
+
+function rTreinoEditor() {
+    const overlay = $('treino-editor');
+    if (!overlay || !editingTreino) return;
+
+    const isEditing = D.treinos.some(t => t.id === editingTreino.id);
+
+    let exHtml = '';
+    editingTreino.exercicios.forEach((ex, exIdx) => {
+        let serHtml = '';
+        (ex.series || []).forEach((s, sIdx) => {
+            serHtml += `
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+                    <span style="font-size:11px;color:var(--text3);width:18px">${sIdx + 1}</span>
+                    <input type="number" inputmode="decimal" value="${s.reps || ''}" placeholder="reps" min="0" step="1"
+                           oninput="editingTreino.exercicios[${exIdx}].series[${sIdx}].reps = parseFloat(this.value) || 0"
+                           style="flex:1;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;text-align:center;width:60px">
+                    <span style="color:var(--text3);font-size:13px">×</span>
+                    <input type="number" inputmode="decimal" value="${s.carga || ''}" placeholder="kg" min="0" step="0.5"
+                           oninput="editingTreino.exercicios[${exIdx}].series[${sIdx}].carga = parseFloat(this.value) || 0"
+                           style="flex:1;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;text-align:center;width:70px">
+                    <span style="color:var(--text3);font-size:11px">kg</span>
+                    <button onclick="removeSerie(${exIdx}, ${sIdx})" style="width:28px;height:28px;border-radius:6px;background:var(--red-bg);border:none;color:var(--red);cursor:pointer;font-size:14px;flex-shrink:0">×</button>
+                </div>`;
+        });
+
+        exHtml += `
+            <div style="background:var(--bg);border-radius:8px;padding:10px;margin-bottom:8px">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+                    <input type="text" value="${ex.nome || ''}" placeholder="Nome do exercício (ex: Supino reto)"
+                           oninput="editingTreino.exercicios[${exIdx}].nome = this.value"
+                           style="flex:1;padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-weight:600">
+                    <button onclick="removeExercise(${exIdx})" style="width:28px;height:28px;border-radius:6px;background:var(--red-bg);border:none;color:var(--red);cursor:pointer;font-size:13px;flex-shrink:0" title="Remover exercício">🗑</button>
+                </div>
+                ${serHtml}
+                <button onclick="addSerie(${exIdx})" style="width:100%;padding:6px;background:transparent;border:1px dashed var(--border);border-radius:6px;color:var(--primary);font-size:12px;font-weight:600;cursor:pointer;margin-top:4px">+ Série</button>
+            </div>`;
+    });
+
+    overlay.innerHTML = `
+        <div class="modal-box" style="max-height:92vh;display:flex;flex-direction:column">
+            <div class="modal-header" style="flex-shrink:0">
+                <h3>${isEditing ? 'Editar' : 'Nova'} sessão</h3>
+                <button class="modal-close" onclick="closeTreinoEditor()">×</button>
+            </div>
+            <div style="overflow-y:auto;flex:1;padding-right:2px">
+                <div style="display:flex;gap:8px">
+                    <div class="form-group" style="flex:1">
+                        <label class="form-label">Data</label>
+                        <input type="date" id="treino-data" class="form-input" value="${editingTreino.data}"
+                               oninput="editingTreino.data = this.value">
+                    </div>
+                    <div class="form-group" style="flex:1">
+                        <label class="form-label">Duração (min)</label>
+                        <input type="number" id="treino-duracao" class="form-input" value="${editingTreino.duracao || ''}" placeholder="Opcional"
+                               oninput="editingTreino.duracao = parseInt(this.value) || null" min="0" inputmode="numeric">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Nome da sessão</label>
+                    <input type="text" id="treino-nome" class="form-input" value="${editingTreino.nome}" placeholder="Ex: Treino A, Peito/Tríceps, Pernas"
+                           oninput="editingTreino.nome = this.value">
+                </div>
+                <div style="margin-bottom:8px;font-size:13px;font-weight:600;color:var(--text)">Exercícios (${editingTreino.exercicios.length})</div>
+                ${exHtml || '<div style="font-size:12px;color:var(--text3);text-align:center;padding:12px 0">Nenhum exercício ainda</div>'}
+                <button onclick="addExercise()" style="width:100%;padding:10px;background:var(--surface2);border:1px dashed var(--primary);border-radius:8px;color:var(--primary);font-size:13px;font-weight:600;cursor:pointer;margin-bottom:12px">+ Exercício</button>
+                <div class="form-group">
+                    <label class="form-label">Notas — opcional</label>
+                    <textarea id="treino-notas" class="form-input" rows="2" placeholder="Como se sentiu, observações…"
+                              oninput="editingTreino.notas = this.value">${editingTreino.notas || ''}</textarea>
+                </div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:12px;flex-shrink:0">
+                ${isEditing ? `<button class="btn btn-outline" style="flex:1;color:var(--red)" onclick="deleteTreino('${editingTreino.id}')">Excluir</button>` : ''}
+                <button class="btn btn-outline" style="flex:1" onclick="closeTreinoEditor()">Cancelar</button>
+                <button class="btn btn-primary" style="flex:1" onclick="saveTreino()">Salvar</button>
+            </div>
+        </div>
+    `;
+}
+
+function addExercise() {
+    editingTreino.exercicios.push({ id: uid(), nome: '', series: [{ reps: 10, carga: 0 }] });
+    rTreinoEditor();
+}
+
+function removeExercise(idx) {
+    editingTreino.exercicios.splice(idx, 1);
+    rTreinoEditor();
+}
+
+function addSerie(exIdx) {
+    const ex = editingTreino.exercicios[exIdx];
+    const last = ex.series[ex.series.length - 1];
+    ex.series.push({
+        reps: last ? last.reps : 10,
+        carga: last ? last.carga : 0
+    });
+    rTreinoEditor();
+}
+
+function removeSerie(exIdx, sIdx) {
+    editingTreino.exercicios[exIdx].series.splice(sIdx, 1);
+    rTreinoEditor();
+}
+
+function saveTreino() {
+    if (!editingTreino.nome.trim()) return toast('Nome da sessão é obrigatório', true);
+    // Limpa exercícios sem nome ou sem séries válidas
+    editingTreino.exercicios = editingTreino.exercicios
+        .filter(e => e.nome && e.nome.trim())
+        .map(e => ({
+            ...e,
+            nome: e.nome.trim(),
+            series: (e.series || []).filter(s => (s.reps || 0) > 0 || (s.carga || 0) > 0)
+        }))
+        .filter(e => e.series.length > 0);
+    if (editingTreino.exercicios.length === 0) {
+        return toast('Adicione ao menos 1 exercício com séries válidas', true);
+    }
+    const idx = D.treinos.findIndex(t => t.id === editingTreino.id);
+    if (idx >= 0) {
+        D.treinos[idx] = editingTreino;
+    } else {
+        D.treinos.push(editingTreino);
+    }
+    save();
+    const wasEditing = idx >= 0;
+    closeTreinoEditor();
+    toast(wasEditing ? 'Treino atualizado' : '✓ Treino registrado');
+    if (cPage === 'treino') rTreino();
+    if (cPage === 'dash') rDash();
+}
+
+function deleteTreino(id) {
+    const t = D.treinos.find(x => x.id === id);
+    if (!t) return;
+    if (!confirm(`Excluir treino "${t.nome}" de ${formatDataTreino(t.data)}?`)) return;
+    D.treinos = D.treinos.filter(x => x.id !== id);
+    save();
+    closeTreinoEditor();
+    toast('Treino excluído');
+    if (cPage === 'treino') rTreino();
+    if (cPage === 'dash') rDash();
+}
+
+function duplicateTreino(id) {
+    const orig = D.treinos.find(x => x.id === id);
+    if (!orig) return;
+    editingTreino = JSON.parse(JSON.stringify(orig));
+    editingTreino.id = uid();
+    editingTreino.data = today();
+    editingTreino.createdAt = Date.now();
+    // Regenera ids dos exercicios pra evitar colisao
+    editingTreino.exercicios.forEach(e => e.id = uid());
+    // Abre modal com o duplicado
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'treino-editor';
+    overlay.onclick = e => { if (e.target === overlay) closeTreinoEditor(); };
+    document.body.appendChild(overlay);
+    rTreinoEditor();
+    toast('Sessão duplicada — ajuste cargas/reps');
 }
 
 // ========== MEDICAMENTOS — HELPERS ==========
