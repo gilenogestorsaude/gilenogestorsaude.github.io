@@ -293,6 +293,19 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
     <div class="page-body" id="treino-body"></div>
 </div>
 
+<!-- ========== PAGE: CONSULTAS MÉDICAS ========== -->
+<div id="page-consultas" class="page">
+    <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+        <button class="btn-icon btn-outline" onclick="showPage('dash')" style="width:36px;height:36px">←</button>
+        <div style="flex:1">
+            <div style="font-size:16px;font-weight:700">📅 Consultas</div>
+            <div style="font-size:11px;color:var(--text3)" id="consultas-subtitle">Histórico médico</div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="openConsultaEditor()">+ Nova</button>
+    </div>
+    <div class="page-body" id="consultas-body"></div>
+</div>
+
 <!-- ========== PAGE: MEDICAMENTOS ========== -->
 <div id="page-meds" class="page">
     <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
@@ -354,7 +367,7 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -455,6 +468,9 @@ function defaultD() {
         // Treinos (sessoes registradas, uma por instancia)
         // treinos: [{ id, data: 'YYYY-MM-DD', nome, exercicios: [{id, nome, series: [{reps, carga}]}], notas?, duracao?, createdAt }]
         treinos: [],
+        // Consultas medicas
+        // consultas: [{ id, data, medico, especialidade, local?, queixa, conduta, prescricao?, proximaConsulta?, notas?, createdAt }]
+        consultas: [],
         // Settings
         theme: 'dark',
         bphCutoff: 17
@@ -571,6 +587,7 @@ async function load() {
             if (!D.meds) D.meds = [];
             if (!D.medsTaken) D.medsTaken = {};
             if (!D.treinos) D.treinos = [];
+            if (!D.consultas) D.consultas = [];
             // v1.1.2 — adiciona carbo/gord aos foods existentes (default 0)
             if (D.foods) {
                 D.foods.forEach(f => {
@@ -677,6 +694,7 @@ function showPage(name) {
     else if (name === 'hydro') rHydro();
     else if (name === 'meds') rMeds();
     else if (name === 'treino') rTreino();
+    else if (name === 'consultas') rConsultas();
     else if (name === 'goals') rGoals();
 }
 
@@ -842,6 +860,18 @@ function rDash() {
             <div class="alert-icon">💊</div>
             <div><div class="alert-title">Medicamento(s) atrasado(s)</div>
             <div class="alert-text">${medsLate.length} dose(s) pendente(s): ${nomes}${medsLate.length > 3 ? '…' : ''}</div></div>
+        </div>`;
+    }
+
+    // Consulta proxima (proximos 7 dias)
+    const upcomingConsulta = getConsultasUpcoming7d();
+    if (upcomingConsulta) {
+        const d = upcomingConsulta.daysAhead;
+        const dStr = d === 0 ? 'hoje' : (d === 1 ? 'amanhã' : `em ${d} dias`);
+        alerts += `<div class="alert alert-warn" onclick="showPage('consultas')" style="cursor:pointer">
+            <div class="alert-icon">📅</div>
+            <div><div class="alert-title">Consulta ${dStr}</div>
+            <div class="alert-text">${upcomingConsulta.especialidade || 'Consulta'} ${upcomingConsulta.medico ? '— ' + upcomingConsulta.medico : ''}</div></div>
         </div>`;
     }
 
@@ -1024,6 +1054,45 @@ function rDash() {
                         </div>
                     </div>
                     ${alert}
+                `;
+            })()}
+        </div>
+
+        <!-- Consultas -->
+        <div class="card mb-12">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                <span class="card-title" style="margin:0">📅 Consultas</span>
+                <div style="display:flex;gap:6px">
+                    <button class="btn btn-outline btn-sm" onclick="showPage('consultas')">Ver tudo</button>
+                    <button class="btn btn-primary btn-sm" onclick="openConsultaEditor()">+ Nova</button>
+                </div>
+            </div>
+            ${(() => {
+                const consultas = D.consultas || [];
+                const next = getNextConsulta();
+                if (consultas.length === 0) {
+                    return `<div style="font-size:12px;color:var(--text3);text-align:center;padding:8px 0">Nenhuma consulta registrada.</div>`;
+                }
+                if (next) {
+                    const d = -daysSince(next.data);
+                    const dStr = d === 0 ? 'HOJE' : (d === 1 ? 'AMANHÃ' : `em ${d} dias`);
+                    return `
+                        <div style="padding:10px;background:var(--bg);border-radius:6px">
+                            <div style="font-size:10px;color:var(--text3);font-weight:600;letter-spacing:.5px">PRÓXIMA — ${dStr}</div>
+                            <div style="font-size:14px;font-weight:700;color:var(--text);margin-top:2px">${next.especialidade || 'Consulta'}</div>
+                            <div style="font-size:11px;color:var(--text3)">${next.medico || ''} ${next.medico ? '•' : ''} ${formatDataTreino(next.data)}</div>
+                        </div>
+                        <div style="font-size:11px;color:var(--text3);margin-top:6px">${consultas.length} consulta${consultas.length === 1 ? '' : 's'} registrada${consultas.length === 1 ? '' : 's'}</div>
+                    `;
+                }
+                // Sem próxima — mostra última
+                const last = consultas.slice().sort((a, b) => b.data.localeCompare(a.data))[0];
+                const dPast = daysSince(last.data);
+                return `
+                    <div style="font-size:12px;color:var(--text2)">
+                        Última: <strong style="color:var(--text)">${last.especialidade || 'Consulta'}</strong> há ${dPast} dia${dPast === 1 ? '' : 's'}
+                    </div>
+                    <div style="font-size:11px;color:var(--text3);margin-top:2px">${consultas.length} consulta${consultas.length === 1 ? '' : 's'} • sem próxima agendada</div>
                 `;
             })()}
         </div>
@@ -2110,6 +2179,256 @@ function duplicateTreino(id) {
     document.body.appendChild(overlay);
     rTreinoEditor();
     toast('Sessão duplicada — ajuste cargas/reps');
+}
+
+// ========== CONSULTAS MÉDICAS ==========
+const ESPECIALIDADES_COMUNS = [
+    'Clínico geral', 'Cardiologista', 'Endocrinologista', 'Urologista',
+    'Oftalmologista', 'Otorrino', 'Ortopedista', 'Dermatologista',
+    'Gastroenterologista', 'Nutricionista', 'Psicólogo', 'Psiquiatra',
+    'Fisioterapeuta', 'Outro'
+];
+
+function getNextConsulta() {
+    if (!D.consultas || D.consultas.length === 0) return null;
+    const t = today();
+    // Olha tanto a data principal (futuro) quanto proximaConsulta de qualquer registro
+    let candidates = [];
+    D.consultas.forEach(c => {
+        if (c.data >= t) candidates.push({ data: c.data, medico: c.medico, especialidade: c.especialidade, src: 'consulta', id: c.id });
+        if (c.proximaConsulta && c.proximaConsulta >= t) candidates.push({ data: c.proximaConsulta, medico: c.medico, especialidade: c.especialidade, src: 'proxima', id: c.id });
+    });
+    if (candidates.length === 0) return null;
+    candidates.sort((a, b) => a.data.localeCompare(b.data));
+    return candidates[0];
+}
+
+function getConsultasUpcoming7d() {
+    const next = getNextConsulta();
+    if (!next) return null;
+    const d = daysSince(next.data); // negativo se for no futuro
+    if (d <= 0 && d >= -7) return { ...next, daysAhead: -d };
+    return null;
+}
+
+function rConsultas() {
+    if (!D) return;
+    const consultas = (D.consultas || []).slice().sort((a, b) => b.data.localeCompare(a.data));
+    const next = getNextConsulta();
+
+    // Subtítulo
+    const subEl = $('consultas-subtitle');
+    if (subEl) {
+        if (next) {
+            const d = -daysSince(next.data);
+            const dStr = d === 0 ? 'hoje' : (d === 1 ? 'amanhã' : `em ${d} dias`);
+            subEl.textContent = `Próxima: ${next.especialidade || 'Consulta'} ${dStr} • ${consultas.length} registradas`;
+        } else {
+            subEl.textContent = `${consultas.length} consulta${consultas.length === 1 ? '' : 's'} registrada${consultas.length === 1 ? '' : 's'}`;
+        }
+    }
+
+    if (consultas.length === 0) {
+        $('consultas-body').innerHTML = `
+            <div class="card text-center" style="padding:32px 20px">
+                <div style="font-size:48px;margin-bottom:12px">📅</div>
+                <div style="font-size:16px;font-weight:700;margin-bottom:6px">Nenhuma consulta registrada</div>
+                <div style="font-size:13px;color:var(--text3);margin-bottom:20px">Registre suas consultas pra ter histórico médico organizado. Útil pra levar ao próximo médico.</div>
+                <button class="btn btn-primary" onclick="openConsultaEditor()">+ Registrar primeira consulta</button>
+            </div>`;
+        return;
+    }
+
+    // Card resumo se houver próxima
+    let resumoHtml = '';
+    if (next) {
+        const d = -daysSince(next.data);
+        const dStr = d === 0 ? 'HOJE' : (d === 1 ? 'AMANHÃ' : `em ${d} dias`);
+        const bg = d <= 1 ? 'var(--yellow-bg)' : 'var(--green-bg)';
+        const color = d <= 1 ? 'var(--yellow)' : 'var(--green)';
+        resumoHtml = `
+            <div class="card mb-12" onclick="openConsultaEditor('${next.id}')" style="cursor:pointer;background:${bg};border-color:${color}">
+                <div style="font-size:11px;color:${color};font-weight:700;letter-spacing:.5px">PRÓXIMA CONSULTA — ${dStr}</div>
+                <div style="font-size:16px;font-weight:700;color:var(--text);margin-top:4px">${next.especialidade || 'Consulta'}</div>
+                <div style="font-size:13px;color:var(--text2)">${next.medico || ''} ${next.medico ? '•' : ''} ${formatDataTreino(next.data)}</div>
+            </div>`;
+    }
+
+    // Separa em futuras e passadas
+    const t = today();
+    const futuras = consultas.filter(c => c.data > t);
+    const passadas = consultas.filter(c => c.data <= t);
+
+    function renderItem(c) {
+        const d = daysSince(c.data);
+        const isFuture = c.data > t;
+        const dStr = isFuture ? `em ${-d} dia${-d === 1 ? '' : 's'}` : (d === 0 ? 'hoje' : (d === 1 ? 'há 1 dia' : `há ${d} dias`));
+        const queixaShort = c.queixa ? (c.queixa.length > 80 ? c.queixa.substring(0, 80) + '…' : c.queixa) : '';
+        return `
+            <div class="card mb-8" onclick="openConsultaEditor('${c.id}')" style="cursor:pointer">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:4px">
+                    <div style="flex:1;min-width:0">
+                        <div style="font-size:14px;font-weight:700;color:var(--text)">${c.especialidade || 'Consulta'}</div>
+                        <div style="font-size:11px;color:var(--text3)">${c.medico || '—'} • ${formatDataTreino(c.data)} • ${dStr}</div>
+                    </div>
+                </div>
+                ${queixaShort ? `<div style="font-size:12px;color:var(--text2);margin-top:4px">${queixaShort}</div>` : ''}
+                ${c.proximaConsulta && c.proximaConsulta > t ? `<div style="font-size:11px;color:var(--primary);margin-top:4px">📌 Retorno: ${formatDataTreino(c.proximaConsulta)}</div>` : ''}
+            </div>`;
+    }
+
+    let listHtml = '';
+    if (futuras.length > 0) {
+        listHtml += `<div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin:12px 0 8px">Agendadas (${futuras.length})</div>`;
+        futuras.sort((a, b) => a.data.localeCompare(b.data));
+        futuras.forEach(c => listHtml += renderItem(c));
+    }
+    if (passadas.length > 0) {
+        listHtml += `<div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin:12px 0 8px">Histórico (${passadas.length})</div>`;
+        passadas.forEach(c => listHtml += renderItem(c));
+    }
+
+    $('consultas-body').innerHTML = `${resumoHtml}${listHtml}`;
+}
+
+let editingConsulta = null;
+
+function openConsultaEditor(consultaId) {
+    if (consultaId) {
+        const found = D.consultas.find(c => c.id === consultaId);
+        if (!found) return;
+        editingConsulta = JSON.parse(JSON.stringify(found));
+    } else {
+        editingConsulta = {
+            id: uid(),
+            data: today(),
+            medico: '',
+            especialidade: '',
+            local: '',
+            queixa: '',
+            conduta: '',
+            prescricao: '',
+            proximaConsulta: '',
+            notas: '',
+            createdAt: Date.now()
+        };
+    }
+    const isEditing = D.consultas.some(c => c.id === editingConsulta.id);
+
+    let chipsHtml = ESPECIALIDADES_COMUNS.map(e => `
+        <button type="button" class="chip ${editingConsulta.especialidade === e ? 'active' : ''}" onclick="setConsultaEsp('${e}')">${e}</button>
+    `).join('');
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'consulta-editor';
+    overlay.onclick = e => { if (e.target === overlay) closeConsultaEditor(); };
+    overlay.innerHTML = `
+        <div class="modal-box" style="max-height:92vh;display:flex;flex-direction:column">
+            <div class="modal-header" style="flex-shrink:0">
+                <h3>${isEditing ? 'Editar' : 'Nova'} consulta</h3>
+                <button class="modal-close" onclick="closeConsultaEditor()">×</button>
+            </div>
+            <div style="overflow-y:auto;flex:1">
+                <div class="form-group">
+                    <label class="form-label">Data</label>
+                    <input type="date" id="cons-data" class="form-input" value="${editingConsulta.data}"
+                           oninput="editingConsulta.data = this.value">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Especialidade</label>
+                    <div class="chip-row" id="cons-esp-chips">${chipsHtml}</div>
+                    <input type="text" id="cons-esp-livre" class="form-input" placeholder="Ou digite especialidade livre" value="${ESPECIALIDADES_COMUNS.includes(editingConsulta.especialidade) ? '' : editingConsulta.especialidade}"
+                           oninput="editingConsulta.especialidade = this.value; document.querySelectorAll('#cons-esp-chips .chip').forEach(c => c.classList.remove('active'))">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Médico(a)</label>
+                    <input type="text" id="cons-medico" class="form-input" value="${editingConsulta.medico}" placeholder="Ex: Dra. Maria Silva"
+                           oninput="editingConsulta.medico = this.value">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Local — opcional</label>
+                    <input type="text" id="cons-local" class="form-input" value="${editingConsulta.local || ''}" placeholder="Ex: Hospital São Camilo, Consultório, Telemedicina"
+                           oninput="editingConsulta.local = this.value">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Queixa / motivo</label>
+                    <textarea id="cons-queixa" class="form-input" rows="2" placeholder="O que te levou à consulta"
+                              oninput="editingConsulta.queixa = this.value">${editingConsulta.queixa || ''}</textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Conduta / diagnóstico</label>
+                    <textarea id="cons-conduta" class="form-input" rows="3" placeholder="O que o médico disse, diagnóstico, orientações"
+                              oninput="editingConsulta.conduta = this.value">${editingConsulta.conduta || ''}</textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Prescrição — opcional</label>
+                    <textarea id="cons-prescricao" class="form-input" rows="2" placeholder="Medicamentos prescritos, exames pedidos…"
+                              oninput="editingConsulta.prescricao = this.value">${editingConsulta.prescricao || ''}</textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Próxima consulta — opcional</label>
+                    <input type="date" id="cons-proxima" class="form-input" value="${editingConsulta.proximaConsulta || ''}"
+                           oninput="editingConsulta.proximaConsulta = this.value">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Notas — opcional</label>
+                    <textarea id="cons-notas" class="form-input" rows="2" placeholder="Observações pessoais"
+                              oninput="editingConsulta.notas = this.value">${editingConsulta.notas || ''}</textarea>
+                </div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:12px;flex-shrink:0">
+                ${isEditing ? `<button class="btn btn-outline" style="flex:1;color:var(--red)" onclick="deleteConsulta('${editingConsulta.id}')">Excluir</button>` : ''}
+                <button class="btn btn-outline" style="flex:1" onclick="closeConsultaEditor()">Cancelar</button>
+                <button class="btn btn-primary" style="flex:1" onclick="saveConsulta()">Salvar</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+}
+
+function setConsultaEsp(esp) {
+    editingConsulta.especialidade = esp;
+    document.querySelectorAll('#cons-esp-chips .chip').forEach(c => c.classList.remove('active'));
+    event.target.classList.add('active');
+    $('cons-esp-livre').value = '';
+}
+
+function closeConsultaEditor() {
+    const overlay = $('consulta-editor');
+    if (overlay) overlay.remove();
+    editingConsulta = null;
+}
+
+function saveConsulta() {
+    if (!editingConsulta.data) return toast('Data é obrigatória', true);
+    if (!editingConsulta.especialidade.trim() && !editingConsulta.medico.trim()) {
+        return toast('Informe ao menos a especialidade ou o médico', true);
+    }
+    const idx = D.consultas.findIndex(c => c.id === editingConsulta.id);
+    if (idx >= 0) {
+        D.consultas[idx] = editingConsulta;
+    } else {
+        D.consultas.push(editingConsulta);
+    }
+    save();
+    const wasEditing = idx >= 0;
+    closeConsultaEditor();
+    toast(wasEditing ? 'Consulta atualizada' : '✓ Consulta registrada');
+    if (cPage === 'consultas') rConsultas();
+    if (cPage === 'dash') rDash();
+}
+
+function deleteConsulta(id) {
+    const c = D.consultas.find(x => x.id === id);
+    if (!c) return;
+    if (!confirm(`Excluir consulta de ${formatDataTreino(c.data)} (${c.especialidade || c.medico})?`)) return;
+    D.consultas = D.consultas.filter(x => x.id !== id);
+    save();
+    closeConsultaEditor();
+    toast('Consulta excluída');
+    if (cPage === 'consultas') rConsultas();
+    if (cPage === 'dash') rDash();
 }
 
 // ========== MEDICAMENTOS — HELPERS ==========
