@@ -433,7 +433,7 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.6.1';
+const APP_VERSION = '1.6.2';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -2124,7 +2124,7 @@ function treinoStats(t) {
 const EXERCISE_CATALOG = [
     // ========== COSTAS ==========
     { id: 'puxada_frente',       nome: 'Puxada Frente',                grupo: 'costas',  en: 'lat pulldown',                       img: 'Wide-Grip_Lat_Pulldown' },
-    { id: 'puxada_supinada',     nome: 'Puxada Supinada',              grupo: 'costas',  en: 'reverse grip pulldown',              img: 'Reverse_Grip_Lat_Pulldown' },
+    { id: 'puxada_supinada',     nome: 'Puxada Supinada',              grupo: 'costas',  en: 'reverse grip pulldown',              img: 'Underhand_Cable_Pulldowns' },
     { id: 'puxada_triangulo',    nome: 'Puxada Triângulo',             grupo: 'costas',  en: 'v-bar pulldown',                     img: 'V-Bar_Pulldown' },
     { id: 'remada_sentada',      nome: 'Remada Sentada (Cabo)',        grupo: 'costas',  en: 'seated cable row',                   img: 'Seated_Cable_Rows' },
     { id: 'remada_curvada',      nome: 'Remada Curvada (Barra)',       grupo: 'costas',  en: 'barbell bent over row',              img: 'Bent_Over_Barbell_Row' },
@@ -2132,7 +2132,7 @@ const EXERCISE_CATALOG = [
     { id: 'barra_fixa',          nome: 'Barra Fixa',                   grupo: 'costas',  en: 'pull up',                            img: 'Pullups' },
     { id: 'barra_supinada',      nome: 'Barra Supinada',               grupo: 'costas',  en: 'chin up',                            img: 'Chin-Up' },
     { id: 'levantamento_terra',  nome: 'Levantamento Terra',           grupo: 'costas',  en: 'barbell deadlift',                   img: 'Barbell_Deadlift' },
-    { id: 'hiperextensao',       nome: 'Hiperextensão Lombar',         grupo: 'costas',  en: 'hyperextension',                     img: 'Hyperextensions' },
+    { id: 'hiperextensao',       nome: 'Hiperextensão Lombar',         grupo: 'costas',  en: 'hyperextension',                     img: 'Hyperextensions_With_No_Hyperextension_Bench' },
     { id: 'puxada_articulada',   nome: 'Puxada Articulada',            grupo: 'costas',  en: 'lever pulldown',                     img: 'Wide-Grip_Lat_Pulldown' },
 
     // ========== PEITO ==========
@@ -2143,7 +2143,7 @@ const EXERCISE_CATALOG = [
     { id: 'supino_declinado',    nome: 'Supino Declinado',             grupo: 'peito',   en: 'barbell decline bench press',        img: 'Decline_Barbell_Bench_Press' },
     { id: 'crucifixo',           nome: 'Crucifixo (Halter)',           grupo: 'peito',   en: 'dumbbell fly',                       img: 'Dumbbell_Flyes' },
     { id: 'cross_over',          nome: 'Cross Over (Cabo)',            grupo: 'peito',   en: 'cable crossover',                    img: 'Cable_Crossover' },
-    { id: 'voador_peck',         nome: 'Voador (Peck Deck)',           grupo: 'peito',   en: 'lever pec deck fly',                 img: 'Butterfly_Machine' },
+    { id: 'voador_peck',         nome: 'Voador (Peck Deck)',           grupo: 'peito',   en: 'lever pec deck fly',                 img: 'Butterfly' },
     { id: 'flexao',              nome: 'Flexão de Braço',              grupo: 'peito',   en: 'push up',                            img: 'Pushups' },
     { id: 'mergulho_paralelas',  nome: 'Mergulho nas Paralelas',       grupo: 'peito',   en: 'chest dip',                          img: 'Dips_-_Chest_Version' },
 
@@ -2153,7 +2153,7 @@ const EXERCISE_CATALOG = [
     { id: 'arnold',              nome: 'Desenvolvimento Arnold',       grupo: 'ombros',  en: 'dumbbell arnold press',              img: 'Arnold_Dumbbell_Press' },
     { id: 'elev_lateral',        nome: 'Elevação Lateral',             grupo: 'ombros',  en: 'dumbbell lateral raise',             img: 'Side_Lateral_Raise' },
     { id: 'elev_frontal',        nome: 'Elevação Frontal',             grupo: 'ombros',  en: 'dumbbell front raise',               img: 'Front_Dumbbell_Raise' },
-    { id: 'crucifixo_inv',       nome: 'Crucifixo Inverso',            grupo: 'ombros',  en: 'dumbbell rear delt row',             img: 'Bent_Over_Reverse_Dumbbell_Row' },
+    { id: 'crucifixo_inv',       nome: 'Crucifixo Inverso',            grupo: 'ombros',  en: 'dumbbell rear delt row',             img: 'Reverse_Flyes' },
     { id: 'remada_alta',         nome: 'Remada Alta',                  grupo: 'ombros',  en: 'barbell upright row',                img: 'Upright_Barbell_Row' },
     { id: 'encolhimento',        nome: 'Encolhimento (Trapézio)',      grupo: 'ombros',  en: 'barbell shrug',                      img: 'Barbell_Shrug' },
     { id: 'elev_ombro_smith',    nome: 'Elevação de Ombro Smith',      grupo: 'ombros',  en: 'smith machine upright row',          img: 'Upright_Barbell_Row' },
@@ -2187,8 +2187,8 @@ const EXERCISE_CATALOG = [
     { id: 'panturrilha_sent',    nome: 'Panturrilha Sentado',          grupo: 'pernas',  en: 'lever seated calf raise',            img: 'Seated_Calf_Raise' },
 
     // ========== GLÚTEO ==========
-    { id: 'hip_thrust',          nome: 'Hip Thrust',                   grupo: 'gluteo',  en: 'barbell hip thrust',                 img: 'Hip_Lift_With_Bands' },
-    { id: 'elev_pelvica',        nome: 'Elevação Pélvica',             grupo: 'gluteo',  en: 'glute bridge',                       img: 'Hip_Lift_With_Bands' },
+    { id: 'hip_thrust',          nome: 'Hip Thrust',                   grupo: 'gluteo',  en: 'barbell hip thrust',                 img: 'Barbell_Glute_Bridge' },
+    { id: 'elev_pelvica',        nome: 'Elevação Pélvica',             grupo: 'gluteo',  en: 'glute bridge',                       img: 'Barbell_Glute_Bridge' },
     { id: 'adutora',             nome: 'Cadeira Adutora',              grupo: 'gluteo',  en: 'lever seated hip adduction',         img: 'Thigh_Adductor' },
     { id: 'abdutora',            nome: 'Cadeira Abdutora',             grupo: 'gluteo',  en: 'lever seated hip abduction',         img: 'Thigh_Abductor' },
 
@@ -2201,9 +2201,9 @@ const EXERCISE_CATALOG = [
     { id: 'abdominal_obliquo',   nome: 'Abdominal Oblíquo',            grupo: 'abdomen', en: 'cross body crunch',                  img: 'Oblique_Crunches' },
 
     // ========== AERÓBICO ==========
-    { id: 'esteira',             nome: 'Esteira (Caminhada/Corrida)',  grupo: 'aerob',   en: 'walking on treadmill',               img: null },
-    { id: 'bike',                nome: 'Bike Ergométrica',             grupo: 'aerob',   en: 'stationary bike walk',               img: null },
-    { id: 'eliptico',            nome: 'Elíptico',                     grupo: 'aerob',   en: 'elliptical machine walk',            img: null }
+    { id: 'esteira',             nome: 'Esteira (Caminhada/Corrida)',  grupo: 'aerob',   en: 'walking on treadmill',               img: 'Walking_Treadmill' },
+    { id: 'bike',                nome: 'Bike Ergométrica',             grupo: 'aerob',   en: 'stationary bike walk',               img: 'Bicycling_Stationary' },
+    { id: 'eliptico',            nome: 'Elíptico',                     grupo: 'aerob',   en: 'elliptical machine walk',            img: 'Elliptical_Trainer' }
 ];
 
 const EXERCISE_DB_BASE = 'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises';
@@ -2212,7 +2212,7 @@ const GIF_CACHE_KEY = 'exGifCache_v1';
 
 function exercisePhotoUrl(exItem) {
     if (!exItem || !exItem.img) return null;
-    return `${EXERCISE_DB_BASE}/${exItem.img}/images/0.jpg`;
+    return `${EXERCISE_DB_BASE}/${exItem.img}/0.jpg`;
 }
 
 // Mantém retrocompatibilidade — alguns lugares chamam exerciseImageUrl
@@ -2247,26 +2247,11 @@ function setGifCache(enName, url) {
     } catch {}
 }
 
+// ExerciseDB mirror (exercisedb-api.vercel.app) foi desativado em mai/2026 (402 Payment Required).
+// Mantemos o cache localStorage por compatibilidade caso uma nova fonte gratuita apareça.
+// Por ora, no-op — usamos apenas fotos do Free Exercise DB + emoji fallback.
 async function resolveGifUrl(enName) {
-    if (!enName) return null;
-    const cache = getGifCache();
-    if (enName in cache) return cache[enName] || null;
-    try {
-        const r = await fetch(`${EXERCISEDB_API_BASE}/name/${encodeURIComponent(enName)}?offset=0&limit=1`, {
-            method: 'GET'
-        });
-        if (!r.ok) { setGifCache(enName, ''); return null; }
-        const data = await r.json();
-        // formato esperado: { success:true, data:{ exercises:[{ gifUrl, ... }] } } ou similar
-        const list = data?.data?.exercises || data?.data || data || [];
-        const first = Array.isArray(list) ? list[0] : null;
-        const url = first?.gifUrl || first?.gif_url || null;
-        setGifCache(enName, url);
-        return url || null;
-    } catch (e) {
-        setGifCache(enName, '');
-        return null;
-    }
+    return null;
 }
 
 // Detecta grupos musculares por keywords no nome da sessão + exercícios.
@@ -2360,22 +2345,7 @@ function renderExerciseThumb(ex, size) {
     const fbStyle = `display:flex;align-items:center;justify-content:center;background:${grupo.color}22;color:${grupo.color};font-size:${Math.round(sz * 0.5)}px;width:100%;height:100%`;
     const emojiBox = `<div style=&quot;${fbStyle}&quot;>${grupo.emoji || '🏋️'}</div>`;
 
-    // Se ainda não tentei resolver o gif e tenho enName, dispara async
-    if (enName && !(enName in cache)) {
-        setTimeout(() => {
-            resolveGifUrl(enName).then(url => {
-                if (!url) return;
-                const el = document.getElementById(thumbId);
-                if (el) {
-                    const img = el.querySelector('img');
-                    if (img && img.src !== url) img.src = url;
-                    else if (!img) {
-                        el.innerHTML = `<img src="${url}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block">`;
-                    }
-                }
-            }).catch(() => {});
-        }, 50);
-    }
+    // (Resolução async de GIF desativada — API gratuita está fora do ar)
 
     const wrapStyle = `width:${sz}px;height:${sz}px;border-radius:10px;overflow:hidden;flex-shrink:0;background:${grupo.color}22;display:flex;align-items:center;justify-content:center`;
     const inner = initialSrc
