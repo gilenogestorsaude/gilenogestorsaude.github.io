@@ -443,10 +443,27 @@ const firebaseConfig = {
 };
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
+// Auth persistence local — mantém usuário logado offline (default já é LOCAL,
+// mas explicitamos pra garantir comportamento offline-first)
+auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(() => {});
 const db = firebase.firestore();
+// Firestore offline persistence — cacheia leituras e enfileira saves quando
+// sem rede. Sincroniza quando voltar online. Permite usar o app na academia,
+// no carro, em local com wi-fi instável
+db.enablePersistence({ synchronizeTabs: false }).catch(err => {
+    if (err.code === 'failed-precondition') {
+        // Múltiplas abas abertas — persistence só roda em uma; outras seguem online
+        console.warn('Persistence falhou: outra aba já está com o app aberto');
+    } else if (err.code === 'unimplemented') {
+        // Navegador não suporta (ex: Safari em modo privado)
+        console.warn('Persistence indisponível neste navegador');
+    } else {
+        console.warn('Persistence:', err);
+    }
+});
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.6.7';
+const APP_VERSION = '1.6.8';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1147,7 +1164,7 @@ function rDash() {
         <div class="header-top">
             <div class="header-brand">
                 <div class="header-title">Gileno – Gestão Saúde</div>
-                <span class="header-version">v${APP_VERSION} · <span style="background:#dc2626;color:#fff;padding:1px 5px;border-radius:4px;font-weight:700;letter-spacing:.3px;opacity:1">BETA</span></span>
+                <span class="header-version">v${APP_VERSION} · <span style="background:#dc2626;color:#fff;padding:1px 5px;border-radius:4px;font-weight:700;letter-spacing:.3px;opacity:1">BETA</span>${!navigator.onLine ? ' · <span style="background:#92400e;color:#fff;padding:1px 5px;border-radius:4px;font-weight:700">📡 OFFLINE</span>' : ''}</span>
             </div>
             <div class="header-actions">
                 <button class="header-btn" onclick="shareApp()" title="Compartilhar">⬆</button>
@@ -4314,6 +4331,16 @@ function toggleTheme() {
 function toggleThemeFromHeader() {
     toggleTheme();
 }
+
+// Atualiza o badge OFFLINE no header e dá feedback quando muda o status
+window.addEventListener('online', () => {
+    toast('✓ Conectado — sincronizando');
+    if (cPage === 'dash') rDash();
+});
+window.addEventListener('offline', () => {
+    toast('📡 Sem conexão — os dados serão sincronizados quando voltar online');
+    if (cPage === 'dash') rDash();
+});
 
 function shareApp() {
     const url = 'https://gilenogestorsaude.github.io';
