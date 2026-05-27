@@ -385,6 +385,19 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
     <div class="page-body" id="meds-body"></div>
 </div>
 
+<!-- ========== PAGE: ADMIN ========== -->
+<div id="page-admin" class="page">
+    <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+        <button class="btn-icon btn-outline" onclick="showPage('goals')" style="width:36px;height:36px">←</button>
+        <div style="flex:1">
+            <div style="font-size:16px;font-weight:700">👥 Painel Admin</div>
+            <div style="font-size:11px;color:var(--text3)" id="admin-subtitle">Usuários cadastrados</div>
+        </div>
+        <button class="btn-icon btn-outline" onclick="rAdmin()" title="Atualizar" style="width:36px;height:36px;font-size:14px">↻</button>
+    </div>
+    <div class="page-body" id="admin-body"></div>
+</div>
+
 <!-- ========== PAGE: GOALS ========== -->
 <div id="page-goals" class="page">
     <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
@@ -433,7 +446,7 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.6.2';
+const APP_VERSION = '1.6.3';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -655,7 +668,23 @@ const HYDRO_BLOCKS = [
 async function save() {
     if (!U) return;
     try {
-        await db.collection('users').doc(U.uid).set({ data: JSON.stringify(D), updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+        // Stats agregadas pro painel admin (sem expor conteúdo privado)
+        const stats = {
+            templates: (D.workoutTemplates || []).length,
+            treinos: (D.treinos || []).length,
+            meals: Object.keys(D.days || {}).length,
+            vitals: Object.keys(D.vitals || {}).length,
+            meds: (D.meds || []).length,
+            consultas: (D.consultas || []).length
+        };
+        await db.collection('users').doc(U.uid).set({
+            data: JSON.stringify(D),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            email: U.email || '',
+            displayName: U.displayName || '',
+            stats: stats,
+            version: APP_VERSION
+        }, { merge: true });
     } catch (e) {
         console.error('Erro ao salvar:', e);
         toast('Erro ao salvar dados', true);
@@ -765,12 +794,53 @@ auth.onAuthStateChanged(async user => {
         if (D && D.theme === 'light') document.body.classList.add('light');
         // Carrega TACO em background (nao bloqueia render)
         loadTACO();
+        // Mostra modal de boas-vindas na primeira vez
+        if (D && !D._welcomeSeen) {
+            setTimeout(showWelcomeModal, 600);
+        }
     } else {
         D = null;
         showPage('login');
         $('bottom-nav').classList.add('hidden');
     }
 });
+
+function showWelcomeModal() {
+    if (document.getElementById('welcome-modal')) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'welcome-modal';
+    overlay.innerHTML = `
+        <div class="modal-box" style="text-align:center">
+            <div style="font-size:42px;margin-bottom:8px">🧪</div>
+            <h3 style="font-size:18px;font-weight:800;margin-bottom:6px;color:var(--text)">Bem-vindo ao teste!</h3>
+            <div style="font-size:13px;color:var(--text2);margin-bottom:14px;text-align:left;line-height:1.5">
+                Este app está em <strong style="color:#dc2626">fase de testes (BETA)</strong>.
+                Recursos podem mudar ou apresentar instabilidade enquanto eu ajusto.
+            </div>
+            <div style="background:var(--surface2);border-radius:8px;padding:12px;margin-bottom:14px;font-size:12px;color:var(--text2);text-align:left;line-height:1.6">
+                ✓ Seus dados ficam <strong>isolados na sua conta</strong> — ninguém vê o que você registra<br>
+                ✓ Login com email ou Google<br>
+                ✓ Funciona offline depois da primeira abertura<br>
+                ✓ Toda sugestão de melhoria é bem-vinda
+            </div>
+            <div style="font-size:11px;color:var(--text3);margin-bottom:14px;font-style:italic">
+                Manda feedback pro Gileno: print, áudio, texto — o que for melhor pra você.
+            </div>
+            <button class="btn btn-primary" style="width:100%;padding:14px;font-size:15px;font-weight:700" onclick="closeWelcomeModal()">Entendi, vamos começar</button>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+}
+
+function closeWelcomeModal() {
+    const el = document.getElementById('welcome-modal');
+    if (el) el.remove();
+    if (D) {
+        D._welcomeSeen = true;
+        save();
+    }
+}
 
 // ========== NAVIGATION ==========
 function showPage(name) {
@@ -796,6 +866,158 @@ function showPage(name) {
     else if (name === 'consultas') rConsultas();
     else if (name === 'vitais') rVitais();
     else if (name === 'goals') rGoals();
+    else if (name === 'admin') rAdmin();
+}
+
+// ========== ADMIN ==========
+const ADMIN_EMAILS = ['gilenopaivalima@gmail.com'];
+function isAdmin() {
+    return U && U.email && ADMIN_EMAILS.includes(U.email.toLowerCase());
+}
+
+function timeAgo(date) {
+    if (!date) return '—';
+    const d = date.toDate ? date.toDate() : new Date(date);
+    const sec = Math.floor((Date.now() - d.getTime()) / 1000);
+    if (sec < 60) return 'agora';
+    if (sec < 3600) return `${Math.floor(sec/60)}min`;
+    if (sec < 86400) return `${Math.floor(sec/3600)}h`;
+    const days = Math.floor(sec / 86400);
+    if (days < 30) return `${days}d`;
+    if (days < 365) return `${Math.floor(days/30)}mes${days >= 60 ? 'es' : ''}`;
+    return `${Math.floor(days/365)}ano${days >= 730 ? 's' : ''}`;
+}
+
+async function rAdmin() {
+    if (!isAdmin()) {
+        showPage('goals');
+        toast('Acesso negado', true);
+        return;
+    }
+    const body = $('admin-body');
+    if (!body) return;
+    body.innerHTML = `
+        <div class="card text-center" style="padding:24px">
+            <div style="font-size:24px;margin-bottom:8px">⏳</div>
+            <div style="font-size:13px;color:var(--text3)">Carregando usuários...</div>
+        </div>`;
+    try {
+        const snap = await db.collection('users').orderBy('updatedAt', 'desc').get();
+        const users = [];
+        snap.forEach(doc => {
+            const d = doc.data();
+            users.push({
+                uid: doc.id,
+                email: d.email || '(sem email)',
+                nome: d.displayName || '',
+                updatedAt: d.updatedAt || null,
+                version: d.version || '?',
+                stats: d.stats || {}
+            });
+        });
+        const subEl = $('admin-subtitle');
+        if (subEl) subEl.textContent = `${users.length} usuário${users.length === 1 ? '' : 's'} cadastrado${users.length === 1 ? '' : 's'}`;
+
+        if (users.length === 0) {
+            body.innerHTML = `<div class="card text-center" style="padding:32px"><div style="font-size:13px;color:var(--text3)">Nenhum usuário cadastrado ainda.</div></div>`;
+            return;
+        }
+
+        // Stats agregados
+        const totals = users.reduce((acc, u) => {
+            acc.treinos += u.stats.treinos || 0;
+            acc.templates += u.stats.templates || 0;
+            acc.meals += u.stats.meals || 0;
+            acc.vitals += u.stats.vitals || 0;
+            return acc;
+        }, { treinos: 0, templates: 0, meals: 0, vitals: 0 });
+
+        // Ativos nos últimos 7 dias
+        const ativos7d = users.filter(u => {
+            if (!u.updatedAt) return false;
+            const t = u.updatedAt.toDate ? u.updatedAt.toDate() : new Date(u.updatedAt);
+            return (Date.now() - t.getTime()) < 7 * 86400000;
+        }).length;
+
+        let resumoHtml = `
+            <div class="card mb-12">
+                <div class="card-title">Resumo geral</div>
+                <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px">
+                    <div style="text-align:center;padding:10px;background:var(--bg);border-radius:8px">
+                        <div style="font-size:10px;color:var(--text3)">Total</div>
+                        <div style="font-size:22px;font-weight:800;color:var(--primary)">${users.length}</div>
+                        <div style="font-size:10px;color:var(--text3)">usuários</div>
+                    </div>
+                    <div style="text-align:center;padding:10px;background:var(--bg);border-radius:8px">
+                        <div style="font-size:10px;color:var(--text3)">Ativos 7d</div>
+                        <div style="font-size:22px;font-weight:800;color:var(--green)">${ativos7d}</div>
+                        <div style="font-size:10px;color:var(--text3)">salvaram dado</div>
+                    </div>
+                </div>
+                <div style="font-size:11px;color:var(--text3);margin-top:8px;line-height:1.5">
+                    📊 Volume total registrado:<br>
+                    ${totals.templates} template${totals.templates === 1 ? '' : 's'} · ${totals.treinos} treino${totals.treinos === 1 ? '' : 's'} · ${totals.meals} dia${totals.meals === 1 ? '' : 's'} de refeição · ${totals.vitals} medição${totals.vitals === 1 ? '' : 'ões'} vital
+                </div>
+            </div>
+        `;
+
+        // Lista de usuários
+        let listHtml = '';
+        users.forEach(u => {
+            const isMe = U && u.uid === U.uid;
+            const last = u.updatedAt ? timeAgo(u.updatedAt) : 'nunca';
+            const lastColor = (() => {
+                if (!u.updatedAt) return 'var(--text3)';
+                const t = u.updatedAt.toDate ? u.updatedAt.toDate() : new Date(u.updatedAt);
+                const dias = (Date.now() - t.getTime()) / 86400000;
+                if (dias < 1) return 'var(--green)';
+                if (dias < 7) return 'var(--text2)';
+                return 'var(--text3)';
+            })();
+            const s = u.stats;
+            const statsLine = [
+                s.treinos ? `${s.treinos} treino${s.treinos === 1 ? '' : 's'}` : null,
+                s.templates ? `${s.templates} template${s.templates === 1 ? '' : 's'}` : null,
+                s.meals ? `${s.meals}d refeição` : null,
+                s.vitals ? `${s.vitals} vital` : null,
+                s.meds ? `${s.meds} med` : null
+            ].filter(Boolean).join(' · ') || '(sem registros)';
+            listHtml += `
+                <div class="card mb-8" style="${isMe ? 'border-left:3px solid var(--primary)' : ''}">
+                    <div style="display:flex;justify-content:space-between;align-items:start;gap:8px;margin-bottom:4px">
+                        <div style="flex:1;min-width:0">
+                            <div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                                ${u.nome || u.email.split('@')[0]}${isMe ? ' <span style="font-size:9px;background:var(--primary);color:#fff;padding:1px 5px;border-radius:4px">VOCÊ</span>' : ''}
+                            </div>
+                            <div style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${u.email}</div>
+                        </div>
+                        <div style="text-align:right;flex-shrink:0">
+                            <div style="font-size:11px;color:${lastColor};font-weight:600">${last}</div>
+                            <div style="font-size:9px;color:var(--text3)">v${u.version}</div>
+                        </div>
+                    </div>
+                    <div style="font-size:11px;color:var(--text2);padding-top:6px;border-top:1px solid var(--border)">
+                        ${statsLine}
+                    </div>
+                </div>`;
+        });
+
+        body.innerHTML = `
+            ${resumoHtml}
+            <div style="font-size:11px;color:var(--text3);margin-bottom:8px;padding:0 4px">
+                Listagem ordenada por última atividade. Sem acesso a conteúdo privado (refeições, treinos, vitais) — apenas contagens.
+            </div>
+            ${listHtml}
+        `;
+    } catch (e) {
+        console.error('Erro admin:', e);
+        body.innerHTML = `
+            <div class="card text-center" style="padding:24px">
+                <div style="font-size:24px;margin-bottom:8px">⚠️</div>
+                <div style="font-size:13px;color:var(--red);margin-bottom:6px">Erro ao carregar</div>
+                <div style="font-size:11px;color:var(--text3)">${e.message || 'Verifique as regras do Firestore'}</div>
+            </div>`;
+    }
 }
 
 // ========== HELPERS: DAY DATA ==========
@@ -889,7 +1111,7 @@ function rDash() {
         <div class="header-top">
             <div class="header-brand">
                 <div class="header-title">Gileno – Gestão Saúde</div>
-                <span class="header-version">v${APP_VERSION}</span>
+                <span class="header-version">v${APP_VERSION} · <span style="background:#dc2626;color:#fff;padding:1px 5px;border-radius:4px;font-weight:700;letter-spacing:.3px;opacity:1">BETA</span></span>
             </div>
             <div class="header-actions">
                 <button class="header-btn" onclick="shareApp()" title="Compartilhar">⬆</button>
@@ -2043,8 +2265,13 @@ function rGoals() {
                 <button class="toggle ${(D.modules && D.modules.treino !== false) ? 'on' : ''}" onclick="toggleModuleTreino()"></button>
             </div>
             <div class="cfg-item">
-                <div><div class="cfg-label">Versão</div><div class="cfg-desc">v${APP_VERSION}</div></div>
+                <div><div class="cfg-label">Versão</div><div class="cfg-desc">v${APP_VERSION} · BETA</div></div>
             </div>
+            ${isAdmin() ? `
+            <div class="cfg-item">
+                <div><div class="cfg-label">👥 Painel Admin</div><div class="cfg-desc">Ver usuários cadastrados e atividade</div></div>
+                <button class="btn btn-outline btn-sm" onclick="showPage('admin')">Abrir</button>
+            </div>` : ''}
             <div class="cfg-item" style="border:none">
                 <div><div class="cfg-label">Conta</div><div class="cfg-desc">${U ? U.email : ''}</div></div>
                 <button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="logout()">Sair</button>
