@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#059669">
+<meta name="theme-color" content="#6ee7b7">
 <title>Gileno - Gestão Saúde</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -104,24 +104,24 @@ select.form-input{-webkit-appearance:none;appearance:none;background-image:url("
 .login-divider::before,.login-divider::after{content:'';flex:1;height:1px;background:var(--border)}
 
 /* ========== HEADER ========== */
-.app-header{background:linear-gradient(135deg,#059669 0%,#10b981 50%,#34d399 100%);padding:14px 16px 12px;color:#fff}
+.app-header{background:linear-gradient(135deg,#34d399 0%,#6ee7b7 50%,#a7f3d0 100%);padding:14px 16px 12px;color:#0a0f0a}
 .header-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
 .header-brand{display:flex;align-items:center;gap:8px}
 .header-logo{width:32px;height:32px;border-radius:8px}
-.header-title{font-size:16px;font-weight:700;letter-spacing:.3px}
-.header-version{font-size:9px;opacity:.5;margin-left:2px}
+.header-title{font-size:16px;font-weight:700;letter-spacing:.3px;color:#0a0f0a}
+.header-version{font-size:9px;opacity:.6;margin-left:2px;color:#0a0f0a}
 .header-actions{display:flex;gap:6px;align-items:center}
-.header-btn{width:32px;height:32px;border-radius:8px;border:none;background:rgba(255,255,255,.18);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;transition:background .2s}
-.header-btn:active{background:rgba(255,255,255,.3)}
+.header-btn{width:32px;height:32px;border-radius:8px;border:none;background:rgba(0,0,0,.12);color:#0a0f0a;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;transition:background .2s}
+.header-btn:active{background:rgba(0,0,0,.22)}
 .header-user{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
-.header-user-name{font-size:12px;opacity:.85}
-.header-date{font-size:18px;font-weight:700}
-.header-badge{background:rgba(255,255,255,.2);border-radius:8px;padding:4px 10px;font-size:12px;font-weight:600;cursor:pointer;border:none;color:#fff}
-.header-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
-.header-stat{background:rgba(255,255,255,.15);border-radius:8px;padding:7px 4px;text-align:center;min-width:0}
-.header-stat-label{font-size:9px;opacity:.75;white-space:nowrap}
-.header-stat-value{font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.header-stat-unit{font-size:8px;opacity:.65}
+.header-user-name{font-size:12px;opacity:.8;color:#0a0f0a}
+.header-date{font-size:18px;font-weight:700;color:#0a0f0a}
+.header-badge{background:rgba(0,0,0,.15);border-radius:8px;padding:4px 10px;font-size:12px;font-weight:600;cursor:pointer;border:none;color:#0a0f0a}
+.header-stats{display:grid;grid-template-columns:repeat(5,1fr);gap:5px}
+.header-stat{background:rgba(255,255,255,.55);border-radius:8px;padding:7px 3px;text-align:center;min-width:0;cursor:pointer;color:#0a0f0a}
+.header-stat-label{font-size:9px;opacity:.7;white-space:nowrap;color:#0a0f0a}
+.header-stat-value{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#0a0f0a}
+.header-stat-unit{font-size:8px;opacity:.65;color:#0a0f0a}
 
 /* ========== BOTTOM NAV ========== */
 .bottom-nav{position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);display:flex;justify-content:space-around;padding:8px 0 max(12px,env(safe-area-inset-bottom));z-index:100;box-shadow:0 -2px 10px rgba(0,0,0,0.15)}
@@ -393,7 +393,7 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.4.1';
+const APP_VERSION = '1.5.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -800,6 +800,22 @@ function getWaterEntries(dt) {
 }
 
 // ========== RENDER: DASHBOARD ==========
+// Default collapsed = true (tela enxuta). User pode expandir clicando.
+const COLLAPSE_DEFAULTS = { meals: true, meds: true };
+
+function isCollapsed(section) {
+    if (!D._uiCollapsed) D._uiCollapsed = {};
+    if (D._uiCollapsed[section] === undefined) return !!COLLAPSE_DEFAULTS[section];
+    return !!D._uiCollapsed[section];
+}
+
+function toggleCollapse(section) {
+    if (!D._uiCollapsed) D._uiCollapsed = {};
+    D._uiCollapsed[section] = !isCollapsed(section);
+    save();
+    if (cPage === 'dash') rDash();
+}
+
 function rDash() {
     if (!D) return;
     // Toast de migration (v1.1.5)
@@ -838,25 +854,30 @@ function rDash() {
             <button class="header-badge" onclick="showPage('treino')" title="Abrir página de treino">${dayType === 'treino' ? '🏋️ Treino' : '😴 Descanso'}</button>
         </div>
         <div class="header-stats">
-            <div class="header-stat">
+            <div class="header-stat" onclick="openVitalEditor()">
                 <div class="header-stat-label">Peso</div>
                 <div class="header-stat-value">${fmt(D.peso)}</div>
                 <div class="header-stat-unit">kg</div>
             </div>
-            <div class="header-stat" onclick="${calcIMC() == null ? `showPage('goals')` : ''}" style="${calcIMC() == null ? 'cursor:pointer' : ''}">
+            <div class="header-stat" onclick="${calcIMC() == null ? `showPage('goals')` : `openVitalEditor()`}">
                 <div class="header-stat-label">IMC</div>
                 <div class="header-stat-value" style="color:${imcColor(calcIMC())}">${calcIMC() == null ? '—' : calcIMC().toFixed(1)}</div>
                 <div class="header-stat-unit">${calcIMC() == null ? 'def. altura' : imcLabel(calcIMC())}</div>
             </div>
-            <div class="header-stat">
+            <div class="header-stat" onclick="openVitalEditor()">
                 <div class="header-stat-label">FC Rep.</div>
                 <div class="header-stat-value">${vitals.fc || '—'}</div>
                 <div class="header-stat-unit">bpm</div>
             </div>
-            <div class="header-stat">
+            <div class="header-stat" onclick="openVitalEditor()">
                 <div class="header-stat-label">PA</div>
                 <div class="header-stat-value">${vitals.pa || '—'}</div>
                 <div class="header-stat-unit">mmHg</div>
+            </div>
+            <div class="header-stat" onclick="openVitalEditor()">
+                <div class="header-stat-label">Sono</div>
+                <div class="header-stat-value">${(() => { const d = calcSleepDuration(vitals.dormir, vitals.acordar); return d == null ? '—' : formatSleepDuration(d); })()}</div>
+                <div class="header-stat-unit">${vitals.dormir && vitals.acordar ? vitals.dormir + '→' + vitals.acordar : 'horas'}</div>
             </div>
         </div>
     `;
@@ -1053,21 +1074,37 @@ function rDash() {
         </div>
 
         <!-- Refeições -->
-        <div class="card mb-12">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-                <span class="card-title" style="margin:0">Refeições</span>
-                <button class="btn btn-primary btn-sm" onclick="showPage('meal')">+ Registrar</button>
-            </div>
-            ${mealsHtml}
-        </div>
+        ${(() => {
+            const collapsed = isCollapsed('meals');
+            const day = getDayData(dt);
+            const doneCount = MEAL_SLOTS.filter(s => { const slot = day.slots[s.id]; return slot && slot.items && slot.items.length > 0; }).length;
+            const totalCount = MEAL_SLOTS.length;
+            const summary = `${doneCount}/${totalCount} refeições • ${fmtN(totalKcal)} kcal`;
+            return `
+            <div class="card mb-12">
+                <div onclick="toggleCollapse('meals')" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;${collapsed ? '' : 'margin-bottom:10px'}">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0">
+                        <span style="font-size:14px;transition:transform .2s;display:inline-block;${collapsed ? '' : 'transform:rotate(90deg)'}">▶</span>
+                        <span class="card-title" style="margin:0">🍽 Refeições</span>
+                        ${collapsed ? `<span style="font-size:11px;color:var(--text3);font-weight:500">${summary}</span>` : ''}
+                    </div>
+                    <button class="btn btn-primary btn-sm" onclick="event.stopPropagation();showPage('meal')">+ Registrar</button>
+                </div>
+                ${collapsed ? '' : mealsHtml}
+            </div>`;
+        })()}
 
         <!-- Medicamentos -->
-        <div class="card mb-12">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-                <span class="card-title" style="margin:0">💊 Medicamentos hoje</span>
-                <button class="btn btn-primary btn-sm" onclick="showPage('meds')">${(D.meds||[]).length === 0 ? '+ Cadastrar' : 'Gerenciar'}</button>
-            </div>
-            ${(D.meds||[]).length === 0
+        ${(() => {
+            const collapsed = isCollapsed('meds');
+            const totalDoses = medsDoses.length;
+            const takenDoses = medsDoses.filter(d => d.status === 'taken').length;
+            const lateDoses = medsDoses.filter(d => d.status === 'late').length;
+            let summary;
+            if ((D.meds||[]).length === 0) summary = 'Nenhum cadastrado';
+            else if (totalDoses === 0) summary = 'Sem doses hoje';
+            else summary = `${takenDoses}/${totalDoses} tomados${lateDoses > 0 ? ` • ${lateDoses} atrasado${lateDoses === 1 ? '' : 's'}` : ''}`;
+            const body = (D.meds||[]).length === 0
                 ? `<div style="font-size:12px;color:var(--text3);text-align:center;padding:12px 0">Nenhum medicamento cadastrado.</div>`
                 : (medsDoses.length === 0
                     ? `<div style="font-size:12px;color:var(--text3);text-align:center;padding:12px 0">Nenhum horário de dose configurado nos medicamentos ativos.</div>`
@@ -1080,9 +1117,20 @@ function rDash() {
                                 <div class="meal-name">${d.nome}${d.dosagem ? ` <span style="font-weight:400;color:var(--text3);font-size:11px">${d.dosagem}</span>` : ''}</div>
                                 <div class="meal-time" style="${d.status === 'late' ? 'color:var(--red);font-weight:600' : ''}">${d.horario}${d.status === 'late' ? ' • atrasado' : (d.status === 'taken' ? ' • ✓ tomado' : '')}</div>
                             </div>
-                        </div>`).join(''))
-            }
-        </div>
+                        </div>`).join(''));
+            return `
+            <div class="card mb-12">
+                <div onclick="toggleCollapse('meds')" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;${collapsed ? '' : 'margin-bottom:10px'}">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0">
+                        <span style="font-size:14px;transition:transform .2s;display:inline-block;${collapsed ? '' : 'transform:rotate(90deg)'}">▶</span>
+                        <span class="card-title" style="margin:0">💊 Medicamentos hoje</span>
+                        ${collapsed ? `<span style="font-size:11px;color:${lateDoses > 0 ? 'var(--red)' : 'var(--text3)'};font-weight:500">${summary}</span>` : ''}
+                    </div>
+                    <button class="btn btn-primary btn-sm" onclick="event.stopPropagation();showPage('meds')">${(D.meds||[]).length === 0 ? '+ Cadastrar' : 'Gerenciar'}</button>
+                </div>
+                ${collapsed ? '' : body}
+            </div>`;
+        })()}
 
         <!-- Treino -->
         <div class="card mb-12">
@@ -2356,16 +2404,16 @@ function duplicateTreino(id) {
 const VITAIS_FREE_DAYS = 30;
 
 function getVitaisDays() {
-    // Retorna [{data, peso, pa, fc}] ordenado por data desc, dentro da janela Free.
+    // Retorna [{data, peso, pa, fc, dormir, acordar}] ordenado por data desc, dentro da janela Free.
     if (!D.vitals) return [];
     const out = [];
     Object.entries(D.vitals).forEach(([data, v]) => {
         if (!v) return;
-        if (!v.peso && !v.pa && !v.fc) return; // pula dias totalmente vazios
+        if (!v.peso && !v.pa && !v.fc && !v.dormir && !v.acordar) return; // pula dias totalmente vazios
         const d = daysSince(data);
         if (d === null || d < 0) return;
         if (d > VITAIS_FREE_DAYS - 1) return; // limite Free
-        out.push({ data, peso: v.peso || null, pa: v.pa || null, fc: v.fc || null });
+        out.push({ data, peso: v.peso || null, pa: v.pa || null, fc: v.fc || null, dormir: v.dormir || null, acordar: v.acordar || null });
     });
     return out.sort((a, b) => b.data.localeCompare(a.data));
 }
@@ -2474,6 +2522,12 @@ function rVitais() {
         if (d.peso) partes.push(`<span style="color:var(--text)"><strong>${fmt(d.peso)}</strong> <span style="color:var(--text3)">kg</span></span>`);
         if (d.pa) partes.push(`<span style="color:#3b82f6">PA <strong>${d.pa}</strong></span>`);
         if (d.fc) partes.push(`<span style="color:#a855f7">FC <strong>${d.fc}</strong> bpm</span>`);
+        const sonoDur = calcSleepDuration(d.dormir, d.acordar);
+        if (sonoDur != null) {
+            partes.push(`<span style="color:#10b981">😴 <strong>${formatSleepDuration(sonoDur)}</strong> <span style="color:var(--text3)">(${d.dormir}→${d.acordar})</span></span>`);
+        } else if (d.dormir || d.acordar) {
+            partes.push(`<span style="color:var(--text3);font-size:11px">😴 ${d.dormir || '?'}→${d.acordar || '?'}</span>`);
+        }
         listHtml += `
             <div class="card mb-8" onclick="openVitalEditor('${d.data}')" style="cursor:pointer">
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
@@ -2502,16 +2556,56 @@ function rVitais() {
 
 let editingVital = null;
 
+// ========== SONO ==========
+// Calcula duração de sono em minutos, lidando com cruzamento de meia-noite.
+// dormir: 'HH:MM', acordar: 'HH:MM'
+function calcSleepDuration(dormir, acordar) {
+    if (!dormir || !acordar) return null;
+    const [bh, bm] = dormir.split(':').map(Number);
+    const [wh, wm] = acordar.split(':').map(Number);
+    if (isNaN(bh) || isNaN(bm) || isNaN(wh) || isNaN(wm)) return null;
+    let bedMin = bh * 60 + bm;
+    let wakeMin = wh * 60 + wm;
+    if (wakeMin <= bedMin) wakeMin += 24 * 60; // cruzou meia-noite
+    return wakeMin - bedMin;
+}
+
+function formatSleepDuration(min) {
+    if (min == null) return '—';
+    const h = Math.floor(min / 60);
+    const m = min % 60;
+    return `${h}h${m.toString().padStart(2, '0')}`;
+}
+
+function sleepPreview(dormir, acordar) {
+    const dur = calcSleepDuration(dormir, acordar);
+    if (dur == null) return 'Informe as duas horas pra calcular';
+    const label = formatSleepDuration(dur);
+    let color = 'var(--text2)';
+    if (dur < 360) color = 'var(--red)';       // < 6h
+    else if (dur < 420) color = 'var(--yellow)'; // < 7h
+    else if (dur >= 420 && dur <= 540) color = 'var(--green)'; // 7h-9h
+    else color = 'var(--yellow)';              // > 9h
+    return `<span style="color:${color};font-weight:600">${label}</span> de sono`;
+}
+
+function updateSleepPreview() {
+    const el = document.getElementById('vital-sono-preview');
+    if (el && editingVital) el.innerHTML = sleepPreview(editingVital.dormir, editingVital.acordar);
+}
+
 function openVitalEditor(dataParam) {
     const dt = dataParam || today();
     const existing = (D.vitals && D.vitals[dt]) || {};
     editingVital = {
         data: dt,
-        peso: existing.peso || '',
+        peso: existing.peso != null ? String(existing.peso).replace('.', ',') : '',
         pa: existing.pa || '',
-        fc: existing.fc || ''
+        fc: existing.fc || '',
+        dormir: existing.dormir || '',
+        acordar: existing.acordar || ''
     };
-    const isEditing = !!(existing.peso || existing.pa || existing.fc);
+    const isEditing = !!(existing.peso || existing.pa || existing.fc || existing.dormir || existing.acordar);
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
@@ -2531,8 +2625,8 @@ function openVitalEditor(dataParam) {
             </div>
             <div class="form-group">
                 <label class="form-label">Peso (kg)</label>
-                <input type="number" id="vital-peso" class="form-input" value="${editingVital.peso}" placeholder="Ex: 66,5" step="0.1" min="20" max="300" inputmode="decimal"
-                       oninput="editingVital.peso = parseFloat(this.value) || ''">
+                <input type="text" id="vital-peso" class="form-input" value="${editingVital.peso}" placeholder="Ex: 66,5" inputmode="decimal"
+                       oninput="editingVital.peso = this.value">
             </div>
             <div style="display:flex;gap:8px">
                 <div class="form-group" style="flex:1">
@@ -2547,6 +2641,22 @@ function openVitalEditor(dataParam) {
                 </div>
             </div>
             <div style="font-size:11px;color:var(--text3);margin-bottom:12px">Todos opcionais — registre apenas o que mediu.</div>
+            <div style="border-top:1px solid var(--border);padding-top:12px;margin-bottom:8px">
+                <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">😴 Sono</div>
+                <div style="display:flex;gap:8px">
+                    <div class="form-group" style="flex:1;margin-bottom:0">
+                        <label class="form-label">Hora de dormir</label>
+                        <input type="time" id="vital-dormir" class="form-input" value="${editingVital.dormir}"
+                               oninput="editingVital.dormir = this.value; updateSleepPreview()">
+                    </div>
+                    <div class="form-group" style="flex:1;margin-bottom:0">
+                        <label class="form-label">Hora de acordar</label>
+                        <input type="time" id="vital-acordar" class="form-input" value="${editingVital.acordar}"
+                               oninput="editingVital.acordar = this.value; updateSleepPreview()">
+                    </div>
+                </div>
+                <div id="vital-sono-preview" style="font-size:12px;color:var(--text3);margin-top:6px;text-align:center;min-height:16px">${sleepPreview(editingVital.dormir, editingVital.acordar)}</div>
+            </div>
             <div style="display:flex;gap:8px;margin-top:8px">
                 ${isEditing ? `<button class="btn btn-outline" style="flex:1;color:var(--red)" onclick="deleteVitalDay()">Excluir</button>` : ''}
                 <button class="btn btn-outline" style="flex:1" onclick="closeVitalEditor()">Cancelar</button>
@@ -2565,11 +2675,16 @@ function closeVitalEditor() {
 
 function saveVitalEditor() {
     if (!editingVital.data) return toast('Data é obrigatória', true);
-    const peso = editingVital.peso === '' ? null : parseFloat(editingVital.peso);
-    const fc = editingVital.fc === '' ? null : parseInt(editingVital.fc);
+    // Peso aceita "66,5" ou "66.5" — converte vírgula brasileira pra ponto
+    let pesoRaw = (editingVital.peso == null ? '' : String(editingVital.peso)).trim().replace(',', '.');
+    let peso = pesoRaw === '' ? null : parseFloat(pesoRaw);
+    if (peso != null && isNaN(peso)) peso = null;
+    const fc = editingVital.fc === '' || editingVital.fc == null ? null : parseInt(editingVital.fc);
     const pa = (editingVital.pa || '').trim() || null;
-    if (peso == null && !pa && fc == null) {
-        return toast('Informe ao menos um valor (peso, PA ou FC)', true);
+    const dormir = (editingVital.dormir || '').trim() || null;
+    const acordar = (editingVital.acordar || '').trim() || null;
+    if (peso == null && !pa && fc == null && !dormir && !acordar) {
+        return toast('Informe ao menos um valor (peso, PA, FC ou sono)', true);
     }
     if (peso != null && (peso < 20 || peso > 300)) return toast('Peso fora do range plausível (20-300 kg)', true);
     if (fc != null && (fc < 20 || fc > 220)) return toast('FC fora do range plausível (20-220 bpm)', true);
@@ -2580,6 +2695,8 @@ function saveVitalEditor() {
     if (peso != null) v.peso = peso; else delete v.peso;
     if (pa) v.pa = pa; else delete v.pa;
     if (fc != null) v.fc = fc; else delete v.fc;
+    if (dormir) v.dormir = dormir; else delete v.dormir;
+    if (acordar) v.acordar = acordar; else delete v.acordar;
 
     // Se a data for hoje E peso foi atualizado, sincroniza D.peso (campo "atual")
     if (editingVital.data === today() && peso != null) {
