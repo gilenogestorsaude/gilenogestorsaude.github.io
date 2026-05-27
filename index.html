@@ -280,20 +280,59 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
     <div class="page-body" id="hydro-body"></div>
 </div>
 
-<!-- ========== PAGE: TREINO ========== -->
+<!-- ========== PAGE: TREINO (lista de templates) ========== -->
 <div id="page-treino" class="page">
     <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
         <button class="btn-icon btn-outline" onclick="showPage('dash')" style="width:36px;height:36px">←</button>
         <div style="flex:1">
-            <div style="font-size:16px;font-weight:700">🏋️ Treino</div>
-            <div style="font-size:11px;color:var(--text3)" id="treino-subtitle">Histórico de sessões</div>
+            <div style="font-size:16px;font-weight:700">🏋️ Treinos</div>
+            <div style="font-size:11px;color:var(--text3)" id="treino-subtitle">Meus templates</div>
         </div>
-        <button class="btn btn-primary btn-sm" onclick="openTreinoEditor()">+ Nova</button>
+        <button class="btn-icon btn-outline" onclick="showPage('treino-history')" title="Histórico de sessões" style="width:36px;height:36px;font-size:16px">📁</button>
     </div>
     <div class="page-body" id="treino-body"></div>
 </div>
 
-<!-- ========== PAGE: TREINO EDITOR ========== -->
+<!-- ========== PAGE: TEMPLATE EDITOR (cria/edita Treino A, B, C...) ========== -->
+<div id="page-template-editor" class="page">
+    <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+        <button class="btn-icon btn-outline" onclick="closeTemplateEditor()" style="width:36px;height:36px">←</button>
+        <div style="flex:1">
+            <div style="font-size:16px;font-weight:700" id="template-editor-title">Novo treino</div>
+            <div style="font-size:11px;color:var(--text3)" id="template-editor-subtitle">Adicione exercícios</div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="saveTemplate()">Salvar</button>
+    </div>
+    <div class="page-body" id="template-editor-body"></div>
+</div>
+
+<!-- ========== PAGE: TREINO EXECUTE (modo execução) ========== -->
+<div id="page-treino-execute" class="page">
+    <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+        <button class="btn-icon btn-outline" onclick="cancelExecution()" style="width:36px;height:36px">←</button>
+        <div style="flex:1">
+            <div style="font-size:16px;font-weight:700" id="treino-exec-title">Treino</div>
+            <div style="font-size:11px;color:var(--text3)" id="treino-exec-subtitle">—</div>
+        </div>
+        <div id="treino-exec-timer" style="font-family:ui-monospace,monospace;font-size:18px;font-weight:700;color:var(--primary);min-width:72px;text-align:right">00:00</div>
+    </div>
+    <div class="page-body" id="treino-execute-body"></div>
+</div>
+
+<!-- ========== PAGE: TREINO HISTORY (sessões registradas) ========== -->
+<div id="page-treino-history" class="page">
+    <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+        <button class="btn-icon btn-outline" onclick="showPage('treino')" style="width:36px;height:36px">←</button>
+        <div style="flex:1">
+            <div style="font-size:16px;font-weight:700">📁 Histórico de Treinos</div>
+            <div style="font-size:11px;color:var(--text3)" id="treino-history-subtitle">Sessões registradas</div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="openTreinoEditor()">+ Nova</button>
+    </div>
+    <div class="page-body" id="treino-history-body"></div>
+</div>
+
+<!-- ========== PAGE: TREINO EDITOR (edita uma sessão do histórico) ========== -->
 <div id="page-treino-editor" class="page">
     <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
         <button class="btn-icon btn-outline" onclick="closeTreinoEditor()" style="width:36px;height:36px">←</button>
@@ -393,7 +432,7 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.6.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -515,6 +554,11 @@ function defaultD() {
         // Treinos (sessoes registradas, uma por instancia)
         // treinos: [{ id, data: 'YYYY-MM-DD', nome, exercicios: [{id, nome, series: [{reps, carga}]}], notas?, duracao?, createdAt }]
         treinos: [],
+        // Workout templates (Treino A, B, C...) — definições reutilizáveis
+        // workoutTemplates: [{ id, nome, exercicios: [{id, exerciseId, nome, grupo, series, reps, carga, metodo?, notas?}], notas?, createdAt }]
+        workoutTemplates: [],
+        // Módulos opcionais (default todos ligados)
+        modules: { treino: true },
         // Consultas medicas
         // consultas: [{ id, data, medico, especialidade, local?, queixa, conduta, prescricao?, proximaConsulta?, notas?, createdAt }]
         consultas: [],
@@ -634,6 +678,9 @@ async function load() {
             if (!D.meds) D.meds = [];
             if (!D.medsTaken) D.medsTaken = {};
             if (!D.treinos) D.treinos = [];
+            if (!D.workoutTemplates) D.workoutTemplates = [];
+            if (!D.modules) D.modules = { treino: true };
+            if (typeof D.modules.treino === 'undefined') D.modules.treino = true;
             if (!D.consultas) D.consultas = [];
             // v1.1.2 — adiciona carbo/gord aos foods existentes (default 0)
             if (D.foods) {
@@ -741,6 +788,9 @@ function showPage(name) {
     else if (name === 'hydro') rHydro();
     else if (name === 'meds') rMeds();
     else if (name === 'treino') rTreino();
+    else if (name === 'template-editor') rTemplateEditor();
+    else if (name === 'treino-execute') rTreinoExecute();
+    else if (name === 'treino-history') rTreinoHistory();
     else if (name === 'treino-editor') rTreinoEditor();
     else if (name === 'consultas') rConsultas();
     else if (name === 'vitais') rVitais();
@@ -1133,18 +1183,26 @@ function rDash() {
         })()}
 
         <!-- Treino -->
+        ${(D.modules && D.modules.treino === false) ? '' : `
         <div class="card mb-12">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
                 <span class="card-title" style="margin:0">🏋️ Treino</span>
-                <button class="btn btn-outline btn-sm" onclick="showPage('treino')">Histórico</button>
+                <button class="btn btn-outline btn-sm" onclick="showPage('treino')">Templates</button>
             </div>
             ${(() => {
                 const last = getLastTreino();
                 const week = getTreinosWeek();
+                const tpls = D.workoutTemplates || [];
                 const dayIsTreino = (dayType === 'treino');
-                const startBtn = `<button class="btn btn-primary" style="width:100%;padding:14px;font-size:15px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:8px;margin-top:8px" onclick="openTreinoEditor()">▶ Começar treino${last ? ` — sugestão: ${last.nome.length > 22 ? last.nome.slice(0,22) + '…' : last.nome}` : ''}</button>`;
+                const startAction = tpls.length === 0
+                    ? `onclick="openTemplateEditor()"`
+                    : `onclick="showPage('treino')"`;
+                const startLabel = tpls.length === 0
+                    ? '+ Criar primeiro treino'
+                    : `▶ Iniciar treino${tpls.length > 0 ? ` (${tpls.length} template${tpls.length === 1 ? '' : 's'})` : ''}`;
+                const startBtn = `<button class="btn btn-primary" style="width:100%;padding:14px;font-size:15px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:8px;margin-top:8px" ${startAction}>${startLabel}</button>`;
                 if (!last) {
-                    return `<div style="font-size:12px;color:var(--text3);text-align:center;padding:8px 0">Nenhuma sessão registrada ainda.</div>${startBtn}`;
+                    return `<div style="font-size:12px;color:var(--text3);text-align:center;padding:8px 0">${tpls.length === 0 ? 'Crie seu Treino A com exercícios planejados.' : 'Nenhuma sessão registrada ainda.'}</div>${startBtn}`;
                 }
                 const dias = daysSince(last.data);
                 const dStr = dias === 0 ? 'hoje' : (dias === 1 ? 'há 1 dia' : `há ${dias} dias`);
@@ -1172,7 +1230,7 @@ function rDash() {
                     ${startBtn}
                 `;
             })()}
-        </div>
+        </div>`}
 
         <!-- Consultas -->
         <div class="card mb-12">
@@ -1980,6 +2038,10 @@ function rGoals() {
                 <button class="toggle ${D.theme === 'dark' ? 'on' : ''}" onclick="toggleTheme()"></button>
             </div>
             <div class="cfg-item">
+                <div><div class="cfg-label">Módulo Treino</div><div class="cfg-desc">Mostrar templates e card de treino. Desligue se não usa esse módulo.</div></div>
+                <button class="toggle ${(D.modules && D.modules.treino !== false) ? 'on' : ''}" onclick="toggleModuleTreino()"></button>
+            </div>
+            <div class="cfg-item">
                 <div><div class="cfg-label">Versão</div><div class="cfg-desc">v${APP_VERSION}</div></div>
             </div>
             <div class="cfg-item" style="border:none">
@@ -2054,17 +2116,123 @@ function treinoStats(t) {
     return { exercicios, series, volume: treinoVolume(t) };
 }
 
+// ========== CATÁLOGO DE EXERCÍCIOS PT-BR ==========
+// Mapeia nomes em português aos IDs do Free Exercise DB (yuhonas/free-exercise-db).
+// Imagem URL: https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/{img}/images/0.jpg
+// Se img for null OU imagem falhar, cai pro emoji+cor do grupo muscular.
+const EXERCISE_CATALOG = [
+    // ========== COSTAS ==========
+    { id: 'puxada_frente',       nome: 'Puxada Frente',                grupo: 'costas',  img: 'Wide-Grip_Lat_Pulldown' },
+    { id: 'puxada_supinada',     nome: 'Puxada Supinada',              grupo: 'costas',  img: 'Reverse_Grip_Lat_Pulldown' },
+    { id: 'puxada_triangulo',    nome: 'Puxada Triângulo',             grupo: 'costas',  img: 'V-Bar_Pulldown' },
+    { id: 'remada_sentada',      nome: 'Remada Sentada (Cabo)',        grupo: 'costas',  img: 'Seated_Cable_Rows' },
+    { id: 'remada_curvada',      nome: 'Remada Curvada (Barra)',       grupo: 'costas',  img: 'Bent_Over_Barbell_Row' },
+    { id: 'serrote',             nome: 'Serrote (Remada Unilateral)',  grupo: 'costas',  img: 'One-Arm_Dumbbell_Row' },
+    { id: 'barra_fixa',          nome: 'Barra Fixa',                   grupo: 'costas',  img: 'Pullups' },
+    { id: 'barra_supinada',      nome: 'Barra Supinada',               grupo: 'costas',  img: 'Chin-Up' },
+    { id: 'levantamento_terra',  nome: 'Levantamento Terra',           grupo: 'costas',  img: 'Barbell_Deadlift' },
+    { id: 'hiperextensao',       nome: 'Hiperextensão Lombar',         grupo: 'costas',  img: 'Hyperextensions' },
+    { id: 'puxada_articulada',   nome: 'Puxada Articulada',            grupo: 'costas',  img: 'Wide-Grip_Lat_Pulldown' },
+
+    // ========== PEITO ==========
+    { id: 'supino_reto',         nome: 'Supino Reto (Barra)',          grupo: 'peito',   img: 'Barbell_Bench_Press_-_Medium_Grip' },
+    { id: 'supino_reto_halter',  nome: 'Supino Reto (Halter)',         grupo: 'peito',   img: 'Dumbbell_Bench_Press' },
+    { id: 'supino_inclinado',    nome: 'Supino Inclinado (Halter)',    grupo: 'peito',   img: 'Incline_Dumbbell_Press' },
+    { id: 'supino_incl_barra',   nome: 'Supino Inclinado (Barra)',     grupo: 'peito',   img: 'Barbell_Incline_Bench_Press_-_Medium_Grip' },
+    { id: 'supino_declinado',    nome: 'Supino Declinado',             grupo: 'peito',   img: 'Decline_Barbell_Bench_Press' },
+    { id: 'crucifixo',           nome: 'Crucifixo (Halter)',           grupo: 'peito',   img: 'Dumbbell_Flyes' },
+    { id: 'cross_over',          nome: 'Cross Over (Cabo)',            grupo: 'peito',   img: 'Cable_Crossover' },
+    { id: 'voador_peck',         nome: 'Voador (Peck Deck)',           grupo: 'peito',   img: 'Butterfly_Machine' },
+    { id: 'flexao',              nome: 'Flexão de Braço',              grupo: 'peito',   img: 'Pushups' },
+    { id: 'mergulho_paralelas',  nome: 'Mergulho nas Paralelas',       grupo: 'peito',   img: 'Dips_-_Chest_Version' },
+
+    // ========== OMBROS ==========
+    { id: 'desenv_halter',       nome: 'Desenvolvimento (Halter)',     grupo: 'ombros',  img: 'Dumbbell_Shoulder_Press' },
+    { id: 'desenv_barra',        nome: 'Desenvolvimento Militar',      grupo: 'ombros',  img: 'Standing_Military_Press' },
+    { id: 'arnold',              nome: 'Desenvolvimento Arnold',       grupo: 'ombros',  img: 'Arnold_Dumbbell_Press' },
+    { id: 'elev_lateral',        nome: 'Elevação Lateral',             grupo: 'ombros',  img: 'Side_Lateral_Raise' },
+    { id: 'elev_frontal',        nome: 'Elevação Frontal',             grupo: 'ombros',  img: 'Front_Dumbbell_Raise' },
+    { id: 'crucifixo_inv',       nome: 'Crucifixo Inverso',            grupo: 'ombros',  img: 'Bent_Over_Reverse_Dumbbell_Row' },
+    { id: 'remada_alta',         nome: 'Remada Alta',                  grupo: 'ombros',  img: 'Upright_Barbell_Row' },
+    { id: 'encolhimento',        nome: 'Encolhimento (Trapézio)',      grupo: 'ombros',  img: 'Barbell_Shrug' },
+    { id: 'elev_ombro_smith',    nome: 'Elevação de Ombro Smith',      grupo: 'ombros',  img: 'Upright_Barbell_Row' },
+
+    // ========== BÍCEPS ==========
+    { id: 'rosca_direta',        nome: 'Rosca Direta (Barra)',         grupo: 'bicep',   img: 'Barbell_Curl' },
+    { id: 'rosca_alternada',     nome: 'Rosca Alternada (Halter)',     grupo: 'bicep',   img: 'Dumbbell_Alternate_Bicep_Curl' },
+    { id: 'rosca_martelo',       nome: 'Rosca Martelo',                grupo: 'bicep',   img: 'Hammer_Curls' },
+    { id: 'rosca_concentrada',   nome: 'Rosca Concentrada',            grupo: 'bicep',   img: 'Concentration_Curls' },
+    { id: 'rosca_scott',         nome: 'Rosca Scott',                  grupo: 'bicep',   img: 'Preacher_Curl' },
+    { id: 'bicep_concentrado',   nome: 'Bíceps Concentrado',           grupo: 'bicep',   img: 'Concentration_Curls' },
+
+    // ========== TRÍCEPS ==========
+    { id: 'tricep_pulley',       nome: 'Tríceps Pulley',               grupo: 'tricep',  img: 'Triceps_Pushdown' },
+    { id: 'tricep_corda',        nome: 'Tríceps Corda',                grupo: 'tricep',  img: 'Tricep_Dumbbell_Kickback' },
+    { id: 'tricep_frances',      nome: 'Tríceps Francês',              grupo: 'tricep',  img: 'Lying_Triceps_Press' },
+    { id: 'tricep_testa',        nome: 'Tríceps Testa',                grupo: 'tricep',  img: 'EZ-Bar_Skullcrusher' },
+    { id: 'tricep_kickback',     nome: 'Coice (Kickback)',             grupo: 'tricep',  img: 'Tricep_Dumbbell_Kickback' },
+    { id: 'mergulho_banco',      nome: 'Mergulho no Banco',            grupo: 'tricep',  img: 'Bench_Dips' },
+
+    // ========== PERNAS ==========
+    { id: 'agachamento',         nome: 'Agachamento Livre',            grupo: 'pernas',  img: 'Barbell_Squat' },
+    { id: 'agach_hack',          nome: 'Hack Squat',                   grupo: 'pernas',  img: 'Hack_Squat' },
+    { id: 'leg_press',           nome: 'Leg Press 45°',                grupo: 'pernas',  img: 'Leg_Press' },
+    { id: 'cad_extensora',       nome: 'Cadeira Extensora',            grupo: 'pernas',  img: 'Leg_Extensions' },
+    { id: 'cad_flexora',         nome: 'Cadeira Flexora',              grupo: 'pernas',  img: 'Seated_Leg_Curl' },
+    { id: 'mesa_flexora',        nome: 'Mesa Flexora (Deitado)',       grupo: 'pernas',  img: 'Lying_Leg_Curls' },
+    { id: 'stiff',               nome: 'Stiff (Romeno)',               grupo: 'pernas',  img: 'Romanian_Deadlift' },
+    { id: 'afundo',              nome: 'Afundo / Avanço',              grupo: 'pernas',  img: 'Dumbbell_Lunges' },
+    { id: 'panturrilha_pe',      nome: 'Panturrilha em Pé',            grupo: 'pernas',  img: 'Standing_Calf_Raises' },
+    { id: 'panturrilha_sent',    nome: 'Panturrilha Sentado',          grupo: 'pernas',  img: 'Seated_Calf_Raise' },
+
+    // ========== GLÚTEO ==========
+    { id: 'hip_thrust',          nome: 'Hip Thrust',                   grupo: 'gluteo',  img: 'Hip_Lift_With_Bands' },
+    { id: 'elev_pelvica',        nome: 'Elevação Pélvica',             grupo: 'gluteo',  img: 'Hip_Lift_With_Bands' },
+    { id: 'adutora',             nome: 'Cadeira Adutora',              grupo: 'gluteo',  img: 'Thigh_Adductor' },
+    { id: 'abdutora',            nome: 'Cadeira Abdutora',             grupo: 'gluteo',  img: 'Thigh_Abductor' },
+
+    // ========== ABDÔMEN ==========
+    { id: 'abdominal_supra',     nome: 'Abdominal Supra (Crunch)',     grupo: 'abdomen', img: 'Crunches' },
+    { id: 'abdominal_reto',      nome: 'Abdominal Reto',               grupo: 'abdomen', img: 'Sit-Up' },
+    { id: 'prancha',             nome: 'Prancha',                      grupo: 'abdomen', img: 'Plank' },
+    { id: 'russian_twist',       nome: 'Russian Twist',                grupo: 'abdomen', img: 'Russian_Twist' },
+    { id: 'elev_pernas',         nome: 'Elevação de Pernas',           grupo: 'abdomen', img: 'Hanging_Leg_Raise' },
+    { id: 'abdominal_obliquo',   nome: 'Abdominal Oblíquo',            grupo: 'abdomen', img: 'Oblique_Crunches' },
+
+    // ========== AERÓBICO ==========
+    { id: 'esteira',             nome: 'Esteira (Caminhada/Corrida)',  grupo: 'aerob',   img: null },
+    { id: 'bike',                nome: 'Bike Ergométrica',             grupo: 'aerob',   img: null },
+    { id: 'eliptico',            nome: 'Elíptico',                     grupo: 'aerob',   img: null }
+];
+
+const EXERCISE_DB_BASE = 'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises';
+
+function exerciseImageUrl(exItem) {
+    if (!exItem || !exItem.img) return null;
+    return `${EXERCISE_DB_BASE}/${exItem.img}/images/0.jpg`;
+}
+
+function findExerciseInCatalog(idOrName) {
+    if (!idOrName) return null;
+    const q = String(idOrName).toLowerCase().trim();
+    return EXERCISE_CATALOG.find(e => e.id === q || e.nome.toLowerCase() === q) || null;
+}
+
+function getMuscleGroup(grupoId) {
+    return MUSCLE_GROUPS.find(g => g.id === grupoId) || { id: 'outro', label: 'Outro', color: '#6b7280', emoji: '🏋️' };
+}
+
 // Detecta grupos musculares por keywords no nome da sessão + exercícios.
 const MUSCLE_GROUPS = [
-    { id: 'peito',    label: 'Peito',    color: '#ef4444', kw: ['supino', 'peito', 'crucifixo', 'voador', 'cross over', 'crossover', 'peck'] },
-    { id: 'costas',   label: 'Costas',   color: '#3b82f6', kw: ['remada', 'puxada', 'pull', 'pulley', 'lat', 'terra', 'costas', 'serrote'] },
-    { id: 'ombros',   label: 'Ombros',   color: '#f59e0b', kw: ['desenvolvimento', 'ombro', 'elevação lateral', 'lateral raise', 'arnold', 'encolhimento', 'trapezio', 'trapézio'] },
-    { id: 'bicep',    label: 'Bíceps',   color: '#10b981', kw: ['rosca', 'bíceps', 'biceps', 'martelo', 'scott'] },
-    { id: 'tricep',   label: 'Tríceps',  color: '#8b5cf6', kw: ['tríceps', 'triceps', 'francês', 'frances', 'testa', 'corda', 'mergulho'] },
-    { id: 'pernas',   label: 'Pernas',   color: '#06b6d4', kw: ['agachamento', 'leg press', 'cadeira extensora', 'flexora', 'panturrilha', 'stiff', 'afundo', 'avanço', 'avanco', 'pernas', 'quadr'] },
-    { id: 'gluteo',   label: 'Glúteo',   color: '#ec4899', kw: ['glúteo', 'gluteo', 'hip thrust', 'elevação pélvica', 'elevacao pelvica'] },
-    { id: 'abdomen',  label: 'Abdômen',  color: '#fbbf24', kw: ['abdominal', 'abdomen', 'abdômen', 'prancha', 'crunch', 'oblíquo', 'obliquo'] },
-    { id: 'aerob',    label: 'Aeróbico', color: '#34d399', kw: ['esteira', 'bike', 'caminhada', 'corrida', 'elíptico', 'eliptico', 'escada', 'aerob'] }
+    { id: 'peito',    label: 'Peito',    color: '#ef4444', emoji: '💪', kw: ['supino', 'peito', 'crucifixo', 'voador', 'cross over', 'crossover', 'peck'] },
+    { id: 'costas',   label: 'Costas',   color: '#3b82f6', emoji: '🪢', kw: ['remada', 'puxada', 'pull', 'pulley', 'lat', 'terra', 'costas', 'serrote'] },
+    { id: 'ombros',   label: 'Ombros',   color: '#f59e0b', emoji: '🤸', kw: ['desenvolvimento', 'ombro', 'elevação lateral', 'lateral raise', 'arnold', 'encolhimento', 'trapezio', 'trapézio'] },
+    { id: 'bicep',    label: 'Bíceps',   color: '#10b981', emoji: '🦾', kw: ['rosca', 'bíceps', 'biceps', 'martelo', 'scott'] },
+    { id: 'tricep',   label: 'Tríceps',  color: '#8b5cf6', emoji: '🦾', kw: ['tríceps', 'triceps', 'francês', 'frances', 'testa', 'corda', 'mergulho'] },
+    { id: 'pernas',   label: 'Pernas',   color: '#06b6d4', emoji: '🦵', kw: ['agachamento', 'leg press', 'cadeira extensora', 'flexora', 'panturrilha', 'stiff', 'afundo', 'avanço', 'avanco', 'pernas', 'quadr'] },
+    { id: 'gluteo',   label: 'Glúteo',   color: '#ec4899', emoji: '🍑', kw: ['glúteo', 'gluteo', 'hip thrust', 'elevação pélvica', 'elevacao pelvica'] },
+    { id: 'abdomen',  label: 'Abdômen',  color: '#fbbf24', emoji: '🎯', kw: ['abdominal', 'abdomen', 'abdômen', 'prancha', 'crunch', 'oblíquo', 'obliquo'] },
+    { id: 'aerob',    label: 'Aeróbico', color: '#34d399', emoji: '🏃', kw: ['esteira', 'bike', 'caminhada', 'corrida', 'elíptico', 'eliptico', 'escada', 'aerob'] }
 ];
 
 function detectMuscleGroups(t) {
@@ -2112,8 +2280,530 @@ function formatDataTreino(dataStr) {
     return `${dias[dt.getDay()]} ${d} ${meses[m - 1]}`;
 }
 
-// ========== TREINO — RENDER PÁGINA ==========
+// ========== TREINO — TEMPLATES (Treino A, B, C...) ==========
+
+// Resume os grupos musculares de um template a partir dos exercícios
+function templateGruposResumo(tpl) {
+    if (!tpl || !tpl.exercicios) return [];
+    const seen = new Set();
+    const out = [];
+    tpl.exercicios.forEach(ex => {
+        if (!ex.grupo || seen.has(ex.grupo)) return;
+        seen.add(ex.grupo);
+        out.push(getMuscleGroup(ex.grupo));
+    });
+    return out;
+}
+
+// Renderiza thumbnail do exercício: imagem do FreeExerciseDB ou emoji+cor fallback
+function renderExerciseThumb(ex, size) {
+    const sz = size || 48;
+    const grupo = getMuscleGroup(ex.grupo);
+    const catItem = findExerciseInCatalog(ex.exerciseId || ex.nome);
+    const imgUrl = catItem ? exerciseImageUrl(catItem) : null;
+    const fallback = `display:flex;align-items:center;justify-content:center;background:${grupo.color}22;color:${grupo.color};font-size:${Math.round(sz * 0.5)}px`;
+    if (!imgUrl) {
+        return `<div style="width:${sz}px;height:${sz}px;border-radius:10px;${fallback};flex-shrink:0">${grupo.emoji || '🏋️'}</div>`;
+    }
+    // <img> com onerror que vira fallback
+    return `<div style="width:${sz}px;height:${sz}px;border-radius:10px;overflow:hidden;flex-shrink:0;background:${grupo.color}22">
+        <img src="${imgUrl}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block"
+             onerror="this.parentElement.innerHTML='<div style=&quot;width:100%;height:100%;${fallback}&quot;>${grupo.emoji || '🏋️'}</div>'">
+    </div>`;
+}
+
 function rTreino() {
+    if (!D) return;
+    const tpls = D.workoutTemplates || [];
+    const last = getLastTreino();
+
+    const subEl = $('treino-subtitle');
+    if (subEl) {
+        subEl.textContent = tpls.length === 0
+            ? 'Crie seu primeiro template'
+            : `${tpls.length} template${tpls.length === 1 ? '' : 's'}${last ? ' • última sessão: ' + last.nome : ''}`;
+    }
+
+    if (tpls.length === 0) {
+        $('treino-body').innerHTML = `
+            <div class="card text-center" style="padding:32px 20px;margin-top:20px">
+                <div style="font-size:48px;margin-bottom:12px">🏋️</div>
+                <div style="font-size:16px;font-weight:700;margin-bottom:6px">Nenhum treino criado</div>
+                <div style="font-size:13px;color:var(--text3);margin-bottom:20px">Crie seu Treino A, B, C... com os exercícios planejados, séries e cargas. Depois é só iniciar e marcar o que fez.</div>
+                <button class="btn btn-primary" style="width:100%" onclick="openTemplateEditor()">+ Criar primeiro treino</button>
+                <button class="btn btn-outline" style="width:100%;margin-top:8px" onclick="showPage('treino-history')">📁 Ver histórico de sessões</button>
+            </div>`;
+        return;
+    }
+
+    // Última sessão registrada — destaque no topo
+    let lastSessionHtml = '';
+    if (last) {
+        const dias = daysSince(last.data);
+        const dStr = dias === 0 ? 'hoje' : (dias === 1 ? 'há 1 dia' : `há ${dias} dias`);
+        lastSessionHtml = `
+            <div class="card mb-12" style="background:var(--surface2);border-left:3px solid var(--primary)">
+                <div style="display:flex;align-items:center;gap:10px">
+                    <span style="font-size:20px">🏆</span>
+                    <div style="flex:1;min-width:0">
+                        <div style="font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.5px">ÚLTIMO TREINO REGISTRADO</div>
+                        <div style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${last.nome} <span style="font-weight:500;color:var(--text3);font-size:12px">• ${dStr}</span></div>
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    // Cards de templates
+    let listHtml = '';
+    tpls.forEach((tpl, idx) => {
+        const grupos = templateGruposResumo(tpl);
+        const gruposLabel = grupos.map(g => g.label).join('/') || 'Sem exercícios';
+        const exCount = (tpl.exercicios || []).length;
+        const letter = String.fromCharCode(65 + idx); // A, B, C...
+        // Cor do letter — pega cor do primeiro grupo OU primary
+        const letterColor = grupos.length > 0 ? grupos[0].color : 'var(--primary)';
+        listHtml += `
+            <div class="card mb-8" onclick="executeTemplate('${tpl.id}')" style="cursor:pointer">
+                <div style="display:flex;align-items:center;gap:12px">
+                    <div style="width:48px;height:48px;border-radius:12px;background:${letterColor}22;color:${letterColor};display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:800;flex-shrink:0">${letter}</div>
+                    <div style="flex:1;min-width:0">
+                        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:2px">
+                            <span style="font-size:14px;font-weight:700;color:var(--text)">${tpl.nome || ('Treino ' + letter)}</span>
+                        </div>
+                        <div style="font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${gruposLabel}</div>
+                        <div style="font-size:11px;color:var(--text3);margin-top:2px">${exCount} exercício${exCount === 1 ? '' : 's'}</div>
+                    </div>
+                    <button class="btn-icon btn-outline" onclick="event.stopPropagation();openTemplateEditor('${tpl.id}')" title="Editar" style="width:32px;height:32px;font-size:12px">✏</button>
+                </div>
+            </div>`;
+    });
+
+    $('treino-body').innerHTML = `
+        ${lastSessionHtml}
+        ${listHtml}
+        <button class="btn btn-outline" style="width:100%;margin-top:8px;border-style:dashed;color:var(--primary);font-weight:700" onclick="openTemplateEditor()">+ Novo treino</button>
+    `;
+}
+
+// ========== EDITOR DE TEMPLATE ==========
+let editingTemplate = null;
+let exerciseSearchQuery = '';
+let exerciseSearchOpen = false;
+let exerciseSearchSlotIdx = null; // null = adicionar novo; idx = substituir existente
+
+function openTemplateEditor(templateId) {
+    if (templateId) {
+        const found = (D.workoutTemplates || []).find(t => t.id === templateId);
+        if (!found) return;
+        editingTemplate = JSON.parse(JSON.stringify(found));
+    } else {
+        const letter = String.fromCharCode(65 + (D.workoutTemplates || []).length);
+        editingTemplate = {
+            id: uid(),
+            nome: 'Treino ' + letter,
+            exercicios: [],
+            notas: '',
+            createdAt: Date.now()
+        };
+    }
+    exerciseSearchQuery = '';
+    exerciseSearchOpen = false;
+    exerciseSearchSlotIdx = null;
+    showPage('template-editor');
+}
+
+function closeTemplateEditor() {
+    editingTemplate = null;
+    showPage('treino');
+}
+
+function rTemplateEditor() {
+    const body = $('template-editor-body');
+    if (!body || !editingTemplate) return;
+
+    const isEditing = (D.workoutTemplates || []).some(t => t.id === editingTemplate.id);
+    const titleEl = $('template-editor-title');
+    const subEl = $('template-editor-subtitle');
+    if (titleEl) titleEl.textContent = isEditing ? 'Editar treino' : 'Novo treino';
+    if (subEl) {
+        const n = editingTemplate.exercicios.length;
+        subEl.textContent = n === 0 ? 'Adicione exercícios' : `${n} exercício${n === 1 ? '' : 's'}`;
+    }
+
+    // Lista de exercícios do template
+    let exHtml = '';
+    editingTemplate.exercicios.forEach((ex, exIdx) => {
+        const grupo = getMuscleGroup(ex.grupo);
+        exHtml += `
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+                    ${renderExerciseThumb(ex, 44)}
+                    <div style="flex:1;min-width:0">
+                        <div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${ex.nome || 'Exercício'}</div>
+                        <div style="font-size:10px;color:${grupo.color};font-weight:600">${grupo.label}</div>
+                    </div>
+                    <button onclick="removeExerciseFromTemplate(${exIdx})" style="width:28px;height:28px;border-radius:6px;background:var(--red-bg);border:none;color:var(--red);cursor:pointer;font-size:13px;flex-shrink:0" title="Remover">🗑</button>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">
+                    <div>
+                        <label style="font-size:10px;color:var(--text3);font-weight:600">Séries</label>
+                        <input type="number" min="1" max="20" value="${ex.series || 3}" inputmode="numeric"
+                               oninput="editingTemplate.exercicios[${exIdx}].series = parseInt(this.value) || 0"
+                               style="width:100%;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-weight:700;text-align:center">
+                    </div>
+                    <div>
+                        <label style="font-size:10px;color:var(--text3);font-weight:600">Reps</label>
+                        <input type="text" value="${ex.reps || '8-12'}" placeholder="8-12"
+                               oninput="editingTemplate.exercicios[${exIdx}].reps = this.value"
+                               style="width:100%;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-weight:700;text-align:center">
+                    </div>
+                    <div>
+                        <label style="font-size:10px;color:var(--text3);font-weight:600">Carga (kg)</label>
+                        <input type="text" inputmode="decimal" value="${ex.carga != null ? ex.carga : ''}" placeholder="—"
+                               oninput="editingTemplate.exercicios[${exIdx}].carga = this.value"
+                               style="width:100%;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-weight:700;text-align:center">
+                    </div>
+                </div>
+                <div style="margin-top:6px">
+                    <input type="text" value="${ex.metodo || ''}" placeholder="Método (opcional: Bi-Set, Drop, Pirâmide…)"
+                           oninput="editingTemplate.exercicios[${exIdx}].metodo = this.value"
+                           style="width:100%;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px">
+                </div>
+            </div>`;
+    });
+
+    // Modal busca de exercício — wrapper estático, resultados re-renderizam só o miolo
+    let searchModalHtml = '';
+    if (exerciseSearchOpen) {
+        searchModalHtml = `
+            <div class="modal-overlay" onclick="if(event.target===this)closeExerciseSearch()">
+                <div class="modal-box" style="max-height:90vh">
+                    <div class="modal-header">
+                        <h3>Adicionar exercício</h3>
+                        <button class="modal-close" onclick="closeExerciseSearch()">×</button>
+                    </div>
+                    <div class="search-box" style="margin-bottom:8px">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                        <input type="text" id="exercise-search-input" autofocus placeholder="Buscar (ex: puxada, supino, agacha...)" value="${exerciseSearchQuery}"
+                               oninput="exerciseSearchQuery = this.value; updateExerciseSearchResults()">
+                    </div>
+                    <div id="exercise-search-results" style="max-height:55vh;overflow-y:auto">${renderExerciseSearchResults()}</div>
+                    <button class="btn btn-outline" style="width:100%;margin-top:10px" onclick="pickCustomExercise()">+ Adicionar exercício personalizado</button>
+                </div>
+            </div>`;
+    }
+
+    body.innerHTML = `
+        <div class="card mb-12">
+            <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">Nome do treino</label>
+                <input type="text" class="form-input" value="${editingTemplate.nome}" placeholder="Ex: Treino A — Costas/Bíceps"
+                       oninput="editingTemplate.nome = this.value">
+            </div>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div style="font-size:13px;font-weight:700;color:var(--text)">Exercícios (${editingTemplate.exercicios.length})</div>
+        </div>
+        ${exHtml || '<div class="card text-center" style="padding:20px;color:var(--text3);font-size:12px;margin-bottom:8px">Nenhum exercício ainda</div>'}
+        <button onclick="openExerciseSearch()" style="width:100%;padding:12px;background:var(--surface);border:1px dashed var(--primary);border-radius:10px;color:var(--primary);font-size:13px;font-weight:700;cursor:pointer;margin-bottom:12px">+ Adicionar exercício</button>
+
+        <div class="card mb-12">
+            <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">Notas — opcional</label>
+                <textarea class="form-input" rows="2" placeholder="Observações sobre o treino, descanso, foco..."
+                          oninput="editingTemplate.notas = this.value">${editingTemplate.notas || ''}</textarea>
+            </div>
+        </div>
+
+        <div style="display:flex;gap:8px">
+            ${isEditing ? `<button class="btn btn-outline" style="flex:1;color:var(--red)" onclick="deleteTemplate('${editingTemplate.id}')">Excluir</button>` : ''}
+            <button class="btn btn-outline" style="flex:1" onclick="closeTemplateEditor()">Cancelar</button>
+            <button class="btn btn-primary" style="flex:1" onclick="saveTemplate()">Salvar</button>
+        </div>
+
+        ${searchModalHtml}
+    `;
+}
+
+function renderExerciseSearchResults() {
+    const q = (exerciseSearchQuery || '').toLowerCase().trim();
+    const filtered = q
+        ? EXERCISE_CATALOG.filter(e => e.nome.toLowerCase().includes(q) || getMuscleGroup(e.grupo).label.toLowerCase().includes(q))
+        : EXERCISE_CATALOG;
+    const byGroup = {};
+    filtered.forEach(e => {
+        if (!byGroup[e.grupo]) byGroup[e.grupo] = [];
+        byGroup[e.grupo].push(e);
+    });
+    let resultsHtml = '';
+    MUSCLE_GROUPS.forEach(g => {
+        const items = byGroup[g.id];
+        if (!items || items.length === 0) return;
+        resultsHtml += `<div style="font-size:11px;color:${g.color};font-weight:700;margin:10px 0 4px;letter-spacing:.4px">${g.emoji} ${g.label.toUpperCase()}</div>`;
+        items.forEach(item => {
+            resultsHtml += `
+                <div onclick="pickExerciseFromCatalog('${item.id}')" style="display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px;cursor:pointer;background:var(--bg);margin-bottom:4px">
+                    ${renderExerciseThumb({ exerciseId: item.id, nome: item.nome, grupo: item.grupo }, 40)}
+                    <div style="flex:1;min-width:0">
+                        <div style="font-size:13px;font-weight:600;color:var(--text)">${item.nome}</div>
+                    </div>
+                </div>`;
+        });
+    });
+    return resultsHtml || '<div style="text-align:center;padding:20px;color:var(--text3);font-size:12px">Nenhum exercício encontrado</div>';
+}
+
+function updateExerciseSearchResults() {
+    const el = document.getElementById('exercise-search-results');
+    if (el) el.innerHTML = renderExerciseSearchResults();
+}
+
+function openExerciseSearch() {
+    exerciseSearchQuery = '';
+    exerciseSearchOpen = true;
+    rTemplateEditor();
+}
+
+function closeExerciseSearch() {
+    exerciseSearchOpen = false;
+    rTemplateEditor();
+}
+
+function pickExerciseFromCatalog(catalogId) {
+    const item = EXERCISE_CATALOG.find(e => e.id === catalogId);
+    if (!item) return;
+    editingTemplate.exercicios.push({
+        id: uid(),
+        exerciseId: item.id,
+        nome: item.nome,
+        grupo: item.grupo,
+        series: 3,
+        reps: '8-12',
+        carga: '',
+        metodo: ''
+    });
+    exerciseSearchOpen = false;
+    rTemplateEditor();
+}
+
+function pickCustomExercise() {
+    const nome = prompt('Nome do exercício:');
+    if (!nome || !nome.trim()) return;
+    const grupo = prompt('Grupo muscular (peito, costas, ombros, bicep, tricep, pernas, gluteo, abdomen, aerob):', 'outro');
+    editingTemplate.exercicios.push({
+        id: uid(),
+        exerciseId: null,
+        nome: nome.trim(),
+        grupo: (grupo || 'outro').toLowerCase().trim(),
+        series: 3,
+        reps: '8-12',
+        carga: '',
+        metodo: ''
+    });
+    exerciseSearchOpen = false;
+    rTemplateEditor();
+}
+
+function removeExerciseFromTemplate(idx) {
+    if (!confirm('Remover este exercício do treino?')) return;
+    editingTemplate.exercicios.splice(idx, 1);
+    rTemplateEditor();
+}
+
+function saveTemplate() {
+    if (!editingTemplate.nome || !editingTemplate.nome.trim()) {
+        return toast('Dá um nome ao treino', true);
+    }
+    if (editingTemplate.exercicios.length === 0) {
+        return toast('Adiciona ao menos 1 exercício', true);
+    }
+    // Normaliza
+    editingTemplate.exercicios.forEach(ex => {
+        ex.series = parseInt(ex.series) || 3;
+        ex.reps = (ex.reps || '').trim() || '8-12';
+        if (typeof ex.carga === 'string') {
+            const c = ex.carga.replace(',', '.').trim();
+            ex.carga = c === '' ? null : (isNaN(parseFloat(c)) ? c : parseFloat(c));
+        }
+    });
+    if (!D.workoutTemplates) D.workoutTemplates = [];
+    const idx = D.workoutTemplates.findIndex(t => t.id === editingTemplate.id);
+    if (idx >= 0) {
+        D.workoutTemplates[idx] = editingTemplate;
+    } else {
+        D.workoutTemplates.push(editingTemplate);
+    }
+    save();
+    toast(idx >= 0 ? 'Treino atualizado' : '✓ Treino criado');
+    closeTemplateEditor();
+}
+
+function deleteTemplate(id) {
+    const t = (D.workoutTemplates || []).find(x => x.id === id);
+    if (!t) return;
+    if (!confirm(`Excluir "${t.nome}"? Os treinos já registrados no histórico ficam intactos.`)) return;
+    D.workoutTemplates = D.workoutTemplates.filter(x => x.id !== id);
+    save();
+    toast('Treino excluído');
+    closeTemplateEditor();
+}
+
+// ========== MODO EXECUÇÃO ==========
+let activeExecution = null; // { templateId, nome, exercicios:[{...com 'feito':bool}], startTime }
+let execTimerInterval = null;
+
+function executeTemplate(templateId) {
+    const tpl = (D.workoutTemplates || []).find(t => t.id === templateId);
+    if (!tpl) return;
+    activeExecution = {
+        templateId: tpl.id,
+        nome: tpl.nome,
+        notas: tpl.notas,
+        exercicios: tpl.exercicios.map(ex => ({
+            ...ex,
+            id: uid(),
+            feito: false,
+            // séries planejadas viram array pra marcar individualmente
+            seriesDone: Array.from({ length: parseInt(ex.series) || 3 }, () => false)
+        })),
+        startTime: Date.now()
+    };
+    showPage('treino-execute');
+    startExecTimer();
+}
+
+function startExecTimer() {
+    stopExecTimer();
+    const update = () => {
+        if (!activeExecution) return;
+        const elapsed = Math.floor((Date.now() - activeExecution.startTime) / 1000);
+        const m = Math.floor(elapsed / 60);
+        const s = elapsed % 60;
+        const el = $('treino-exec-timer');
+        if (el) el.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    };
+    update();
+    execTimerInterval = setInterval(update, 1000);
+}
+
+function stopExecTimer() {
+    if (execTimerInterval) {
+        clearInterval(execTimerInterval);
+        execTimerInterval = null;
+    }
+}
+
+function rTreinoExecute() {
+    const body = $('treino-execute-body');
+    if (!body || !activeExecution) return;
+    const titleEl = $('treino-exec-title');
+    const subEl = $('treino-exec-subtitle');
+    if (titleEl) titleEl.textContent = activeExecution.nome;
+    const totalEx = activeExecution.exercicios.length;
+    const feitos = activeExecution.exercicios.filter(e => e.feito).length;
+    if (subEl) subEl.textContent = `${feitos}/${totalEx} exercícios feitos`;
+
+    let exHtml = '';
+    activeExecution.exercicios.forEach((ex, exIdx) => {
+        const grupo = getMuscleGroup(ex.grupo);
+        const dotsHtml = ex.seriesDone.map((done, sIdx) => `
+            <span onclick="toggleExecSerie(${exIdx}, ${sIdx})" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:12px;font-weight:700;${done ? 'background:var(--primary);color:#fff' : 'background:var(--border);color:var(--text3)'}">${sIdx + 1}</span>
+        `).join('');
+        exHtml += `
+            <div class="card mb-8" style="${ex.feito ? 'opacity:.6' : ''}">
+                <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+                    ${renderExerciseThumb(ex, 56)}
+                    <div style="flex:1;min-width:0">
+                        <div style="font-size:14px;font-weight:700;color:var(--text);${ex.feito ? 'text-decoration:line-through' : ''}">${ex.nome}</div>
+                        <div style="font-size:11px;color:${grupo.color};font-weight:600">${grupo.label}${ex.metodo ? ' • ' + ex.metodo : ''}</div>
+                        <div style="font-size:11px;color:var(--text3);margin-top:2px">${ex.series} x ${ex.reps}${ex.carga !== '' && ex.carga != null ? ' • ' + ex.carga + ' kg' : ''}</div>
+                    </div>
+                    <button onclick="toggleExecExercise(${exIdx})" class="meal-check ${ex.feito ? 'done' : ''}" style="width:32px;height:32px;border-radius:8px;cursor:pointer;flex-shrink:0">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+                    </button>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;padding-top:6px;border-top:1px solid var(--border)">
+                    <span style="font-size:10px;color:var(--text3);font-weight:600;margin-right:4px">SÉRIES:</span>
+                    ${dotsHtml}
+                </div>
+            </div>`;
+    });
+
+    body.innerHTML = `
+        ${exHtml}
+        <div style="display:flex;gap:8px;margin-top:16px">
+            <button class="btn btn-outline" style="flex:1" onclick="cancelExecution()">Cancelar</button>
+            <button class="btn btn-primary" style="flex:2" onclick="finishExecution()">🏁 FIM — Registrar</button>
+        </div>
+    `;
+}
+
+function toggleExecExercise(exIdx) {
+    const ex = activeExecution.exercicios[exIdx];
+    ex.feito = !ex.feito;
+    // Se marcou como feito, marca todas as séries como done; se desmarcou, zera
+    ex.seriesDone = ex.seriesDone.map(() => ex.feito);
+    rTreinoExecute();
+}
+
+function toggleExecSerie(exIdx, sIdx) {
+    const ex = activeExecution.exercicios[exIdx];
+    ex.seriesDone[sIdx] = !ex.seriesDone[sIdx];
+    // Marca exercício como feito se todas as séries estiverem feitas
+    ex.feito = ex.seriesDone.every(d => d);
+    rTreinoExecute();
+}
+
+function cancelExecution() {
+    if (!activeExecution) { showPage('treino'); return; }
+    const anyDone = activeExecution.exercicios.some(e => e.feito || e.seriesDone.some(d => d));
+    if (anyDone && !confirm('Cancelar treino? O progresso desta sessão será descartado.')) return;
+    stopExecTimer();
+    activeExecution = null;
+    showPage('treino');
+}
+
+function finishExecution() {
+    if (!activeExecution) return;
+    const feitos = activeExecution.exercicios.filter(e => e.seriesDone.some(d => d));
+    if (feitos.length === 0) {
+        if (!confirm('Nenhuma série marcada como feita. Salvar mesmo assim?')) return;
+    }
+    // Converte execução em entrada de D.treinos
+    const duracaoMin = Math.max(1, Math.round((Date.now() - activeExecution.startTime) / 60000));
+    const sessao = {
+        id: uid(),
+        data: today(),
+        nome: activeExecution.nome,
+        exercicios: activeExecution.exercicios
+            .filter(e => e.seriesDone.some(d => d))
+            .map(e => {
+                const reps = parseInt((e.reps || '').split('-')[0]) || 0;
+                const carga = typeof e.carga === 'number' ? e.carga : (parseFloat(String(e.carga).replace(',', '.')) || 0);
+                const seriesCount = e.seriesDone.filter(d => d).length;
+                return {
+                    id: uid(),
+                    nome: e.nome,
+                    series: Array.from({ length: seriesCount }, () => ({ reps, carga }))
+                };
+            }),
+        notas: activeExecution.notas || '',
+        duracao: duracaoMin,
+        templateId: activeExecution.templateId,
+        createdAt: Date.now()
+    };
+    if (!D.treinos) D.treinos = [];
+    D.treinos.push(sessao);
+    save();
+    stopExecTimer();
+    activeExecution = null;
+    toast('✓ Treino registrado no histórico');
+    showPage('treino');
+}
+
+// ========== TREINO — HISTÓRICO DE SESSÕES ==========
+function rTreinoHistory() {
     if (!D) return;
     const treinos = (D.treinos || []).slice().sort((a, b) => {
         if (a.data !== b.data) return b.data.localeCompare(a.data);
@@ -2126,7 +2816,7 @@ function rTreino() {
 
     // Subtítulo do header
     if (last) {
-        const subEl = $('treino-subtitle');
+        const subEl = $('treino-history-subtitle');
         if (subEl) {
             const dStr = dias === 0 ? 'hoje' : (dias === 1 ? 'há 1 dia' : `há ${dias} dias`);
             subEl.textContent = `Última: ${last.nome} (${dStr}) • ${week.length} esta semana`;
@@ -2134,12 +2824,12 @@ function rTreino() {
     }
 
     if (treinos.length === 0) {
-        $('treino-body').innerHTML = `
+        $('treino-history-body').innerHTML = `
             <div class="card text-center" style="padding:32px 20px">
                 <div style="font-size:48px;margin-bottom:12px">🏋️</div>
                 <div style="font-size:16px;font-weight:700;margin-bottom:6px">Nenhum treino registrado</div>
-                <div style="font-size:13px;color:var(--text3);margin-bottom:20px">Registre suas sessões com exercícios, séries, reps e cargas pra acompanhar evolução.</div>
-                <button class="btn btn-primary" onclick="openTreinoEditor()">+ Registrar primeira sessão</button>
+                <div style="font-size:13px;color:var(--text3);margin-bottom:20px">Inicie um template em Treinos pra registrar sua primeira sessão, ou registre manualmente.</div>
+                <button class="btn btn-primary" onclick="openTreinoEditor()">+ Registrar manualmente</button>
             </div>`;
         return;
     }
@@ -2196,7 +2886,7 @@ function rTreino() {
             </div>`;
     });
 
-    $('treino-body').innerHTML = `${resumoHtml}${listHtml}`;
+    $('treino-history-body').innerHTML = `${resumoHtml}${listHtml}`;
 }
 
 // ========== TREINO — EDITOR (PÁGINA) ==========
@@ -2368,6 +3058,7 @@ function saveTreino() {
     const wasEditing = idx >= 0;
     closeTreinoEditor();
     toast(wasEditing ? 'Treino atualizado' : '✓ Treino registrado');
+    if (cPage === 'treino-history') rTreinoHistory();
     if (cPage === 'treino') rTreino();
     if (cPage === 'dash') rDash();
 }
@@ -2380,6 +3071,7 @@ function deleteTreino(id) {
     save();
     closeTreinoEditor();
     toast('Treino excluído');
+    if (cPage === 'treino-history') rTreinoHistory();
     if (cPage === 'treino') rTreino();
     if (cPage === 'dash') rDash();
 }
@@ -3231,6 +3923,15 @@ function deleteMed(medId) {
     save();
     rMeds();
     toast('Medicamento excluído');
+}
+
+function toggleModuleTreino() {
+    if (!D.modules) D.modules = { treino: true };
+    D.modules.treino = !(D.modules.treino !== false);
+    save();
+    rGoals();
+    if (cPage === 'goals') {} // já atualizado
+    toast(D.modules.treino ? '✓ Módulo Treino ativado' : 'Módulo Treino desativado');
 }
 
 function toggleTheme() {
