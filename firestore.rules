@@ -16,13 +16,16 @@ service cloud.firestore {
     }
 
     // Documento principal do usuário
-    // - Dono autenticado: leitura E escrita do próprio doc
-    // - Admin: leitura (incluindo list) de qualquer doc, SEM escrita
+    // - Dono autenticado: leitura, criação e atualização do próprio doc
+    // - Admin: leitura (incluindo list) de qualquer doc + DELETE pra limpar
+    //   contas órfãs/abandonadas (mas não pode alterar conteúdo)
     match /users/{userId} {
       allow read: if (request.auth != null && request.auth.uid == userId)
                   || isAdmin();
-      allow write: if request.auth != null
-                   && request.auth.uid == userId;
+      allow create, update: if request.auth != null
+                            && request.auth.uid == userId;
+      allow delete: if (request.auth != null && request.auth.uid == userId)
+                    || isAdmin();
     }
 
     // Default deny: qualquer outro path retorna falso

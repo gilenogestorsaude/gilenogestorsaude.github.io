@@ -446,7 +446,7 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.6.3';
+const APP_VERSION = '1.6.4';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -888,6 +888,21 @@ function timeAgo(date) {
     return `${Math.floor(days/365)}ano${days >= 730 ? 's' : ''}`;
 }
 
+async function deleteUserDoc(uid, label) {
+    if (!isAdmin()) return toast('Acesso negado', true);
+    if (U && uid === U.uid) return toast('Você não pode apagar sua própria conta aqui', true);
+    if (!confirm(`Apagar dados do usuário "${label}"?\n\nIsso remove o documento do Firestore. Se ele logar de novo, uma conta nova zerada será criada.`)) return;
+    if (!confirm(`Confirmar exclusão definitiva de "${label}"? Isso é irreversível.`)) return;
+    try {
+        await db.collection('users').doc(uid).delete();
+        toast('✓ Usuário removido');
+        rAdmin();
+    } catch (e) {
+        console.error('Erro ao excluir:', e);
+        toast('Erro ao excluir: ' + (e.message || e.code || ''), true);
+    }
+}
+
 async function rAdmin() {
     if (!isAdmin()) {
         showPage('goals');
@@ -982,6 +997,9 @@ async function rAdmin() {
                 s.vitals ? `${s.vitals} vital` : null,
                 s.meds ? `${s.meds} med` : null
             ].filter(Boolean).join(' · ') || '(sem registros)';
+            const deleteBtn = isMe
+                ? ''
+                : `<button onclick="deleteUserDoc('${u.uid}', ${JSON.stringify((u.nome || u.email || u.uid.slice(0,8)).replace(/'/g, "\\'"))})" title="Excluir conta deste usuário" style="width:28px;height:28px;border-radius:6px;background:var(--red-bg);border:none;color:var(--red);cursor:pointer;font-size:13px;flex-shrink:0;margin-left:8px">🗑</button>`;
             listHtml += `
                 <div class="card mb-8" style="${isMe ? 'border-left:3px solid var(--primary)' : ''}">
                     <div style="display:flex;justify-content:space-between;align-items:start;gap:8px;margin-bottom:4px">
@@ -990,10 +1008,14 @@ async function rAdmin() {
                                 ${u.nome || u.email.split('@')[0]}${isMe ? ' <span style="font-size:9px;background:var(--primary);color:#fff;padding:1px 5px;border-radius:4px">VOCÊ</span>' : ''}
                             </div>
                             <div style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${u.email}</div>
+                            <div style="font-size:9px;color:var(--text3);font-family:ui-monospace,monospace;margin-top:1px">${u.uid.slice(0,12)}…</div>
                         </div>
-                        <div style="text-align:right;flex-shrink:0">
-                            <div style="font-size:11px;color:${lastColor};font-weight:600">${last}</div>
-                            <div style="font-size:9px;color:var(--text3)">v${u.version}</div>
+                        <div style="display:flex;align-items:start;gap:4px;flex-shrink:0">
+                            <div style="text-align:right">
+                                <div style="font-size:11px;color:${lastColor};font-weight:600">${last}</div>
+                                <div style="font-size:9px;color:var(--text3)">v${u.version}</div>
+                            </div>
+                            ${deleteBtn}
                         </div>
                     </div>
                     <div style="font-size:11px;color:var(--text2);padding-top:6px;border-top:1px solid var(--border)">
