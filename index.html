@@ -446,7 +446,7 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.6.5';
+const APP_VERSION = '1.6.6';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -571,8 +571,16 @@ function defaultD() {
         // Workout templates (Treino A, B, C...) — definições reutilizáveis
         // workoutTemplates: [{ id, nome, exercicios: [{id, exerciseId, nome, grupo, series, reps, carga, metodo?, notas?}], notas?, createdAt }]
         workoutTemplates: [],
-        // Módulos opcionais (default todos ligados)
-        modules: { treino: true },
+        // Módulos opcionais (default todos ligados) — usuário pode esconder
+        // os que não usar via Configurações pra deixar o app personalizado
+        modules: {
+            refeicao: true,
+            hidratacao: true,
+            medicamentos: true,
+            treino: true,
+            vitais: true,
+            consultas: true
+        },
         // Consultas medicas
         // consultas: [{ id, data, medico, especialidade, local?, queixa, conduta, prescricao?, proximaConsulta?, notas?, createdAt }]
         consultas: [],
@@ -709,8 +717,10 @@ async function load() {
             if (!D.medsTaken) D.medsTaken = {};
             if (!D.treinos) D.treinos = [];
             if (!D.workoutTemplates) D.workoutTemplates = [];
-            if (!D.modules) D.modules = { treino: true };
-            if (typeof D.modules.treino === 'undefined') D.modules.treino = true;
+            if (!D.modules) D.modules = {};
+            ['refeicao','hidratacao','medicamentos','treino','vitais','consultas'].forEach(m => {
+                if (typeof D.modules[m] === 'undefined') D.modules[m] = true;
+            });
             if (!D.consultas) D.consultas = [];
             // v1.1.2 — adiciona carbo/gord aos foods existentes (default 0)
             if (D.foods) {
@@ -791,6 +801,7 @@ auth.onAuthStateChanged(async user => {
         await load();
         showPage('dash');
         $('bottom-nav').classList.remove('hidden');
+        applyBottomNavVisibility();
         if (D && D.theme === 'light') document.body.classList.add('light');
         // Carrega TACO em background (nao bloqueia render)
         loadTACO();
@@ -1192,7 +1203,7 @@ function rDash() {
     const lastWater = waterEntries.length > 0 ? waterEntries[waterEntries.length - 1] : null;
 
     // Gap de hidratação
-    if (hour >= 10 && hour < 17) {
+    if (isModuleEnabled('hidratacao') && hour >= 10 && hour < 17) {
         const recentWater = waterEntries.filter(e => {
             const h = parseInt(e.time.split(':')[0]);
             return h >= (hour - 2);
@@ -1207,7 +1218,7 @@ function rDash() {
     }
 
     // Proteína abaixo
-    if (hour >= 14 && totalProt < goals.prot * 0.6) {
+    if (isModuleEnabled('refeicao') && hour >= 14 && totalProt < goals.prot * 0.6) {
         alerts += `<div class="alert alert-warn">
             <div class="alert-icon">🥩</div>
             <div><div class="alert-title">Proteína abaixo de 60%</div>
@@ -1216,7 +1227,7 @@ function rDash() {
     }
 
     // Calorias abaixo
-    if (hour >= 16 && totalKcal < goals.kcal * 0.65 && dayType === 'treino') {
+    if (isModuleEnabled('refeicao') && hour >= 16 && totalKcal < goals.kcal * 0.65 && dayType === 'treino') {
         alerts += `<div class="alert alert-warn">
             <div class="alert-icon">🔥</div>
             <div><div class="alert-title">Déficit calórico</div>
@@ -1225,9 +1236,9 @@ function rDash() {
     }
 
     // Medicamentos atrasados
-    const medsDoses = getMedsToday();
+    const medsDoses = isModuleEnabled('medicamentos') ? getMedsToday() : [];
     const medsLate = medsDoses.filter(d => d.status === 'late');
-    if (medsLate.length > 0) {
+    if (isModuleEnabled('medicamentos') && medsLate.length > 0) {
         const nomes = [...new Set(medsLate.map(d => d.nome + ' ' + d.horario))].slice(0, 3).join(', ');
         alerts += `<div class="alert alert-warn">
             <div class="alert-icon">💊</div>
@@ -1239,7 +1250,7 @@ function rDash() {
     // Pesagem esquecida (so se ja tem habito — pelo menos 3 registros, e ultimo > 7 dias)
     const dSinceWeight = getDaysSinceLastWeight();
     const totalPesagens = D.vitals ? Object.values(D.vitals).filter(v => v && v.peso).length : 0;
-    if (dSinceWeight != null && dSinceWeight > 7 && totalPesagens >= 3) {
+    if (isModuleEnabled('vitais') && dSinceWeight != null && dSinceWeight > 7 && totalPesagens >= 3) {
         alerts += `<div class="alert alert-warn" onclick="showPage('vitais')" style="cursor:pointer">
             <div class="alert-icon">⚖️</div>
             <div><div class="alert-title">Pesagem esquecida</div>
@@ -1248,7 +1259,7 @@ function rDash() {
     }
 
     // Consulta proxima (proximos 7 dias)
-    const upcomingConsulta = getConsultasUpcoming7d();
+    const upcomingConsulta = isModuleEnabled('consultas') ? getConsultasUpcoming7d() : null;
     if (upcomingConsulta) {
         const d = upcomingConsulta.daysAhead;
         const dStr = d === 0 ? 'hoje' : (d === 1 ? 'amanhã' : `em ${d} dias`);
@@ -1260,7 +1271,7 @@ function rDash() {
     }
 
     // Estoque baixo
-    const estoqueBaixo = (D.meds || []).filter(m => m.ativo !== false && typeof m.estoque === 'number' && m.estoque <= 7 && m.estoque > 0);
+    const estoqueBaixo = isModuleEnabled('medicamentos') ? (D.meds || []).filter(m => m.ativo !== false && typeof m.estoque === 'number' && m.estoque <= 7 && m.estoque > 0) : [];
     if (estoqueBaixo.length > 0) {
         const nomes = estoqueBaixo.slice(0, 3).map(m => `${m.nome} (${m.estoque})`).join(', ');
         alerts += `<div class="alert alert-warn">
@@ -1325,6 +1336,7 @@ function rDash() {
     $('dash-body').innerHTML = `
         ${alerts}
         <!-- Progresso -->
+        ${!isModuleEnabled('refeicao') ? '' : `
         <div class="card mb-12">
             <div style="display:flex;justify-content:space-between;margin-bottom:12px">
                 <span class="card-title" style="margin:0">Progresso Diário</span>
@@ -1369,10 +1381,10 @@ function rDash() {
                 </div>
                 <div class="progress-bar"><div class="progress-fill" style="width:${waterPct}%;background:var(--blue)"></div></div>
             </div>
-        </div>
+        </div>`}
 
         <!-- Refeições -->
-        ${(() => {
+        ${!isModuleEnabled('refeicao') ? '' : (() => {
             const collapsed = isCollapsed('meals');
             const day = getDayData(dt);
             const doneCount = MEAL_SLOTS.filter(s => { const slot = day.slots[s.id]; return slot && slot.items && slot.items.length > 0; }).length;
@@ -1393,7 +1405,7 @@ function rDash() {
         })()}
 
         <!-- Medicamentos -->
-        ${(() => {
+        ${!isModuleEnabled('medicamentos') ? '' : (() => {
             const collapsed = isCollapsed('meds');
             const totalDoses = medsDoses.length;
             const takenDoses = medsDoses.filter(d => d.status === 'taken').length;
@@ -1431,7 +1443,7 @@ function rDash() {
         })()}
 
         <!-- Treino -->
-        ${(D.modules && D.modules.treino === false) ? '' : `
+        ${!isModuleEnabled('treino') ? '' : `
         <div class="card mb-12">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
                 <span class="card-title" style="margin:0">🏋️ Treino</span>
@@ -1481,6 +1493,7 @@ function rDash() {
         </div>`}
 
         <!-- Consultas -->
+        ${!isModuleEnabled('consultas') ? '' : `
         <div class="card mb-12">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
                 <span class="card-title" style="margin:0">📅 Consultas</span>
@@ -1517,9 +1530,10 @@ function rDash() {
                     <div style="font-size:11px;color:var(--text3);margin-top:2px">${consultas.length} consulta${consultas.length === 1 ? '' : 's'} • sem próxima agendada</div>
                 `;
             })()}
-        </div>
+        </div>`}
 
         <!-- Sinais vitais -->
+        ${!isModuleEnabled('vitais') ? '' : `
         <div class="card mb-12">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
                 <span class="card-title" style="margin:0">📊 Sinais Vitais</span>
@@ -1555,9 +1569,10 @@ function rDash() {
                     </div>
                 `;
             })()}
-        </div>
+        </div>`}
 
         <!-- Hidratação mini -->
+        ${!isModuleEnabled('hidratacao') ? '' : `
         <div class="card" onclick="showPage('hydro')" style="cursor:pointer">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
                 <span class="card-title" style="margin:0">💧 Hidratação</span>
@@ -1566,7 +1581,7 @@ function rDash() {
             <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px">
                 ${hydroMini}
             </div>
-        </div>
+        </div>`}
     `;
 }
 
@@ -2280,14 +2295,29 @@ function rGoals() {
         </div>
 
         <div class="card mb-12">
+            <div class="card-title">Módulos do app</div>
+            <div style="font-size:11px;color:var(--text3);margin-bottom:10px;line-height:1.5">
+                Desligue o que você não usa pra deixar a tela inicial mais limpa. Os dados ficam preservados — você pode religar a qualquer momento.
+            </div>
+            ${Object.keys(MODULE_META).map((m, i, arr) => {
+                const meta = MODULE_META[m];
+                const last = i === arr.length - 1;
+                return `
+                <div class="cfg-item" ${last ? 'style="border:none"' : ''}>
+                    <div style="min-width:0;flex:1">
+                        <div class="cfg-label">${meta.icon} ${meta.label}</div>
+                        <div class="cfg-desc">${meta.desc}</div>
+                    </div>
+                    <button class="toggle ${isModuleEnabled(m) ? 'on' : ''}" onclick="toggleModule('${m}')"></button>
+                </div>`;
+            }).join('')}
+        </div>
+
+        <div class="card mb-12">
             <div class="card-title">Configurações</div>
             <div class="cfg-item">
                 <div><div class="cfg-label">Tema escuro</div><div class="cfg-desc">Alternar entre claro e escuro</div></div>
                 <button class="toggle ${D.theme === 'dark' ? 'on' : ''}" onclick="toggleTheme()"></button>
-            </div>
-            <div class="cfg-item">
-                <div><div class="cfg-label">Módulo Treino</div><div class="cfg-desc">Mostrar templates e card de treino. Desligue se não usa esse módulo.</div></div>
-                <button class="toggle ${(D.modules && D.modules.treino !== false) ? 'on' : ''}" onclick="toggleModuleTreino()"></button>
             </div>
             <div class="cfg-item">
                 <div><div class="cfg-label">Versão</div><div class="cfg-desc">v${APP_VERSION} · BETA</div></div>
@@ -4232,13 +4262,45 @@ function deleteMed(medId) {
     toast('Medicamento excluído');
 }
 
-function toggleModuleTreino() {
-    if (!D.modules) D.modules = { treino: true };
-    D.modules.treino = !(D.modules.treino !== false);
+// ========== MÓDULOS OPCIONAIS ==========
+const MODULE_META = {
+    refeicao:     { label: 'Refeições',       icon: '🍽',  desc: 'Registrar pré-treino, café, almoço, lanche e jantar' },
+    hidratacao:   { label: 'Hidratação',      icon: '💧', desc: 'Acompanhar consumo de água ao longo do dia' },
+    medicamentos: { label: 'Medicamentos',    icon: '💊', desc: 'Cadastrar remédios/suplementos e marcar doses' },
+    treino:       { label: 'Treino',          icon: '🏋️', desc: 'Templates A/B/C, execução guiada e histórico' },
+    vitais:       { label: 'Sinais Vitais',   icon: '📊', desc: 'Peso, PA, FC, sono — base do IMC' },
+    consultas:    { label: 'Consultas',       icon: '📅', desc: 'Histórico médico e próximas consultas' }
+};
+
+function isModuleEnabled(name) {
+    if (!D || !D.modules) return true;
+    return D.modules[name] !== false;
+}
+
+function toggleModule(name) {
+    if (!D.modules) D.modules = {};
+    D.modules[name] = !isModuleEnabled(name);
     save();
+    applyBottomNavVisibility();
     rGoals();
-    if (cPage === 'goals') {} // já atualizado
-    toast(D.modules.treino ? '✓ Módulo Treino ativado' : 'Módulo Treino desativado');
+    const meta = MODULE_META[name];
+    toast((D.modules[name] ? '✓ ' : '') + (meta ? meta.label : name) + (D.modules[name] ? ' ativado' : ' desativado'));
+}
+
+// Mantém alias antigo pra retro-compatibilidade
+function toggleModuleTreino() { toggleModule('treino'); }
+
+// Aplica visibilidade dos tabs do bottom-nav baseado nos módulos ligados
+function applyBottomNavVisibility() {
+    const nav = document.getElementById('bottom-nav');
+    if (!nav) return;
+    const map = { meal: 'refeicao', hydro: 'hidratacao', meds: 'medicamentos' };
+    nav.querySelectorAll('.nav-item').forEach(btn => {
+        const page = btn.dataset.page;
+        const mod = map[page];
+        if (!mod) return; // dash e goals sempre ficam
+        btn.style.display = isModuleEnabled(mod) ? '' : 'none';
+    });
 }
 
 function toggleTheme() {
