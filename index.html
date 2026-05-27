@@ -446,7 +446,7 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.6.4';
+const APP_VERSION = '1.6.5';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -997,9 +997,12 @@ async function rAdmin() {
                 s.vitals ? `${s.vitals} vital` : null,
                 s.meds ? `${s.meds} med` : null
             ].filter(Boolean).join(' · ') || '(sem registros)';
+            // Sanitiza pra ficar safe dentro de onclick="...('uid','label')"
+            const rawLabel = u.nome || u.email || u.uid.slice(0,8);
+            const safeLabel = rawLabel.replace(/['"\\<>&]/g, '_');
             const deleteBtn = isMe
                 ? ''
-                : `<button onclick="deleteUserDoc('${u.uid}', ${JSON.stringify((u.nome || u.email || u.uid.slice(0,8)).replace(/'/g, "\\'"))})" title="Excluir conta deste usuário" style="width:28px;height:28px;border-radius:6px;background:var(--red-bg);border:none;color:var(--red);cursor:pointer;font-size:13px;flex-shrink:0;margin-left:8px">🗑</button>`;
+                : `<button onclick="deleteUserDoc('${u.uid}','${safeLabel}')" title="Excluir conta deste usuário" style="width:28px;height:28px;border-radius:6px;background:var(--red-bg);border:none;color:var(--red);cursor:pointer;font-size:13px;flex-shrink:0;margin-left:8px">🗑</button>`;
             listHtml += `
                 <div class="card mb-8" style="${isMe ? 'border-left:3px solid var(--primary)' : ''}">
                     <div style="display:flex;justify-content:space-between;align-items:start;gap:8px;margin-bottom:4px">
