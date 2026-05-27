@@ -446,7 +446,7 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.6.6';
+const APP_VERSION = '1.6.7';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -4316,10 +4316,31 @@ function toggleThemeFromHeader() {
 }
 
 function shareApp() {
+    const url = 'https://gilenogestorsaude.github.io';
+    const text = `Oi! Tô testando um app pessoal de gestão de saúde — refeições, hidratação, treino, medicamentos e sinais vitais, tudo num lugar só. 🌱
+
+Tá em fase de testes (BETA) e queria muito a sua opinião sincera: o que faz sentido, o que tá confuso, o que falta.
+
+Como funciona:
+✓ Cria conta com email/senha ou Google
+✓ Seus dados ficam só na sua conta (ninguém vê)
+✓ Funciona offline depois da primeira abertura
+✓ Você escolhe quais módulos usar (em Metas → Configurações)
+
+👉 ${url}
+
+Manda sugestão por aqui mesmo — print, áudio, lista, do jeito que for melhor pra você. Valeu! 🙏`;
+
     if (navigator.share) {
-        navigator.share({ title: 'Gileno - Gestão Saúde', url: 'https://gilenogestorsaude.github.io' }).catch(() => {});
+        navigator.share({
+            title: 'Gileno – Gestão Saúde (BETA)',
+            text: text,
+            url: url
+        }).catch(() => {});
     } else {
-        navigator.clipboard.writeText('https://gilenogestorsaude.github.io').then(() => toast('Link copiado!')).catch(() => toast('Erro ao copiar', true));
+        navigator.clipboard.writeText(text)
+            .then(() => toast('Mensagem copiada! Cola onde quiser compartilhar.'))
+            .catch(() => toast('Erro ao copiar', true));
     }
 }
 
