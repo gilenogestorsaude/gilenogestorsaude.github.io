@@ -106,7 +106,7 @@ select.form-input{-webkit-appearance:none;appearance:none;background-image:url("
 .login-divider::before,.login-divider::after{content:'';flex:1;height:1px;background:var(--border)}
 
 /* ========== HEADER ========== */
-.app-header{background:var(--primary-grad);padding:14px 16px 12px;color:#0a0f0a}
+.app-header{background:var(--primary-grad);padding:14px 16px 12px;color:#0a0f0a;position:sticky;top:0;z-index:50;border-radius:0 0 22px 22px;box-shadow:0 6px 18px rgba(0,0,0,.22)}
 .header-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
 .header-brand{display:flex;flex-direction:column;align-items:flex-start;gap:1px}
 .header-logo{width:32px;height:32px;border-radius:8px}
@@ -479,7 +479,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.7.5';
+const APP_VERSION = '1.7.6';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1219,7 +1219,7 @@ function rDash() {
     const pesoAgo = getDaysSinceLastWeight();
     const vFc = lastVital('fc');
     const vPa = lastVital('pa');
-    const staleSub = (daysAgo, freshLabel) => (daysAgo == null || daysAgo === 0) ? freshLabel : `<span style="color:#b45309;font-weight:700">há ${daysAgo}d</span>`;
+    const staleSub = (daysAgo, unit) => daysAgo == null ? unit : (daysAgo === 0 ? '<span style="color:#15803d;font-weight:700">hoje</span>' : `<span style="color:#b45309;font-weight:700">há ${daysAgo}d</span>`);
 
     // Header
     const userName = U ? (U.displayName || U.email.split('@')[0]) : 'Usuário';
@@ -1248,7 +1248,7 @@ function rDash() {
             <div class="header-stat" onclick="${imcNow == null ? `showPage('goals')` : `openVitalEditor()`}">
                 <div class="header-stat-emo">📊</div>
                 <div class="header-stat-value" style="color:${imcColor(imcNow)}">${imcNow == null ? '—' : imcNow.toFixed(1)}</div>
-                <div class="header-stat-unit">${imcNow == null ? 'def. altura' : staleSub(pesoAgo, imcLabel(imcNow))}</div>
+                <div class="header-stat-unit">${imcNow == null ? 'def. altura' : imcLabel(imcNow)}</div>
             </div>
             <div class="header-stat" onclick="openVitalEditor()">
                 <div class="header-stat-emo">❤️</div>
