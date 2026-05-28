@@ -479,7 +479,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.7.8';
+const APP_VERSION = '1.7.9';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -2502,36 +2502,17 @@ function rGoals() {
                 <span class="card-title" style="margin:0">Sinais Vitais Hoje</span>
                 <button class="btn btn-outline btn-sm" onclick="showPage('vitais')">📊 Ver histórico</button>
             </div>
-            <div style="display:flex;gap:8px">
-                <div class="form-group" style="flex:1">
-                    <label class="form-label">Peso (kg)</label>
-                    <input type="number" class="form-input" value="${D.peso}" step="0.1" onchange="const p=parseFloat(this.value); if(!isNaN(p)&&p>0){D.peso=p; saveVital('peso',p);} if(cPage==='dash')rDash()">
-                </div>
-                <div class="form-group" style="flex:1">
-                    <label class="form-label">Altura (m)</label>
-                    <input type="number" class="form-input" value="${D.altura || ''}" step="0.01" placeholder="1.69" onchange="D.altura=parseFloat(this.value)||null;save();if(cPage==='dash')rDash()">
-                </div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px 18px;font-size:14px;color:var(--text2);margin-bottom:14px">
+                <span>⚖️ <strong style="color:var(--text)">${D.peso ? fmt(D.peso) : '—'}</strong> kg</span>
+                <span>🩺 <strong style="color:var(--text)">${(D.vitals[today()] || {}).pa || '—'}</strong></span>
+                <span>❤️ <strong style="color:var(--text)">${(D.vitals[today()] || {}).fc || '—'}</strong> bpm</span>
+                <span>😴 <strong style="color:var(--text)">${(() => { const s = calcSleepDuration((D.vitals[today()] || {}).dormir, (D.vitals[today()] || {}).acordar); return s != null ? formatSleepDuration(s) : '—'; })()}</strong></span>
             </div>
-            ${calcIMC() != null ? `<div style="font-size:11px;color:var(--text3);margin-bottom:12px">IMC atual: <strong style="color:${imcColor(calcIMC())}">${calcIMC().toFixed(1)}</strong> — ${imcLabel(calcIMC())}</div>` : ''}
-            <div style="display:flex;gap:8px">
-                <div class="form-group" style="flex:1">
-                    <label class="form-label">PA (ex: 112/71)</label>
-                    <input type="text" class="form-input" value="${(D.vitals[today()] || {}).pa || ''}" placeholder="120/80" onchange="saveVital('pa',this.value)">
-                </div>
-                <div class="form-group" style="flex:1">
-                    <label class="form-label">FC Repouso</label>
-                    <input type="number" class="form-input" value="${(D.vitals[today()] || {}).fc || ''}" placeholder="76" onchange="saveVital('fc',parseInt(this.value))">
-                </div>
-            </div>
-            <div style="display:flex;gap:8px;margin-top:8px">
-                <div class="form-group" style="flex:1">
-                    <label class="form-label">😴 Dormir</label>
-                    <input type="time" class="form-input" value="${(D.vitals[today()] || {}).dormir || ''}" onchange="saveVital('dormir',this.value);if(cPage==='dash')rDash()">
-                </div>
-                <div class="form-group" style="flex:1">
-                    <label class="form-label">Acordar</label>
-                    <input type="time" class="form-input" value="${(D.vitals[today()] || {}).acordar || ''}" onchange="saveVital('acordar',this.value);if(cPage==='dash')rDash()">
-                </div>
+            ${calcIMC() != null ? `<div style="font-size:11px;color:var(--text3);margin-bottom:14px">IMC: <strong style="color:${imcColor(calcIMC())}">${calcIMC().toFixed(1)}</strong> — ${imcLabel(calcIMC())}</div>` : ''}
+            <button class="btn btn-primary" style="width:100%;margin-bottom:12px" onclick="openVitalEditor()">✏️ Registrar / editar medição de hoje</button>
+            <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">Altura (m) — usada no cálculo do IMC</label>
+                <input type="number" class="form-input" value="${D.altura || ''}" step="0.01" placeholder="1.69" onchange="D.altura=parseFloat(this.value)||null;save();if(cPage==='dash')rDash();if(cPage==='goals')rGoals()">
             </div>
         </div>
 
