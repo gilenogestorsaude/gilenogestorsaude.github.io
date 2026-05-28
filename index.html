@@ -479,7 +479,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.7.6';
+const APP_VERSION = '1.7.7';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1248,7 +1248,7 @@ function rDash() {
             <div class="header-stat" onclick="${imcNow == null ? `showPage('goals')` : `openVitalEditor()`}">
                 <div class="header-stat-emo">📊</div>
                 <div class="header-stat-value" style="color:${imcColor(imcNow)}">${imcNow == null ? '—' : imcNow.toFixed(1)}</div>
-                <div class="header-stat-unit">${imcNow == null ? 'def. altura' : imcLabel(imcNow)}</div>
+                <div class="header-stat-unit">${imcNow == null ? 'def. altura' : staleSub(pesoAgo, imcLabel(imcNow))}</div>
             </div>
             <div class="header-stat" onclick="openVitalEditor()">
                 <div class="header-stat-emo">❤️</div>
@@ -1466,13 +1466,13 @@ function rDash() {
                     <div class="pring-lbl">Gordura</div>
                     <div class="pring-sub">${gordHasMeta ? fmt(totalGord) + ' / ' + goals.gord + ' g' : 'sem meta'}</div>
                 </div>
-                <div class="pring-item">
+                <div class="pring-item" onclick="openVitalEditor()" style="cursor:pointer">
                     <div class="pring-wrap">
                         <svg class="pring" viewBox="0 0 80 80"><circle class="pring-track" cx="40" cy="40" r="34"/><circle class="pring-arc" cx="40" cy="40" r="34" stroke="${sonoColor}" stroke-dasharray="213.6" stroke-dashoffset="${(213.6 * (1 - sonoPct / 100)).toFixed(1)}"/></svg>
                         <span class="pring-pct">${sonoMin != null ? Math.round(sonoPct) + '%' : '—'}</span>
                     </div>
                     <div class="pring-lbl">😴 Sono</div>
-                    <div class="pring-sub">${sonoMin != null ? formatSleepDuration(sonoMin) + ' / 8h' : 'sem registro'}</div>
+                    <div class="pring-sub">${sonoMin != null ? formatSleepDuration(sonoMin) + ' / 8h' : 'registrar'}</div>
                 </div>
             </div>
         </div>`}
