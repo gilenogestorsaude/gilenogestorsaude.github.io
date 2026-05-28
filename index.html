@@ -463,7 +463,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.6.10';
+const APP_VERSION = '1.6.11';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -506,8 +506,8 @@ function searchTACO(query, limit) {
 const $ = id => document.getElementById(id);
 const uid = () => Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
 const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); };
-const fmt = v => v.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 1 });
-const fmtN = v => Math.round(v).toLocaleString('pt-BR');
+const fmt = v => (v == null || Number.isNaN(v)) ? '0' : Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 1 });
+const fmtN = v => (v == null || Number.isNaN(v)) ? '0' : Math.round(Number(v)).toLocaleString('pt-BR');
 
 function toast(msg, isError) {
     const t = document.createElement('div');
@@ -4177,6 +4177,7 @@ function getMedTakenMap(dt, medId) {
         const med = D.meds.find(m => m.id === medId);
         const obj = {};
         if (med && med.horarios && med.horarios.length) {
+            // Migração normal: converte array de horários tomados em map { horarioPrescrito: horarioReal }
             v.forEach(t => {
                 const [th, tm] = t.split(':').map(Number);
                 const tMin = th * 60 + tm;
@@ -4188,9 +4189,21 @@ function getMedTakenMap(dt, medId) {
                 });
                 if (best && !obj[best]) obj[best] = t;
             });
+            D.medsTaken[dt][medId] = obj;
+            v = obj;
+        } else {
+            // Migração impossível (med deletado ou sem horários cadastrados).
+            // Preserva dado legado em D.medsTakenLegacy pra não perder histórico —
+            // pode ser recuperado depois se o med for recriado ou ganhar horários.
+            if (v.length > 0) {
+                if (!D.medsTakenLegacy) D.medsTakenLegacy = {};
+                if (!D.medsTakenLegacy[dt]) D.medsTakenLegacy[dt] = {};
+                D.medsTakenLegacy[dt][medId] = v;
+                console.warn(`[meds] Dados legados preservados em D.medsTakenLegacy[${dt}][${medId}]:`, v);
+            }
+            D.medsTaken[dt][medId] = {};
+            v = D.medsTaken[dt][medId];
         }
-        D.medsTaken[dt][medId] = obj;
-        v = obj;
     } else if (!v || typeof v !== 'object') {
         D.medsTaken[dt][medId] = {};
         v = D.medsTaken[dt][medId];
