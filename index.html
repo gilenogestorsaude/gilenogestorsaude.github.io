@@ -119,11 +119,12 @@ select.form-input{-webkit-appearance:none;appearance:none;background-image:url("
 .header-user-name{font-size:12px;opacity:.8;color:#0a0f0a}
 .header-date{font-size:15px;font-weight:700;color:#0a0f0a}
 .header-badge{background:rgba(0,0,0,.15);border-radius:8px;padding:4px 10px;font-size:12px;font-weight:600;cursor:pointer;border:none;color:#0a0f0a}
-.header-stats{display:grid;grid-template-columns:repeat(5,1fr);gap:5px}
-.header-stat{background:rgba(255,255,255,.55);border-radius:8px;padding:7px 3px;text-align:center;min-width:0;cursor:pointer;color:#0a0f0a}
+.header-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
+.header-stat{background:#fff;border-radius:14px;padding:9px 3px;text-align:center;min-width:0;cursor:pointer;color:#0a1f17;box-shadow:0 2px 7px rgba(0,40,25,.14)}
+.header-stat-emo{font-size:15px;line-height:1}
 .header-stat-label{font-size:9px;opacity:.7;white-space:nowrap;color:#0a0f0a}
-.header-stat-value{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#0a0f0a}
-.header-stat-unit{font-size:8px;opacity:.65;color:#0a0f0a}
+.header-stat-value{font-size:15px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#0a1f17;margin-top:2px}
+.header-stat-unit{font-size:8.5px;color:#5b6770;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* ========== PROGRESS RINGS ========== */
 .pring-row{display:flex;justify-content:space-around;align-items:flex-start}
@@ -135,12 +136,13 @@ select.form-input{-webkit-appearance:none;appearance:none;background-image:url("
 .pring-pct{position:absolute;font-size:15px;font-weight:800;color:var(--text)}
 .pring-lbl{font-size:12px;font-weight:700;color:var(--text2)}
 .pring-sub{font-size:10px;color:var(--text3);text-align:center}
+.pring-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px 4px}
 .pring-div{height:1px;background:var(--border);margin:14px 4px 12px}
 
 /* ========== BOTTOM NAV ========== */
 .bottom-nav{position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);display:flex;justify-content:space-around;padding:8px 0 max(12px,env(safe-area-inset-bottom));z-index:100;box-shadow:0 -2px 10px rgba(0,0,0,0.15)}
 .nav-item{display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 14px;border-radius:14px;background:none;border:none;cursor:pointer;color:var(--text3);transition:all .2s}
-.nav-item.active{color:var(--primary);background:rgba(16,185,129,.13)}
+.nav-item.active{color:#04231a;background:var(--primary)}
 .nav-item svg{width:22px;height:22px}
 .nav-item span{font-size:10px;font-weight:500}
 .nav-item.active span{font-weight:700}
@@ -477,7 +479,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.7.4';
+const APP_VERSION = '1.7.5';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1212,6 +1214,13 @@ function rDash() {
     const totalWater = getDayWater(dt);
     const vitals = D.vitals[dt] || {};
 
+    // Vitais com fallback p/ último valor medido (sugestão da família 28/mai)
+    const imcNow = calcIMC();
+    const pesoAgo = getDaysSinceLastWeight();
+    const vFc = lastVital('fc');
+    const vPa = lastVital('pa');
+    const staleSub = (daysAgo, freshLabel) => (daysAgo == null || daysAgo === 0) ? freshLabel : `<span style="color:#b45309;font-weight:700">há ${daysAgo}d</span>`;
+
     // Header
     const userName = U ? (U.displayName || U.email.split('@')[0]) : 'Usuário';
     $('dash-header').innerHTML = `
@@ -1232,29 +1241,24 @@ function rDash() {
         </div>
         <div class="header-stats">
             <div class="header-stat" onclick="openVitalEditor()">
-                <div class="header-stat-label">Peso</div>
-                <div class="header-stat-value">${fmt(D.peso)}</div>
-                <div class="header-stat-unit">kg</div>
+                <div class="header-stat-emo">⚖️</div>
+                <div class="header-stat-value">${D.peso ? fmt(D.peso) : '—'}</div>
+                <div class="header-stat-unit">${D.peso ? staleSub(pesoAgo, 'kg') : 'registrar'}</div>
             </div>
-            <div class="header-stat" onclick="${calcIMC() == null ? `showPage('goals')` : `openVitalEditor()`}">
-                <div class="header-stat-label">IMC</div>
-                <div class="header-stat-value" style="color:${imcColor(calcIMC())}">${calcIMC() == null ? '—' : calcIMC().toFixed(1)}</div>
-                <div class="header-stat-unit">${calcIMC() == null ? 'def. altura' : imcLabel(calcIMC())}</div>
-            </div>
-            <div class="header-stat" onclick="openVitalEditor()">
-                <div class="header-stat-label">FC Rep.</div>
-                <div class="header-stat-value">${vitals.fc || '—'}</div>
-                <div class="header-stat-unit">bpm</div>
+            <div class="header-stat" onclick="${imcNow == null ? `showPage('goals')` : `openVitalEditor()`}">
+                <div class="header-stat-emo">📊</div>
+                <div class="header-stat-value" style="color:${imcColor(imcNow)}">${imcNow == null ? '—' : imcNow.toFixed(1)}</div>
+                <div class="header-stat-unit">${imcNow == null ? 'def. altura' : staleSub(pesoAgo, imcLabel(imcNow))}</div>
             </div>
             <div class="header-stat" onclick="openVitalEditor()">
-                <div class="header-stat-label">PA</div>
-                <div class="header-stat-value">${vitals.pa || '—'}</div>
-                <div class="header-stat-unit">mmHg</div>
+                <div class="header-stat-emo">❤️</div>
+                <div class="header-stat-value">${vFc.value || '—'}</div>
+                <div class="header-stat-unit">${vFc.value ? staleSub(vFc.daysAgo, 'bpm') : 'registrar'}</div>
             </div>
             <div class="header-stat" onclick="openVitalEditor()">
-                <div class="header-stat-label">Sono</div>
-                <div class="header-stat-value">${(() => { const d = calcSleepDuration(vitals.dormir, vitals.acordar); return d == null ? '—' : formatSleepDuration(d); })()}</div>
-                <div class="header-stat-unit">${vitals.dormir && vitals.acordar ? vitals.dormir + '→' + vitals.acordar : 'horas'}</div>
+                <div class="header-stat-emo">🩺</div>
+                <div class="header-stat-value">${vPa.value || '—'}</div>
+                <div class="header-stat-unit">${vPa.value ? staleSub(vPa.daysAgo, 'mmHg') : 'registrar'}</div>
             </div>
         </div>
     `;
@@ -1263,6 +1267,12 @@ function rDash() {
     const kcalPct = goals.kcal > 0 ? Math.min(totalKcal / goals.kcal * 100, 100) : 0;
     const protPct = goals.prot > 0 ? Math.min(totalProt / goals.prot * 100, 100) : 0;
     const waterPct = goals.water > 0 ? Math.min(totalWater / goals.water * 100, 100) : 0;
+    const carboHasMeta = goals.carbo > 0, gordHasMeta = goals.gord > 0;
+    const carboPct = carboHasMeta ? Math.min(totalCarbo / goals.carbo * 100, 100) : 0;
+    const gordPct = gordHasMeta ? Math.min(totalGord / goals.gord * 100, 100) : 0;
+    const sonoMin = calcSleepDuration(vitals.dormir, vitals.acordar);
+    const sonoPct = sonoMin != null ? Math.min(sonoMin / 480 * 100, 100) : 0;
+    const sonoColor = sonoMin == null ? 'var(--border)' : (sonoMin < 360 ? '#f59e0b' : '#6366f1');
 
     // Alerts
     let alerts = '';
@@ -1415,7 +1425,7 @@ function rDash() {
                 <span class="card-title" style="margin:0">Progresso Diário</span>
                 <span style="font-size:11px;color:var(--text3)">${fmtN(goals.kcal)} kcal • ${goals.prot}g prot</span>
             </div>
-            <div class="pring-row">
+            <div class="pring-grid">
                 <div class="pring-item">
                     <div class="pring-wrap">
                         <svg class="pring" viewBox="0 0 80 80"><circle class="pring-track" cx="40" cy="40" r="34"/><circle class="pring-arc" cx="40" cy="40" r="34" stroke="var(--primary)" stroke-dasharray="213.6" stroke-dashoffset="${(213.6 * (1 - kcalPct / 100)).toFixed(1)}"/></svg>
@@ -1440,25 +1450,30 @@ function rDash() {
                     <div class="pring-lbl">Água</div>
                     <div class="pring-sub">${fmtN(totalWater)} / ${fmtN(goals.water)} ml</div>
                 </div>
-            </div>
-            <div class="pring-div"></div>
-            <div class="mb-8">
-                <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-                    <span style="font-size:12px;color:var(--text2)">Carboidrato</span>
-                    <span style="font-size:12px;font-weight:600">${fmt(totalCarbo)}g${goals.carbo > 0 ? ' / ' + goals.carbo + 'g' : ''}</span>
+                <div class="pring-item">
+                    <div class="pring-wrap">
+                        <svg class="pring" viewBox="0 0 80 80"><circle class="pring-track" cx="40" cy="40" r="34"/><circle class="pring-arc" cx="40" cy="40" r="34" stroke="${carboHasMeta ? '#06b6d4' : 'var(--border)'}" stroke-dasharray="213.6" stroke-dashoffset="${(213.6 * (1 - carboPct / 100)).toFixed(1)}"/></svg>
+                        <span class="pring-pct">${carboHasMeta ? Math.round(carboPct) + '%' : '—'}</span>
+                    </div>
+                    <div class="pring-lbl">Carboidrato</div>
+                    <div class="pring-sub">${carboHasMeta ? fmt(totalCarbo) + ' / ' + goals.carbo + ' g' : 'sem meta'}</div>
                 </div>
-                ${goals.carbo > 0
-                    ? `<div class="progress-bar"><div class="progress-fill" style="width:${Math.min(totalCarbo / goals.carbo * 100, 100)}%;background:#3b82f6"></div></div>`
-                    : `<div style="font-size:10px;color:var(--text3);font-style:italic">Sem meta definida — defina em Metas</div>`}
-            </div>
-            <div class="mb-8">
-                <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-                    <span style="font-size:12px;color:var(--text2)">Gordura total</span>
-                    <span style="font-size:12px;font-weight:600">${fmt(totalGord)}g${goals.gord > 0 ? ' / ' + goals.gord + 'g' : ''}</span>
+                <div class="pring-item">
+                    <div class="pring-wrap">
+                        <svg class="pring" viewBox="0 0 80 80"><circle class="pring-track" cx="40" cy="40" r="34"/><circle class="pring-arc" cx="40" cy="40" r="34" stroke="${gordHasMeta ? '#a855f7' : 'var(--border)'}" stroke-dasharray="213.6" stroke-dashoffset="${(213.6 * (1 - gordPct / 100)).toFixed(1)}"/></svg>
+                        <span class="pring-pct">${gordHasMeta ? Math.round(gordPct) + '%' : '—'}</span>
+                    </div>
+                    <div class="pring-lbl">Gordura</div>
+                    <div class="pring-sub">${gordHasMeta ? fmt(totalGord) + ' / ' + goals.gord + ' g' : 'sem meta'}</div>
                 </div>
-                ${goals.gord > 0
-                    ? `<div class="progress-bar"><div class="progress-fill" style="width:${Math.min(totalGord / goals.gord * 100, 100)}%;background:#a855f7"></div></div>`
-                    : `<div style="font-size:10px;color:var(--text3);font-style:italic">Sem meta definida — defina em Metas</div>`}
+                <div class="pring-item">
+                    <div class="pring-wrap">
+                        <svg class="pring" viewBox="0 0 80 80"><circle class="pring-track" cx="40" cy="40" r="34"/><circle class="pring-arc" cx="40" cy="40" r="34" stroke="${sonoColor}" stroke-dasharray="213.6" stroke-dashoffset="${(213.6 * (1 - sonoPct / 100)).toFixed(1)}"/></svg>
+                        <span class="pring-pct">${sonoMin != null ? Math.round(sonoPct) + '%' : '—'}</span>
+                    </div>
+                    <div class="pring-lbl">😴 Sono</div>
+                    <div class="pring-sub">${sonoMin != null ? formatSleepDuration(sonoMin) + ' / 8h' : 'sem registro'}</div>
+                </div>
             </div>
         </div>`}
 
@@ -3677,6 +3692,16 @@ function getDaysSinceLastWeight() {
     const datas = Object.keys(D.vitals).filter(d => D.vitals[d] && D.vitals[d].peso).sort().reverse();
     if (datas.length === 0) return null;
     return daysSince(datas[0]);
+}
+
+function lastVital(field) {
+    // Último valor medido de um campo (fc/pa/peso) com fallback p/ dias anteriores.
+    // Retorna {value, daysAgo} — daysAgo=0 hoje, null se nunca medido na janela.
+    const days = getVitaisDays(); // já vem ordenado por data desc
+    for (const d of days) {
+        if (d[field] != null && d[field] !== '') return { value: d[field], daysAgo: daysSince(d.data) };
+    }
+    return { value: null, daysAgo: null };
 }
 
 function getPesoStats() {
