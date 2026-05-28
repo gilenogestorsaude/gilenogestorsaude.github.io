@@ -479,7 +479,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.7.7';
+const APP_VERSION = '1.7.8';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -2505,7 +2505,7 @@ function rGoals() {
             <div style="display:flex;gap:8px">
                 <div class="form-group" style="flex:1">
                     <label class="form-label">Peso (kg)</label>
-                    <input type="number" class="form-input" value="${D.peso}" step="0.1" onchange="D.peso=parseFloat(this.value);save();if(cPage==='dash')rDash()">
+                    <input type="number" class="form-input" value="${D.peso}" step="0.1" onchange="const p=parseFloat(this.value); if(!isNaN(p)&&p>0){D.peso=p; saveVital('peso',p);} if(cPage==='dash')rDash()">
                 </div>
                 <div class="form-group" style="flex:1">
                     <label class="form-label">Altura (m)</label>
@@ -2521,6 +2521,16 @@ function rGoals() {
                 <div class="form-group" style="flex:1">
                     <label class="form-label">FC Repouso</label>
                     <input type="number" class="form-input" value="${(D.vitals[today()] || {}).fc || ''}" placeholder="76" onchange="saveVital('fc',parseInt(this.value))">
+                </div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:8px">
+                <div class="form-group" style="flex:1">
+                    <label class="form-label">😴 Dormir</label>
+                    <input type="time" class="form-input" value="${(D.vitals[today()] || {}).dormir || ''}" onchange="saveVital('dormir',this.value);if(cPage==='dash')rDash()">
+                </div>
+                <div class="form-group" style="flex:1">
+                    <label class="form-label">Acordar</label>
+                    <input type="time" class="form-input" value="${(D.vitals[today()] || {}).acordar || ''}" onchange="saveVital('acordar',this.value);if(cPage==='dash')rDash()">
                 </div>
             </div>
         </div>
@@ -3873,7 +3883,7 @@ function openVitalEditor(dataParam) {
     const existing = (D.vitals && D.vitals[dt]) || {};
     editingVital = {
         data: dt,
-        peso: existing.peso != null ? String(existing.peso).replace('.', ',') : '',
+        peso: existing.peso != null ? String(existing.peso).replace('.', ',') : (D.peso != null ? String(D.peso).replace('.', ',') : ''),
         pa: existing.pa || '',
         fc: existing.fc || '',
         dormir: existing.dormir || '',
