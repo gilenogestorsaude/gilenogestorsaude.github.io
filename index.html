@@ -54,6 +54,8 @@ input,select,textarea,button{font-family:inherit;font-size:inherit}
 .btn-outline{background:transparent;border:1px solid var(--border);color:var(--text2)}
 .btn-outline:active{background:var(--surface2)}
 .btn-sm{padding:6px 12px;font-size:12px}
+#dash-body .btn{border-radius:11px}
+#dash-body .btn-sm{padding:7px 13px;font-size:12px;font-weight:700}
 .btn-icon{width:40px;height:40px;padding:0;border-radius:var(--radius-sm)}
 .btn-danger{background:var(--red);color:#fff}
 
@@ -475,7 +477,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.7.1';
+const APP_VERSION = '1.7.2';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1399,7 +1401,7 @@ function rDash() {
         const color = pct >= 100 ? 'var(--blue)' : pct > 0 ? 'var(--blue)' : 'var(--border)';
         hydroMini += `
             <div style="text-align:center">
-                <div style="height:40px;border-radius:6px;position:relative;overflow:hidden;background:var(--border);margin-bottom:4px">
+                <div style="height:40px;border-radius:10px;position:relative;overflow:hidden;background:var(--border);margin-bottom:4px">
                     <div style="position:absolute;bottom:0;width:100%;height:${pct}%;background:${color};border-radius:6px;opacity:${pct >= 100 ? 1 : 0.5}"></div>
                 </div>
                 <div style="font-size:9px;color:var(--text3)">${b.period.split('–')[0].trim()}</div>
@@ -1555,11 +1557,11 @@ function rDash() {
                     </div>` : '';
                 return `
                     <div style="display:flex;gap:8px;margin-bottom:8px">
-                        <div style="flex:1;text-align:center;padding:8px;background:var(--bg);border-radius:6px">
+                        <div style="flex:1;text-align:center;padding:8px;background:var(--bg);border-radius:12px">
                             <div style="font-size:10px;color:var(--text3)">Esta semana</div>
                             <div style="font-size:18px;font-weight:700;color:var(--primary)">${week.length}</div>
                         </div>
-                        <div style="flex:2;padding:8px 10px;background:var(--bg);border-radius:6px;min-width:0">
+                        <div style="flex:2;padding:8px 10px;background:var(--bg);border-radius:12px;min-width:0">
                             <div style="font-size:10px;color:var(--text3)">Última • ${dStr}</div>
                             <div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${last.nome}</div>
                             ${chipsHtml ? `<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:3px">${chipsHtml}</div>` : ''}
@@ -1592,7 +1594,7 @@ function rDash() {
                     const d = -daysSince(next.data);
                     const dStr = d === 0 ? 'HOJE' : (d === 1 ? 'AMANHÃ' : `em ${d} dias`);
                     return `
-                        <div style="padding:10px;background:var(--bg);border-radius:6px">
+                        <div style="padding:10px;background:var(--bg);border-radius:12px">
                             <div style="font-size:10px;color:var(--text3);font-weight:600;letter-spacing:.5px">PRÓXIMA — ${dStr}</div>
                             <div style="font-size:14px;font-weight:700;color:var(--text);margin-top:2px">${next.especialidade || 'Consulta'}</div>
                             <div style="font-size:11px;color:var(--text3)">${next.medico || ''} ${next.medico ? '•' : ''} ${formatDataTreino(next.data)}</div>
@@ -1642,7 +1644,7 @@ function rDash() {
                 if (last.pa) partes.push(`PA ${last.pa}`);
                 if (last.fc) partes.push(`FC ${last.fc}`);
                 return `
-                    <div style="padding:10px;background:var(--bg);border-radius:6px">
+                    <div style="padding:10px;background:var(--bg);border-radius:12px">
                         <div style="font-size:10px;color:var(--text3);font-weight:600;letter-spacing:.5px">ÚLTIMA — ${dStr}</div>
                         <div style="font-size:14px;font-weight:700;color:var(--text);margin-top:2px">${partes.join(' • ') || '—'}</div>
                         ${setaSemHtml ? `<div style="font-size:11px;margin-top:2px">Esta semana: ${setaSemHtml}</div>` : ''}
