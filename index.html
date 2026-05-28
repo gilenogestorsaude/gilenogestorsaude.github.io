@@ -463,7 +463,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.6.9';
+const APP_VERSION = '1.6.10';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -681,13 +681,43 @@ const MEAL_SLOTS = [
     { id: 'jantar', name: 'Jantar', time: '19:30' }
 ];
 
+// pct = fração da meta diária (goals.water). Soma = 1.0 exata.
+// Os textos em "strategy" são referências descritivas; os ml por bloco são
+// derivados dinamicamente via getBlockTarget() pra acompanhar a meta do dia.
 const HYDRO_BLOCKS = [
-    { id: 'bloco1', period: '05:00 – 07:00', startH: 5, endH: 7, target: 2250, strategy: 'Dexilant 500ml + treino 1.750ml' },
-    { id: 'bloco2', period: '07:00 – 09:30', startH: 7, endH: 9.5, target: 710, strategy: 'Whey 420ml + medicações 250ml' },
-    { id: 'bloco3', period: '09:30 – 13:00', startH: 9.5, endH: 13, target: 500, strategy: '⚠️ Gap crítico! Lembrete 11h' },
-    { id: 'bloco4', period: '13:00 – 17:00', startH: 13, endH: 17, target: 1170, strategy: 'Lembretes 14h, 15h, 16h, 17h' },
-    { id: 'bloco5', period: '17:00+', startH: 17, endH: 24, target: 250, strategy: '🔒 Apenas medicação noturna (BPH)' }
+    { id: 'bloco1', period: '05:00 – 07:00', startH: 5, endH: 7,    pct: 0.4611, strategy: 'Dexilant + treino' },
+    { id: 'bloco2', period: '07:00 – 09:30', startH: 7, endH: 9.5,  pct: 0.1455, strategy: 'Whey + medicações' },
+    { id: 'bloco3', period: '09:30 – 13:00', startH: 9.5, endH: 13, pct: 0.1025, strategy: '⚠️ Gap crítico! Lembrete 11h' },
+    { id: 'bloco4', period: '13:00 – 17:00', startH: 13, endH: 17,  pct: 0.2397, strategy: 'Lembretes 14h, 15h, 16h, 17h' },
+    { id: 'bloco5', period: '17:00+',        startH: 17, endH: 24,  pct: 0.0512, strategy: '🔒 Apenas medicação noturna (BPH)' }
 ];
+
+// Calcula a meta em ml de um bloco a partir da meta diária.
+// Arredonda pra múltiplos de 5ml; o último bloco absorve a diferença
+// pra garantir que a soma dos blocos == meta diária exatamente.
+function getBlockTarget(block, dailyGoal) {
+    const lastId = HYDRO_BLOCKS[HYDRO_BLOCKS.length - 1].id;
+    if (block.id !== lastId) {
+        return Math.round(dailyGoal * block.pct / 5) * 5;
+    }
+    const otherSum = HYDRO_BLOCKS.filter(b => b.id !== lastId)
+        .reduce((s, b) => s + Math.round(dailyGoal * b.pct / 5) * 5, 0);
+    return Math.max(0, dailyGoal - otherSum);
+}
+
+// Retorna entradas órfãs — registradas em D.water[dt] mas fora de qualquer bloco
+// (ex.: bebeu água às 04:30, fora do range 05:00-24:00, ou time inválido)
+function getOrphanWaterEntries(entries) {
+    return entries.filter(e => {
+        if (!e.time || !e.time.includes(':')) return true;
+        const parts = e.time.split(':');
+        const h = parseInt(parts[0]);
+        const m = parseInt(parts[1]);
+        if (isNaN(h) || isNaN(m)) return true;
+        const hDecimal = h + m / 60;
+        return !HYDRO_BLOCKS.some(b => hDecimal >= b.startH && hDecimal < b.endH);
+    });
+}
 
 // ========== FIRESTORE ==========
 async function save() {
@@ -1333,12 +1363,17 @@ function rDash() {
     let hydroMini = '';
     HYDRO_BLOCKS.forEach(b => {
         const entries = waterEntries.filter(e => {
-            const h = parseFloat(e.time.replace(':', '.'));
-            const hDecimal = parseInt(e.time.split(':')[0]) + parseInt(e.time.split(':')[1]) / 60;
+            if (!e.time || !e.time.includes(':')) return false;
+            const parts = e.time.split(':');
+            const h = parseInt(parts[0]);
+            const m = parseInt(parts[1]);
+            if (isNaN(h) || isNaN(m)) return false;
+            const hDecimal = h + m / 60;
             return hDecimal >= b.startH && hDecimal < b.endH;
         });
+        const blockTarget = getBlockTarget(b, goals.water);
         const vol = entries.reduce((s, e) => s + e.vol, 0);
-        const pct = b.target > 0 ? Math.min(vol / b.target * 100, 100) : 0;
+        const pct = blockTarget > 0 ? Math.min(vol / blockTarget * 100, 100) : 0;
         const color = pct >= 100 ? 'var(--blue)' : pct > 0 ? 'var(--blue)' : 'var(--border)';
         hydroMini += `
             <div style="text-align:center">
@@ -2119,13 +2154,48 @@ function rHydro() {
     const pct = goals.water > 0 ? Math.round(totalWater / goals.water * 100) : 0;
 
     let blocksHtml = '';
+
+    // Detectar entradas órfãs (fora de qualquer bloco) e renderizar card de aviso no topo
+    const orphans = getOrphanWaterEntries(entries);
+    if (orphans.length > 0) {
+        const orphanVol = orphans.reduce((s, e) => s + e.vol, 0);
+        let orphanEntriesHtml = '';
+        orphans.forEach((e, idx) => {
+            const realIdx = entries.indexOf(e);
+            orphanEntriesHtml += `
+                <div class="hydro-entry">
+                    <span class="hydro-entry-time">${e.time || '—'}</span>
+                    <span class="hydro-entry-vol">${e.vol}ml</span>
+                    <span>${e.source || ''}</span>
+                    <button class="btn btn-outline btn-sm" style="margin-left:auto;padding:2px 8px;font-size:11px" onclick="editOrphanWater(${realIdx})">Corrigir</button>
+                </div>`;
+        });
+        blocksHtml += `
+            <div class="card hydro-block" style="border-color:var(--yellow);box-shadow:0 0 0 2px var(--yellow-bg)">
+                <div class="hydro-header">
+                    <div>
+                        <div class="hydro-period" style="color:var(--yellow)">⚠ Fora dos blocos</div>
+                        <div class="hydro-strategy">Registros sem horário válido ou fora de 05:00–24:00</div>
+                    </div>
+                    <div class="hydro-vol" style="color:var(--yellow)">${orphanVol}ml</div>
+                </div>
+                <div class="hydro-entries">${orphanEntriesHtml}</div>
+            </div>`;
+    }
+
     HYDRO_BLOCKS.forEach(b => {
         const blockEntries = entries.filter(e => {
-            const hDecimal = parseInt(e.time.split(':')[0]) + parseInt(e.time.split(':')[1]) / 60;
+            if (!e.time || !e.time.includes(':')) return false;
+            const parts = e.time.split(':');
+            const h = parseInt(parts[0]);
+            const m = parseInt(parts[1]);
+            if (isNaN(h) || isNaN(m)) return false;
+            const hDecimal = h + m / 60;
             return hDecimal >= b.startH && hDecimal < b.endH;
         });
+        const blockTarget = getBlockTarget(b, goals.water);
         const blockVol = blockEntries.reduce((s, e) => s + e.vol, 0);
-        const blockPct = b.target > 0 ? Math.min(blockVol / b.target * 100, 100) : 0;
+        const blockPct = blockTarget > 0 ? Math.min(blockVol / blockTarget * 100, 100) : 0;
         const isLocked = b.startH >= D.bphCutoff;
         const isAlert = b.id === 'bloco3';
 
@@ -2151,7 +2221,7 @@ function rHydro() {
                         <div class="hydro-strategy">${b.strategy}</div>
                     </div>
                     <div class="hydro-vol" style="color:${blockPct >= 100 ? 'var(--green)' : isAlert && blockVol === 0 ? 'var(--yellow)' : 'var(--text3)'}">
-                        ${blockVol}/${b.target}ml
+                        ${blockVol}/${blockTarget}ml
                     </div>
                 </div>
                 <div class="progress-bar" style="height:6px"><div class="progress-fill" style="width:${blockPct}%;background:${barColor}"></div></div>
@@ -2226,6 +2296,77 @@ function addWater() {
     save();
     document.querySelector('.modal-overlay').remove();
     toast(`💧 ${vol}ml registrado`);
+    rHydro();
+}
+
+// Corrige uma entrada órfã (horário inválido ou fora dos blocos).
+// Abre modal pré-preenchido com os dados existentes; user pode ajustar hora,
+// volume, fonte — ou excluir o registro.
+function editOrphanWater(idx) {
+    const dt = today();
+    const entry = (D.water[dt] || [])[idx];
+    if (!entry) return toast('Registro não encontrado', true);
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = `
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>Corrigir Registro</h3>
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            </div>
+            <p style="font-size:12px;color:var(--yellow);margin-bottom:12px">⚠ Este registro está fora dos blocos planejados. Ajuste o horário pra ele entrar no bloco correto.</p>
+            <div class="form-group">
+                <label class="form-label">Volume (ml)</label>
+                <input type="number" id="orphan-vol" class="form-input" value="${entry.vol}" inputmode="numeric">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Horário</label>
+                <input type="time" id="orphan-time" class="form-input" value="${entry.time && entry.time.includes(':') ? entry.time : ''}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Fonte (opcional)</label>
+                <input type="text" id="orphan-source" class="form-input" value="${entry.source || ''}">
+            </div>
+            <div style="display:flex;gap:8px">
+                <button class="btn btn-danger" onclick="deleteOrphanWater(${idx})">Excluir</button>
+                <button class="btn btn-primary" style="flex:1" onclick="saveOrphanWater(${idx})">Salvar</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+}
+
+function saveOrphanWater(idx) {
+    const dt = today();
+    const entry = (D.water[dt] || [])[idx];
+    if (!entry) return;
+    const vol = parseInt($('orphan-vol').value) || 0;
+    const time = $('orphan-time').value;
+    const source = $('orphan-source').value.trim();
+    if (vol <= 0) return toast('Volume inválido', true);
+    if (!time) return toast('Informe o horário', true);
+
+    entry.vol = vol;
+    entry.time = time;
+    entry.source = source;
+    D.water[dt].sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+
+    save();
+    document.querySelector('.modal-overlay').remove();
+    toast('💧 Registro corrigido');
+    rHydro();
+}
+
+function deleteOrphanWater(idx) {
+    if (!confirm('Excluir este registro de água?')) return;
+    const dt = today();
+    if (!D.water[dt] || !D.water[dt][idx]) return;
+    D.water[dt].splice(idx, 1);
+    save();
+    document.querySelector('.modal-overlay').remove();
+    toast('Registro excluído');
     rHydro();
 }
 
