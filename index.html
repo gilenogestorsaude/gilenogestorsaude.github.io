@@ -119,6 +119,15 @@ select.form-input{-webkit-appearance:none;appearance:none;background-image:url("
 .header-user-name{font-size:12px;opacity:.8;color:#0a0f0a}
 .header-date{font-size:15px;font-weight:700;color:#0a0f0a}
 .header-badge{background:rgba(0,0,0,.15);border-radius:8px;padding:4px 10px;font-size:12px;font-weight:600;cursor:pointer;border:none;color:#0a0f0a}
+.date-strip{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:6px 8px;margin-bottom:12px}
+.date-strip.past{border-color:#f59e0b;background:rgba(245,158,11,.10)}
+.date-strip .date-nav{width:34px;height:34px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:20px;font-weight:700;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;line-height:1}
+.date-strip .date-nav:disabled{opacity:.3;cursor:default}
+.date-strip .date-mid{flex:1;min-width:0;background:none;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:1px;padding:2px}
+.date-mid-lbl{font-size:14px;font-weight:700;color:var(--text)}
+.date-mid-tag{font-size:10px;color:var(--text3)}
+.date-strip.past .date-mid-tag{color:#b45309;font-weight:600}
+.date-home{background:#f59e0b;color:#1a1100;border:none;border-radius:10px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;flex-shrink:0}
 .header-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
 .header-stat{background:#fff;border-radius:14px;padding:9px 3px;text-align:center;min-width:0;cursor:pointer;color:#0a1f17;box-shadow:0 2px 7px rgba(0,40,25,.14)}
 .header-stat-emo{font-size:15px;line-height:1}
@@ -479,7 +488,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.7.9';
+const APP_VERSION = '1.8.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -487,6 +496,7 @@ let D = null; // data object
 let cPage = 'login';
 let editingMealIndex = -1;
 let selectedMealSlot = 'almoco';
+let gDate = null; // dia em visualização/edição (null = hoje real). Permite ver/corrigir dias anteriores.
 let TACO = []; // Tabela TACO (UNICAMP) carregada on-demand pra autocomplete
 
 // Carrega TACO uma vez (em background) — usado pelo autocomplete do modal de food
@@ -524,6 +534,75 @@ const uid = () => Math.random().toString(36).substr(2, 9) + Date.now().toString(
 const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); };
 const fmt = v => (v == null || Number.isNaN(v)) ? '0' : Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 1 });
 const fmtN = v => (v == null || Number.isNaN(v)) ? '0' : Math.round(Number(v)).toLocaleString('pt-BR');
+
+// ========== DATA ATIVA (navegação de dias anteriores) ==========
+// curDate() é a data que as telas de registro (Início, Refeição, Água, Metas)
+// estão mostrando/editando. Por padrão é hoje; o navegador de data permite voltar.
+const curDate = () => gDate || today();
+const viewingToday = () => curDate() === today();
+
+function addDaysStr(dateStr, delta) {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const nd = new Date(y, m - 1, d);
+    nd.setDate(nd.getDate() + delta);
+    return nd.getFullYear() + '-' + String(nd.getMonth() + 1).padStart(2, '0') + '-' + String(nd.getDate()).padStart(2, '0');
+}
+function setViewDate(ns) {
+    if (!ns) return;
+    if (ns > today()) ns = today();      // nunca navega para o futuro
+    gDate = (ns === today()) ? null : ns;
+    renderActivePage();
+}
+function shiftViewDate(delta) { setViewDate(addDaysStr(curDate(), delta)); }
+function goToday() { gDate = null; renderActivePage(); }
+function renderActivePage() {
+    if (cPage === 'dash') rDash();
+    else if (cPage === 'meal') rMeal();
+    else if (cPage === 'hydro') rHydro();
+    else if (cPage === 'goals') rGoals();
+    else if (cPage === 'meds') rMeds();
+    else if (cPage === 'vitais') rVitais();
+}
+
+// Faixa de navegação de data, reutilizada no topo das telas por-dia.
+function dateStripHtml() {
+    const d = curDate();
+    const isT = d === today();
+    return `
+    <div class="date-strip${isT ? '' : ' past'}">
+        <button class="date-nav" onclick="shiftViewDate(-1)" aria-label="Dia anterior">‹</button>
+        <button class="date-mid" onclick="openDatePicker()">
+            <span class="date-mid-lbl">${dateLabel(d)}</span>
+            <span class="date-mid-tag">${isT ? 'hoje' : 'dia anterior · toque p/ trocar'}</span>
+        </button>
+        <button class="date-nav" onclick="shiftViewDate(1)" ${isT ? 'disabled' : ''} aria-label="Próximo dia">›</button>
+        ${isT ? '' : '<button class="date-home" onclick="goToday()">Hoje</button>'}
+    </div>`;
+}
+function openDatePicker() {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = `
+        <div class="modal-box" style="max-width:340px">
+            <div class="modal-header">
+                <h3>Ir para data</h3>
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Escolha o dia</label>
+                <input type="date" id="dp-input" class="form-input" max="${today()}" value="${curDate()}">
+            </div>
+            <button class="btn btn-primary w-full" onclick="applyDatePicker()">Ver este dia</button>
+        </div>`;
+    document.body.appendChild(overlay);
+}
+function applyDatePicker() {
+    const v = ($('dp-input') || {}).value;
+    const modal = document.querySelector('.modal-overlay');
+    if (modal) modal.remove();
+    if (v) setViewDate(v);
+}
 
 function toast(msg, isError) {
     const t = document.createElement('div');
@@ -1207,7 +1286,7 @@ function rDash() {
         save();
         setTimeout(() => toast('✓ ' + msg), 800);
     }
-    const dt = today();
+    const dt = curDate();
     const dayType = getDayType(dt);
     const goals = getGoals(dt);
     const { totalKcal, totalProt, totalCarbo, totalGord } = getDayMeals(dt);
@@ -1264,22 +1343,38 @@ function rDash() {
     `;
 
     // Body
-    const kcalPct = goals.kcal > 0 ? Math.min(totalKcal / goals.kcal * 100, 100) : 0;
-    const protPct = goals.prot > 0 ? Math.min(totalProt / goals.prot * 100, 100) : 0;
-    const waterPct = goals.water > 0 ? Math.min(totalWater / goals.water * 100, 100) : 0;
+    // Percentual REAL (pode passar de 100) — usado no número exibido
+    const kcalPctRaw = goals.kcal > 0 ? totalKcal / goals.kcal * 100 : 0;
+    const protPctRaw = goals.prot > 0 ? totalProt / goals.prot * 100 : 0;
+    const waterPctRaw = goals.water > 0 ? totalWater / goals.water * 100 : 0;
     const carboHasMeta = goals.carbo > 0, gordHasMeta = goals.gord > 0;
-    const carboPct = carboHasMeta ? Math.min(totalCarbo / goals.carbo * 100, 100) : 0;
-    const gordPct = gordHasMeta ? Math.min(totalGord / goals.gord * 100, 100) : 0;
+    const carboPctRaw = carboHasMeta ? totalCarbo / goals.carbo * 100 : 0;
+    const gordPctRaw = gordHasMeta ? totalGord / goals.gord * 100 : 0;
     const sonoMin = calcSleepDuration(vitals.dormir, vitals.acordar);
-    const sonoPct = sonoMin != null ? Math.min(sonoMin / 480 * 100, 100) : 0;
+    const sonoPctRaw = sonoMin != null ? sonoMin / 480 * 100 : 0;
+    // Percentual do ARCO — limitado a 100% pra não ultrapassar o círculo
+    const kcalPct = Math.min(kcalPctRaw, 100);
+    const protPct = Math.min(protPctRaw, 100);
+    const waterPct = Math.min(waterPctRaw, 100);
+    const carboPct = Math.min(carboPctRaw, 100);
+    const gordPct = Math.min(gordPctRaw, 100);
+    const sonoPct = Math.min(sonoPctRaw, 100);
+    // Texto do percentual: mostra valor real e destaca em verde quando bate/excede a meta
+    const ringPct = (raw, has) => {
+        if (has === false) return '—';
+        const r = Math.round(raw);
+        return raw >= 100 ? `<span style="color:var(--green);font-weight:800">${r}%</span>` : (r + '%');
+    };
     const sonoColor = sonoMin == null ? 'var(--border)' : (sonoMin < 360 ? '#f59e0b' : '#6366f1');
 
-    // Alerts
+    // Alerts — só fazem sentido no dia de hoje (dependem do relógio); em dias anteriores ficam ocultos
     let alerts = '';
     const hour = currentHour();
     const waterEntries = getWaterEntries(dt);
     const lastWater = waterEntries.length > 0 ? waterEntries[waterEntries.length - 1] : null;
+    const medsDoses = isModuleEnabled('medicamentos') ? getMedsToday(dt) : [];
 
+    if (viewingToday()) {
     // Gap de hidratação
     if (isModuleEnabled('hidratacao') && hour >= 10 && hour < 17) {
         const recentWater = waterEntries.filter(e => {
@@ -1314,7 +1409,6 @@ function rDash() {
     }
 
     // Medicamentos atrasados
-    const medsDoses = isModuleEnabled('medicamentos') ? getMedsToday() : [];
     const medsLate = medsDoses.filter(d => d.status === 'late');
     if (isModuleEnabled('medicamentos') && medsLate.length > 0) {
         const nomes = [...new Set(medsLate.map(d => d.nome + ' ' + d.horario))].slice(0, 3).join(', ');
@@ -1358,6 +1452,7 @@ function rDash() {
             <div class="alert-text">Repor: ${nomes}${estoqueBaixo.length > 3 ? '…' : ''}</div></div>
         </div>`;
     }
+    } // fim do guard viewingToday() — alertas só no dia atual
 
     // Meals HTML
     let mealsHtml = '';
@@ -1417,6 +1512,7 @@ function rDash() {
     });
 
     $('dash-body').innerHTML = `
+        ${dateStripHtml()}
         ${alerts}
         <!-- Progresso -->
         ${!isModuleEnabled('refeicao') ? '' : `
@@ -1429,7 +1525,7 @@ function rDash() {
                 <div class="pring-item">
                     <div class="pring-wrap">
                         <svg class="pring" viewBox="0 0 80 80"><circle class="pring-track" cx="40" cy="40" r="34"/><circle class="pring-arc" cx="40" cy="40" r="34" stroke="var(--primary)" stroke-dasharray="213.6" stroke-dashoffset="${(213.6 * (1 - kcalPct / 100)).toFixed(1)}"/></svg>
-                        <span class="pring-pct">${Math.round(kcalPct)}%</span>
+                        <span class="pring-pct">${ringPct(kcalPctRaw)}</span>
                     </div>
                     <div class="pring-lbl">Calorias</div>
                     <div class="pring-sub">${fmtN(totalKcal)} / ${fmtN(goals.kcal)}</div>
@@ -1437,7 +1533,7 @@ function rDash() {
                 <div class="pring-item">
                     <div class="pring-wrap">
                         <svg class="pring" viewBox="0 0 80 80"><circle class="pring-track" cx="40" cy="40" r="34"/><circle class="pring-arc" cx="40" cy="40" r="34" stroke="var(--accent)" stroke-dasharray="213.6" stroke-dashoffset="${(213.6 * (1 - protPct / 100)).toFixed(1)}"/></svg>
-                        <span class="pring-pct">${Math.round(protPct)}%</span>
+                        <span class="pring-pct">${ringPct(protPctRaw)}</span>
                     </div>
                     <div class="pring-lbl">Proteína</div>
                     <div class="pring-sub">${fmt(totalProt)} / ${goals.prot} g</div>
@@ -1445,7 +1541,7 @@ function rDash() {
                 <div class="pring-item">
                     <div class="pring-wrap">
                         <svg class="pring" viewBox="0 0 80 80"><circle class="pring-track" cx="40" cy="40" r="34"/><circle class="pring-arc" cx="40" cy="40" r="34" stroke="var(--blue)" stroke-dasharray="213.6" stroke-dashoffset="${(213.6 * (1 - waterPct / 100)).toFixed(1)}"/></svg>
-                        <span class="pring-pct">${Math.round(waterPct)}%</span>
+                        <span class="pring-pct">${ringPct(waterPctRaw)}</span>
                     </div>
                     <div class="pring-lbl">Água</div>
                     <div class="pring-sub">${fmtN(totalWater)} / ${fmtN(goals.water)} ml</div>
@@ -1453,7 +1549,7 @@ function rDash() {
                 <div class="pring-item">
                     <div class="pring-wrap">
                         <svg class="pring" viewBox="0 0 80 80"><circle class="pring-track" cx="40" cy="40" r="34"/><circle class="pring-arc" cx="40" cy="40" r="34" stroke="${carboHasMeta ? '#06b6d4' : 'var(--border)'}" stroke-dasharray="213.6" stroke-dashoffset="${(213.6 * (1 - carboPct / 100)).toFixed(1)}"/></svg>
-                        <span class="pring-pct">${carboHasMeta ? Math.round(carboPct) + '%' : '—'}</span>
+                        <span class="pring-pct">${ringPct(carboPctRaw, carboHasMeta)}</span>
                     </div>
                     <div class="pring-lbl">Carboidrato</div>
                     <div class="pring-sub">${carboHasMeta ? fmt(totalCarbo) + ' / ' + goals.carbo + ' g' : 'sem meta'}</div>
@@ -1461,7 +1557,7 @@ function rDash() {
                 <div class="pring-item">
                     <div class="pring-wrap">
                         <svg class="pring" viewBox="0 0 80 80"><circle class="pring-track" cx="40" cy="40" r="34"/><circle class="pring-arc" cx="40" cy="40" r="34" stroke="${gordHasMeta ? '#a855f7' : 'var(--border)'}" stroke-dasharray="213.6" stroke-dashoffset="${(213.6 * (1 - gordPct / 100)).toFixed(1)}"/></svg>
-                        <span class="pring-pct">${gordHasMeta ? Math.round(gordPct) + '%' : '—'}</span>
+                        <span class="pring-pct">${ringPct(gordPctRaw, gordHasMeta)}</span>
                     </div>
                     <div class="pring-lbl">Gordura</div>
                     <div class="pring-sub">${gordHasMeta ? fmt(totalGord) + ' / ' + goals.gord + ' g' : 'sem meta'}</div>
@@ -1469,7 +1565,7 @@ function rDash() {
                 <div class="pring-item" onclick="openVitalEditor()" style="cursor:pointer">
                     <div class="pring-wrap">
                         <svg class="pring" viewBox="0 0 80 80"><circle class="pring-track" cx="40" cy="40" r="34"/><circle class="pring-arc" cx="40" cy="40" r="34" stroke="${sonoColor}" stroke-dasharray="213.6" stroke-dashoffset="${(213.6 * (1 - sonoPct / 100)).toFixed(1)}"/></svg>
-                        <span class="pring-pct">${sonoMin != null ? Math.round(sonoPct) + '%' : '—'}</span>
+                        <span class="pring-pct">${sonoMin != null ? ringPct(sonoPctRaw) : '—'}</span>
                     </div>
                     <div class="pring-lbl">😴 Sono</div>
                     <div class="pring-sub">${sonoMin != null ? formatSleepDuration(sonoMin) + ' / 8h' : 'registrar'}</div>
@@ -1695,7 +1791,7 @@ function openMealSlot(slotId) {
 // ========== RENDER: ADD MEAL ==========
 function rMeal() {
     if (!D) return;
-    const dt = today();
+    const dt = curDate();
     const day = getDayData(dt);
 
     // Chips
@@ -1742,6 +1838,7 @@ function rMeal() {
     });
 
     $('meal-body').innerHTML = `
+        ${dateStripHtml()}
         <div class="chip-row">${chipsHtml}</div>
 
         ${slot.items && slot.items.length > 0 ? `
@@ -1786,6 +1883,9 @@ function foodItemHtml(f) {
             </div>
             <button onclick="event.stopPropagation();openFoodEditor('${f.id}')" style="width:28px;height:28px;border-radius:7px;background:transparent;border:1px solid var(--border);color:var(--text3);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-right:6px" title="Editar">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <button onclick="event.stopPropagation();deleteFood('${f.id}')" style="width:28px;height:28px;border-radius:7px;background:transparent;border:1px solid var(--border);color:var(--red);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-right:6px" title="Excluir alimento">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
             </button>
             <div class="food-add-btn" onclick="openAddFood('${f.id}')" style="cursor:pointer">+</div>
         </div>`;
@@ -1854,7 +1954,7 @@ function addFoodToMeal(foodId) {
     if (grams <= 0) return toast('Informe a quantidade', true);
 
     const ratio = grams / food.ref;
-    const dt = today();
+    const dt = curDate();
     const day = getDayData(dt);
     if (!day.slots[selectedMealSlot]) day.slots[selectedMealSlot] = { items: [], time: MEAL_SLOTS.find(s=>s.id===selectedMealSlot).time };
     day.slots[selectedMealSlot].items.push({
@@ -2170,7 +2270,7 @@ function deleteFood(foodId) {
 }
 
 function removeMealItem(index) {
-    const dt = today();
+    const dt = curDate();
     const day = getDayData(dt);
     const slot = day.slots[selectedMealSlot];
     if (slot && slot.items) {
@@ -2189,7 +2289,7 @@ function saveMeal() {
 // ========== RENDER: HYDRATION ==========
 function rHydro() {
     if (!D) return;
-    const dt = today();
+    const dt = curDate();
     const goals = getGoals(dt);
     const entries = getWaterEntries(dt);
     const totalWater = entries.reduce((s, e) => s + e.vol, 0);
@@ -2217,7 +2317,7 @@ function rHydro() {
                     <span class="hydro-entry-time">${e.time || '—'}</span>
                     <span class="hydro-entry-vol">${e.vol}ml</span>
                     <span>${e.source || ''}</span>
-                    <button class="btn btn-outline btn-sm" style="margin-left:auto;padding:2px 8px;font-size:11px" onclick="editOrphanWater(${realIdx})">Corrigir</button>
+                    <button class="btn btn-outline btn-sm" style="margin-left:auto;padding:2px 8px;font-size:11px" onclick="openWaterEntryEditor(${realIdx})">Corrigir</button>
                 </div>`;
         });
         blocksHtml += `
@@ -2255,12 +2355,14 @@ function rHydro() {
 
         let entriesHtml = '';
         blockEntries.forEach(e => {
+            const realIdx = entries.indexOf(e);
             entriesHtml += `
-                <div class="hydro-entry">
+                <div class="hydro-entry" onclick="openWaterEntryEditor(${realIdx})" style="cursor:pointer">
                     <span class="hydro-entry-time">${e.time}</span>
                     <span class="hydro-entry-vol">${e.vol}ml</span>
                     <span>${e.source || ''}</span>
                     ${e.auto ? '<span class="badge badge-green">auto</span>' : ''}
+                    <span style="margin-left:auto;color:var(--text3);font-size:12px">✏️</span>
                 </div>`;
         });
 
@@ -2291,6 +2393,7 @@ function rHydro() {
     });
 
     $('hydro-body').innerHTML = `
+        ${dateStripHtml()}
         <div style="background:linear-gradient(135deg,#059669,#10b981,#34d399);border-radius:12px;padding:16px;color:#fff;text-align:center;margin-bottom:16px">
             <div style="font-size:11px;opacity:.8;text-transform:uppercase;letter-spacing:.5px">Total hoje</div>
             <div style="font-size:32px;font-weight:700">${fmtN(totalWater)} ml</div>
@@ -2360,7 +2463,7 @@ function addWater() {
     if (vol <= 0) return toast('Informe o volume', true);
     const time = $('water-time').value;
     const source = $('water-source').value.trim();
-    const dt = today();
+    const dt = curDate();
 
     if (!D.water[dt]) D.water[dt] = [];
     D.water[dt].push({ time, vol, source, auto: false });
@@ -2372,13 +2475,14 @@ function addWater() {
     rHydro();
 }
 
-// Corrige uma entrada órfã (horário inválido ou fora dos blocos).
-// Abre modal pré-preenchido com os dados existentes; user pode ajustar hora,
-// volume, fonte — ou excluir o registro.
-function editOrphanWater(idx) {
-    const dt = today();
+// Editor unificado de registro de água: edita/exclui QUALQUER registro do dia ativo
+// (dentro de bloco ou órfão). Abre modal pré-preenchido; permite ajustar volume,
+// horário, fonte — ou excluir. Substitui o antigo fluxo só-de-órfãos.
+function openWaterEntryEditor(idx) {
+    const dt = curDate();
     const entry = (D.water[dt] || [])[idx];
     if (!entry) return toast('Registro não encontrado', true);
+    const isOrphan = getOrphanWaterEntries(D.water[dt]).indexOf(entry) !== -1;
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
@@ -2386,38 +2490,41 @@ function editOrphanWater(idx) {
     overlay.innerHTML = `
         <div class="modal-box">
             <div class="modal-header">
-                <h3>Corrigir Registro</h3>
+                <h3>Editar registro</h3>
                 <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
             </div>
-            <p style="font-size:12px;color:var(--yellow);margin-bottom:12px">⚠ Este registro está fora dos blocos planejados. Ajuste o horário pra ele entrar no bloco correto.</p>
+            ${isOrphan ? `<p style="font-size:12px;color:var(--yellow);margin-bottom:12px">⚠ Este registro está fora dos blocos planejados. Ajuste o horário pra ele entrar no bloco correto.</p>` : ''}
             <div class="form-group">
                 <label class="form-label">Volume (ml)</label>
-                <input type="number" id="orphan-vol" class="form-input" value="${entry.vol}" inputmode="numeric">
+                <input type="number" id="we-vol" class="form-input" value="${entry.vol}" inputmode="numeric">
+            </div>
+            <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap">
+                ${[150, 200, 250, 350, 500, 750].map(v => `<button class="btn btn-outline btn-sm" onclick="$('we-vol').value=${v}">${v}ml</button>`).join('')}
             </div>
             <div class="form-group">
                 <label class="form-label">Horário</label>
-                <input type="time" id="orphan-time" class="form-input" value="${entry.time && entry.time.includes(':') ? entry.time : ''}">
+                <input type="time" id="we-time" class="form-input" value="${entry.time && entry.time.includes(':') ? entry.time : ''}">
             </div>
             <div class="form-group">
                 <label class="form-label">Fonte (opcional)</label>
-                <input type="text" id="orphan-source" class="form-input" value="${entry.source || ''}">
+                <input type="text" id="we-source" class="form-input" value="${entry.source || ''}">
             </div>
             <div style="display:flex;gap:8px">
-                <button class="btn btn-danger" onclick="deleteOrphanWater(${idx})">Excluir</button>
-                <button class="btn btn-primary" style="flex:1" onclick="saveOrphanWater(${idx})">Salvar</button>
+                <button class="btn btn-outline" style="color:var(--red)" onclick="deleteWaterEntry(${idx})">Excluir</button>
+                <button class="btn btn-primary" style="flex:1" onclick="saveWaterEntry(${idx})">Salvar</button>
             </div>
         </div>
     `;
     document.body.appendChild(overlay);
 }
 
-function saveOrphanWater(idx) {
-    const dt = today();
+function saveWaterEntry(idx) {
+    const dt = curDate();
     const entry = (D.water[dt] || [])[idx];
     if (!entry) return;
-    const vol = parseInt($('orphan-vol').value) || 0;
-    const time = $('orphan-time').value;
-    const source = $('orphan-source').value.trim();
+    const vol = parseInt($('we-vol').value) || 0;
+    const time = $('we-time').value;
+    const source = $('we-source').value.trim();
     if (vol <= 0) return toast('Volume inválido', true);
     if (!time) return toast('Informe o horário', true);
 
@@ -2428,17 +2535,18 @@ function saveOrphanWater(idx) {
 
     save();
     document.querySelector('.modal-overlay').remove();
-    toast('💧 Registro corrigido');
+    toast('💧 Registro atualizado');
     rHydro();
 }
 
-function deleteOrphanWater(idx) {
+function deleteWaterEntry(idx) {
     if (!confirm('Excluir este registro de água?')) return;
-    const dt = today();
+    const dt = curDate();
     if (!D.water[dt] || !D.water[dt][idx]) return;
     D.water[dt].splice(idx, 1);
     save();
-    document.querySelector('.modal-overlay').remove();
+    const modal = document.querySelector('.modal-overlay');
+    if (modal) modal.remove();
     toast('Registro excluído');
     rHydro();
 }
@@ -2446,10 +2554,12 @@ function deleteOrphanWater(idx) {
 // ========== RENDER: GOALS ==========
 function rGoals() {
     if (!D) return;
-    const dt = today();
+    const dt = curDate();
     const dayType = getDayType(dt);
 
     $('goals-body').innerHTML = `
+        ${dateStripHtml()}
+        <div style="font-size:11px;color:var(--text3);margin:0 2px 6px">Tipo deste dia (treino/descanso) — define as metas aplicadas:</div>
         <div class="goal-toggle">
             <button class="goal-toggle-btn ${dayType === 'treino' ? 'active' : ''}" onclick="setDayType('${dt}','treino');rGoals()">🏋️ Dia de Treino</button>
             <button class="goal-toggle-btn ${dayType === 'descanso' ? 'active' : ''}" onclick="setDayType('${dt}','descanso');rGoals()">😴 Dia de Descanso</button>
@@ -2499,17 +2609,17 @@ function rGoals() {
 
         <div class="card mb-12">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-                <span class="card-title" style="margin:0">Sinais Vitais Hoje</span>
+                <span class="card-title" style="margin:0">Sinais Vitais ${viewingToday() ? 'Hoje' : '— ' + dateLabel(dt)}</span>
                 <button class="btn btn-outline btn-sm" onclick="showPage('vitais')">📊 Ver histórico</button>
             </div>
             <div style="display:flex;flex-wrap:wrap;gap:8px 18px;font-size:14px;color:var(--text2);margin-bottom:14px">
-                <span>⚖️ <strong style="color:var(--text)">${D.peso ? fmt(D.peso) : '—'}</strong> kg</span>
-                <span>🩺 <strong style="color:var(--text)">${(D.vitals[today()] || {}).pa || '—'}</strong></span>
-                <span>❤️ <strong style="color:var(--text)">${(D.vitals[today()] || {}).fc || '—'}</strong> bpm</span>
-                <span>😴 <strong style="color:var(--text)">${(() => { const s = calcSleepDuration((D.vitals[today()] || {}).dormir, (D.vitals[today()] || {}).acordar); return s != null ? formatSleepDuration(s) : '—'; })()}</strong></span>
+                <span>⚖️ <strong style="color:var(--text)">${(D.vitals[dt] || {}).peso != null ? fmt((D.vitals[dt]).peso) : (D.peso ? fmt(D.peso) : '—')}</strong> kg</span>
+                <span>🩺 <strong style="color:var(--text)">${(D.vitals[dt] || {}).pa || '—'}</strong></span>
+                <span>❤️ <strong style="color:var(--text)">${(D.vitals[dt] || {}).fc || '—'}</strong> bpm</span>
+                <span>😴 <strong style="color:var(--text)">${(() => { const s = calcSleepDuration((D.vitals[dt] || {}).dormir, (D.vitals[dt] || {}).acordar); return s != null ? formatSleepDuration(s) : '—'; })()}</strong></span>
             </div>
             ${calcIMC() != null ? `<div style="font-size:11px;color:var(--text3);margin-bottom:14px">IMC: <strong style="color:${imcColor(calcIMC())}">${calcIMC().toFixed(1)}</strong> — ${imcLabel(calcIMC())}</div>` : ''}
-            <button class="btn btn-primary" style="width:100%;margin-bottom:12px" onclick="openVitalEditor()">✏️ Registrar / editar medição de hoje</button>
+            <button class="btn btn-primary" style="width:100%;margin-bottom:12px" onclick="openVitalEditor('${dt}')">✏️ Registrar / editar medição ${viewingToday() ? 'de hoje' : 'deste dia'}</button>
             <div class="form-group" style="margin-bottom:0">
                 <label class="form-label">Altura (m) — usada no cálculo do IMC</label>
                 <input type="number" class="form-input" value="${D.altura || ''}" step="0.01" placeholder="1.69" onchange="D.altura=parseFloat(this.value)||null;save();if(cPage==='dash')rDash();if(cPage==='goals')rGoals()">
@@ -3860,7 +3970,7 @@ function updateSleepPreview() {
 }
 
 function openVitalEditor(dataParam) {
-    const dt = dataParam || today();
+    const dt = dataParam || curDate();
     const existing = (D.vitals && D.vitals[dt]) || {};
     editingVital = {
         data: dt,
@@ -4291,9 +4401,10 @@ function getMedTakenMap(dt, medId) {
 
 // Retorna lista de "doses de hoje" — cada med × cada horário, com status
 // status: 'taken' (ja tomou), 'late' (passou >30min do horario e nao tomou), 'pending' (no horario ou futuro)
-function getMedsToday() {
+function getMedsToday(dtParam) {
     if (!D.meds || D.meds.length === 0) return [];
-    const dt = today();
+    const dt = dtParam || curDate();
+    const isT = dt === today();
     const now = new Date();
     const nowMin = now.getHours() * 60 + now.getMinutes();
     const doses = [];
@@ -4306,7 +4417,7 @@ function getMedsToday() {
             const wasTaken = !!map[h];
             let status = 'pending';
             if (wasTaken) status = 'taken';
-            else if (nowMin - horarioMin > 30) status = 'late';
+            else if (isT && nowMin - horarioMin > 30) status = 'late';   // 'late' só faz sentido hoje
             doses.push({ medId: m.id, nome: m.nome, dosagem: m.dosagem, horario: h, status });
         });
     });
@@ -4314,7 +4425,7 @@ function getMedsToday() {
 }
 
 function toggleMedTaken(medId, horario) {
-    const dt = today();
+    const dt = curDate();
     const map = getMedTakenMap(dt, medId);
     const wasTaken = !!map[horario];
     if (wasTaken) {
@@ -4350,8 +4461,9 @@ function rMeds() {
         return;
     }
 
-    // Status de hoje
-    const doses = getMedsToday();
+    // Status de hoje (a página de meds é sempre do dia atual; correção de dias
+    // anteriores é feita pelo card de Medicamentos no Início, que segue a data ativa)
+    const doses = getMedsToday(today());
     const tomados = doses.filter(d => d.status === 'taken').length;
     const total = doses.length;
     const atrasados = doses.filter(d => d.status === 'late').length;
