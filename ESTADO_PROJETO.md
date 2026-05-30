@@ -1,12 +1,31 @@
 # Estado do Projeto — Gestão Saúde
 
-**Última atualização:** 2026-05-23
-**Versão atual em produção:** v1.4.0
+**Última atualização:** 2026-05-30
+**Versão atual em produção:** v1.9.0
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
 
 > Este documento é o **handoff vivo** do projeto. Qualquer nova sessão de trabalho começa lendo este arquivo pra entender estado atual, decisões já tomadas, e próximos passos.
+
+---
+
+## Resumo da sessão 2026-05-30 — v1.9.0
+
+Ajustes de uso surgidos no dia a dia (feedback do próprio Gileno), focados em **refeições e horários**:
+
+1. **Dias de descanso não mostram mais Pré/Pós-treino** — campos marcados `treinoOnly` somem nos dias `descanso`, mas reaparecem se já houver item registrado neles naquele dia (nunca esconde dado).
+2. **Campos de refeição configuráveis** — antes fixos (constante `MEAL_SLOTS`), agora vivem em `D.mealSlots` e são editáveis em Metas → card "🍽 Campos de refeição": renomear, horário previsto, marcar "só treino", ligar/desligar, **reordenar (↑↓), adicionar e remover**. Remoção preserva histórico.
+3. **Horário previsto + realizado nas refeições** — cada refeição mostra o previsto (do campo) e a hora real (auto-preenchida ao registrar o 1º alimento no dia de hoje, sempre editável).
+4. **Horário previsto + realizado na medicação** — a hora real já era capturada por `toggleMedTaken`; agora é **exibida** (`prev · tomado`) e **editável** (botão 🕐, `editMedTakenTime`).
+
+**Integridade de dados:** `getDayMeals()` passou a somar iterando todos os slots com itens (`Object.keys(day.slots)`), não a config — então customizar/remover campos **nunca** altera os totais de dias passados.
+
+**Regra central** — `getDaySlots(dt)`: exibe um campo se (`ativo` E passa no filtro treino) **OU** se já tem item naquele dia. Helpers novos: `getMealSlots`, `getMealSlotById`, `getDaySlots`, `mealTimeInfo`, `nowHHMM`, `openTimeEditor`, `editMealRealTime`, `editMedTakenTime`, e CRUD de slots (`add/save/delete/toggle/moveMealSlot`).
+
+**Verificação:** sem Node nem preview no browser neste ambiente (sandbox bloqueia o preview por Python) — validado via **JavaScriptCore** (`osascript -l JavaScript`): sintaxe do arquivo inteiro + **14 testes** (lógica real + render de `rDash`/`rMeal`/`rGoals`). Detalhes na memória `gestao-saude-verificacao`.
+
+> **Lacuna documental:** entre v1.4.0 e v1.8.2 houve várias versões (redesign de topo/rodapé, navegação de dias anteriores, sono + IMC com recência, água editável, anéis >100%, etc.) que não foram registradas aqui — ver `git log`. Esta seção retoma a documentação a partir da v1.9.0.
 
 ---
 
@@ -33,7 +52,7 @@ Sessão maratona que evoluiu o app de v1.0.6 (esqueleto parado há 78 dias) pra 
 
 ## Stack confirmada
 
-- **Frontend:** Vanilla JS + HTML + CSS (sem framework, sem build) — single-file `index.html` ~2500 linhas
+- **Frontend:** Vanilla JS + HTML + CSS (sem framework, sem build) — single-file `index.html` ~4780 linhas
 - **Backend:** Firebase 10.12.0 (Auth + Firestore)
 - **Storage de dados:** Firestore — coleção `users/{uid}` doc único com campo `data: JSON.stringify(D)` + `updatedAt`
 - **Hosting:** GitHub Pages
@@ -50,21 +69,24 @@ Sessão maratona que evoluiu o app de v1.0.6 (esqueleto parado há 78 dias) pra 
 
 ```
 D = {
-  userName, peso, metaPeso,
-  days: { 'YYYY-MM-DD': { slots: { pretreino|postreino|cafe|almoco|lanche|jantar: {items, time} } } },
+  userName, peso, altura, metaPeso,
+  days: { 'YYYY-MM-DD': { slots: { <slotId>: {items[], time, realTime, name} } } },   // realTime/name v1.9.0
+  mealSlots: [{id, name, time, treinoOnly, ativo}],   // campos de refeição configuráveis (v1.9.0); seed em DEFAULT_MEAL_SLOTS
   water: { 'YYYY-MM-DD': [{time, vol, source, auto}] },
   goals: {
     treino:   {kcal, prot, water, carbo?, gord?},
     descanso: {kcal, prot, water, carbo?, gord?}
   },
-  dayType: { 'YYYY-MM-DD': 'treino'|'descanso' },
-  vitals: { 'YYYY-MM-DD': {peso, pa, fc} },
+  dayType: { 'YYYY-MM-DD': 'treino'|'descanso' },     // default: domingo = descanso
+  vitals: { 'YYYY-MM-DD': {peso, pa, fc, dormir, acordar} },   // dormir/acordar = sono
   foods: [{id, name, ref, unit, kcal, prot, carbo, gord, nota}],
   meds: [{id, nome, dosagem, horarios[], estoque?, notas?, ativo}],
-  medsTaken: { 'YYYY-MM-DD': {medId: ['HH:MM', ...]} },
+  medsTaken: { 'YYYY-MM-DD': {medId: {'HH:MM_prescrito': 'HH:MM_real'}} },   // dict prescrito→real (migrado de array)
   treinos: [{id, data, nome, exercicios[{id, nome, series[{reps, carga}]}], notas?, duracao?, createdAt}],
+  workoutTemplates: [{id, nome, exercicios[...], notas?, createdAt}],   // Treino A/B/C reutilizáveis
   consultas: [{id, data, medico, especialidade, local?, queixa, conduta, prescricao?, proximaConsulta?, notas?, createdAt}],
-  theme, bphCutoff
+  modules: { refeicao, hidratacao, medicamentos, treino, vitais, consultas },   // ligar/desligar áreas
+  theme, bphCutoff, bphEnabled, _uiCollapsed
 }
 ```
 
@@ -155,7 +177,7 @@ Marketing:
 
 ```
 Estou retomando o app Gestão Saúde. Lê /Users/gilenopaiva/Documents/Gileno_Gestao/Gestao_Saude/ESTADO_PROJETO.md
-pra contexto, e o IDEIAS_PREMIUM.md no mesmo dir pra roadmap. Versão atual em produção: v1.4.0.
+pra contexto, e o IDEIAS_PREMIUM.md no mesmo dir pra roadmap. Versão atual em produção: v1.9.0.
 
 [Aqui descreve o que quer fazer: bug encontrado no teste, próxima feature, S6 lançamento, etc]
 ```

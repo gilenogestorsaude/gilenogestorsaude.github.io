@@ -489,7 +489,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.8.2';
+const APP_VERSION = '1.9.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -658,8 +658,10 @@ function defaultD() {
         peso: 71.8,
         altura: null,
         metaPeso: [65, 68],
-        // Meals by date: { '2026-03-01': { slots: { pretreino: { items: [...], time: '05:20' }, ... } } }
+        // Meals by date: { '2026-03-01': { slots: { pretreino: { items: [...], time, realTime, name }, ... } } }
         days: {},
+        // Campos de refeição configuráveis (renomear, horário previsto, só-treino, ligar/desligar, ordem)
+        mealSlots: DEFAULT_MEAL_SLOTS.map(s => ({ ...s })),
         // Water by date: { '2026-03-01': [ { time: '05:15', vol: 500, source: 'Dexilant', auto: true }, ... ] }
         water: {},
         // Goals — kcal/prot/water sempre setados; carbo/gord opcionais (0 = sem meta, so mostra valor)
@@ -772,13 +774,16 @@ function getDefaultFoods() {
     ];
 }
 
-const MEAL_SLOTS = [
-    { id: 'pretreino', name: 'Pré-treino', time: '05:20' },
-    { id: 'postreino', name: 'Pós-treino', time: '07:10' },
-    { id: 'cafe', name: 'Café da manhã', time: '09:15' },
-    { id: 'almoco', name: 'Almoço', time: '12:30' },
-    { id: 'lanche', name: 'Lanche', time: '16:00' },
-    { id: 'jantar', name: 'Jantar', time: '19:30' }
+// Template de seed/migração dos campos de refeição. A config viva e editável
+// fica em D.mealSlots (ver getMealSlots/getDaySlots). treinoOnly = só aparece
+// em dia de treino; ativo = ligado/desligado pelo usuário sem perder histórico.
+const DEFAULT_MEAL_SLOTS = [
+    { id: 'pretreino', name: 'Pré-treino', time: '05:20', treinoOnly: true,  ativo: true },
+    { id: 'postreino', name: 'Pós-treino', time: '07:10', treinoOnly: true,  ativo: true },
+    { id: 'cafe', name: 'Café da manhã', time: '09:15', treinoOnly: false, ativo: true },
+    { id: 'almoco', name: 'Almoço', time: '12:30', treinoOnly: false, ativo: true },
+    { id: 'lanche', name: 'Lanche', time: '16:00', treinoOnly: false, ativo: true },
+    { id: 'jantar', name: 'Jantar', time: '19:30', treinoOnly: false, ativo: true }
 ];
 
 // pct = fração da meta diária (goals.water). Soma dos pct dos blocos 1-5 = 1.0 exata.
@@ -862,6 +867,16 @@ async function load() {
             if (!D.dayType) D.dayType = {};
             if (!D.water) D.water = {};
             if (!D.days) D.days = {};
+            // v1.9.0 — campos de refeição configuráveis. Usuários antigos herdam os 6 defaults
+            // (IDs preservados, pois são as chaves de day.slots). Cada slot ganha treinoOnly/ativo.
+            if (!Array.isArray(D.mealSlots) || D.mealSlots.length === 0) {
+                D.mealSlots = DEFAULT_MEAL_SLOTS.map(s => ({ ...s }));
+            } else {
+                D.mealSlots.forEach(s => {
+                    if (typeof s.treinoOnly !== 'boolean') s.treinoOnly = (s.id === 'pretreino' || s.id === 'postreino');
+                    if (typeof s.ativo !== 'boolean') s.ativo = true;
+                });
+            }
             if (!D.bphCutoff) D.bphCutoff = 17;
             // Default true pra preservar comportamento de usuários existentes;
             // novos usuários podem desligar em Configurações se não tiverem BPH
@@ -1232,11 +1247,53 @@ function getGoals(dt) {
     return D.goals[getDayType(dt)] || D.goals.treino;
 }
 
+// Config viva dos campos de refeição (sempre retorna array; tolerante a dado ausente)
+function getMealSlots() {
+    if (!D || !Array.isArray(D.mealSlots)) return DEFAULT_MEAL_SLOTS.map(s => ({ ...s }));
+    return D.mealSlots;
+}
+
+function getMealSlotById(id) {
+    return getMealSlots().find(s => s.id === id) || null;
+}
+
+// Slots a EXIBIR num dia. Regra: campo da config aparece se (ativo E passa no filtro
+// treino) OU se já tem item registrado naquele dia. Assim campos de treino somem no
+// descanso mas reaparecem se usados, e campos removidos/inativos com histórico não
+// escondem dado. Campos removidos da config (órfãos com itens) entram ao fim.
+function getDaySlots(dt) {
+    if (!dt) dt = curDate();
+    const day = getDayData(dt);
+    const isTreino = getDayType(dt) === 'treino';
+    const out = [];
+    const seen = new Set();
+    getMealSlots().forEach(s => {
+        const slot = day.slots[s.id];
+        const hasItems = slot && slot.items && slot.items.length > 0;
+        const treinoOk = !s.treinoOnly || isTreino;
+        if ((s.ativo !== false && treinoOk) || hasItems) {
+            out.push(s);
+            seen.add(s.id);
+        }
+    });
+    Object.keys(day.slots).forEach(id => {
+        if (seen.has(id)) return;
+        const slot = day.slots[id];
+        if (slot && slot.items && slot.items.length > 0) {
+            out.push({ id, name: slot.name || id, time: slot.time || '', treinoOnly: false, ativo: true, _orphan: true });
+            seen.add(id);
+        }
+    });
+    return out;
+}
+
 function getDayMeals(dt) {
     const day = getDayData(dt);
     let totalKcal = 0, totalProt = 0, totalCarbo = 0, totalGord = 0;
-    MEAL_SLOTS.forEach(s => {
-        const slot = day.slots[s.id];
+    // Soma TODOS os slots com itens (não a config), pra que customizar/remover/esconder
+    // campos nunca altere os totais de dias já registrados.
+    Object.keys(day.slots).forEach(id => {
+        const slot = day.slots[id];
         if (slot && slot.items) {
             slot.items.forEach(item => {
                 totalKcal  += item.kcal  || 0;
@@ -1457,7 +1514,7 @@ function rDash() {
 
     // Meals HTML
     let mealsHtml = '';
-    MEAL_SLOTS.forEach(s => {
+    getDaySlots(dt).forEach(s => {
         const day = getDayData(dt);
         const slot = day.slots[s.id];
         const done = slot && slot.items && slot.items.length > 0;
@@ -1470,14 +1527,18 @@ function rDash() {
                 slotGord  += i.gord  || 0;
             });
         }
+        const t = mealTimeInfo(s, slot);
+        const timeHtml = t.real
+            ? `<span style="color:var(--text3)">prev ${t.prev || '--:--'}</span> · <span style="color:var(--primary);font-weight:600">${t.real}</span>`
+            : (t.prev || '—');
         mealsHtml += `
             <div class="meal-item ${done ? '' : 'pending'}" onclick="openMealSlot('${s.id}')" style="cursor:pointer">
                 <div class="meal-check ${done ? 'done' : ''}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
                 </div>
                 <div class="meal-info">
-                    <div class="meal-name">${s.name}</div>
-                    <div class="meal-time">${slot && slot.time ? slot.time : s.time}</div>
+                    <div class="meal-name">${s.name}${s.treinoOnly ? ' <span style="font-size:9px" title="Só em dia de treino">🏋️</span>' : ''}</div>
+                    <div class="meal-time">${timeHtml}</div>
                 </div>
                 ${done ? `<div class="meal-macros">
                     <div class="meal-kcal">${fmtN(slotKcal)} kcal</div>
@@ -1578,8 +1639,9 @@ function rDash() {
         ${!isModuleEnabled('refeicao') ? '' : (() => {
             const collapsed = isCollapsed('meals');
             const day = getDayData(dt);
-            const doneCount = MEAL_SLOTS.filter(s => { const slot = day.slots[s.id]; return slot && slot.items && slot.items.length > 0; }).length;
-            const totalCount = MEAL_SLOTS.length;
+            const daySlots = getDaySlots(dt);
+            const doneCount = daySlots.filter(s => { const slot = day.slots[s.id]; return slot && slot.items && slot.items.length > 0; }).length;
+            const totalCount = daySlots.length;
             const summary = `${doneCount}/${totalCount} refeições • ${fmtN(totalKcal)} kcal`;
             return `
             <div class="card mb-12">
@@ -1616,8 +1678,9 @@ function rDash() {
                             </div>
                             <div class="meal-info">
                                 <div class="meal-name">${d.nome}${d.dosagem ? ` <span style="font-weight:400;color:var(--text3);font-size:11px">${d.dosagem}</span>` : ''}</div>
-                                <div class="meal-time" style="${d.status === 'late' ? 'color:var(--red);font-weight:600' : (d.status === 'taken' ? 'color:var(--primary);font-weight:600' : '')}">${d.horario}${d.status === 'late' ? ' • atrasado' : (d.status === 'taken' ? ' • ✓ tomado' : '')}</div>
+                                <div class="meal-time" style="${d.status === 'late' ? 'color:var(--red);font-weight:600' : (d.status === 'taken' ? 'color:var(--primary);font-weight:600' : '')}"><span style="color:var(--text3);font-weight:400">prev ${d.horario}</span>${d.status === 'taken' ? ` · ✓ tomado ${d.real || d.horario}` : (d.status === 'late' ? ' • atrasado' : '')}</div>
                             </div>
+                            ${d.status === 'taken' ? `<button onclick="event.stopPropagation();editMedTakenTime('${d.medId}','${d.horario}')" style="flex-shrink:0;width:32px;height:32px;border-radius:8px;background:transparent;border:1px solid var(--border);color:var(--text3);cursor:pointer;font-size:14px" title="Ajustar hora tomada">🕐</button>` : ''}
                         </div>`).join(''));
             return `
             <div class="card mb-12">
@@ -1795,9 +1858,17 @@ function rMeal() {
     const dt = curDate();
     const day = getDayData(dt);
 
+    // Slots visíveis neste dia; garante que o slot selecionado é válido/visível
+    const daySlots = getDaySlots(dt);
+    if (daySlots.length && !daySlots.some(s => s.id === selectedMealSlot)) {
+        selectedMealSlot = daySlots[0].id;
+    }
+    const curSlotCfg = daySlots.find(s => s.id === selectedMealSlot) || getMealSlotById(selectedMealSlot) || { id: selectedMealSlot, name: selectedMealSlot, time: '' };
+    const tinfo = mealTimeInfo(curSlotCfg, day.slots[selectedMealSlot]);
+
     // Chips
     let chipsHtml = '';
-    MEAL_SLOTS.forEach(s => {
+    daySlots.forEach(s => {
         chipsHtml += `<button class="chip ${selectedMealSlot === s.id ? 'active' : ''}" onclick="selectedMealSlot='${s.id}';rMeal()">${s.name}</button>`;
     });
 
@@ -1842,9 +1913,19 @@ function rMeal() {
         ${dateStripHtml()}
         <div class="chip-row">${chipsHtml}</div>
 
+        <div class="card mb-12" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+            <div style="min-width:0">
+                <div style="font-size:11px;color:var(--text3)">🕐 Horário — ${curSlotCfg.name}</div>
+                <div style="font-size:14px;font-weight:600;color:var(--text);margin-top:2px">
+                    <span style="color:var(--text3);font-weight:400">previsto ${tinfo.prev || '--:--'}</span>${tinfo.real ? ` · feito <span style="color:var(--primary)">${tinfo.real}</span>` : ''}
+                </div>
+            </div>
+            <button class="btn btn-outline btn-sm" style="flex-shrink:0" onclick="editMealRealTime()">${tinfo.real ? 'Editar' : '+ Hora real'}</button>
+        </div>
+
         ${slot.items && slot.items.length > 0 ? `
         <div class="card mb-12">
-            <div class="card-title">Itens — ${MEAL_SLOTS.find(s=>s.id===selectedMealSlot).name}</div>
+            <div class="card-title">Itens — ${curSlotCfg.name}</div>
             ${itemsHtml}
             <div class="added-total" style="flex-direction:column;align-items:stretch;gap:4px">
                 <div style="display:flex;justify-content:space-between"><span>Total kcal</span><span>${fmtN(totalKcal)} kcal</span></div>
@@ -1957,7 +2038,15 @@ function addFoodToMeal(foodId) {
     const ratio = grams / food.ref;
     const dt = curDate();
     const day = getDayData(dt);
-    if (!day.slots[selectedMealSlot]) day.slots[selectedMealSlot] = { items: [], time: MEAL_SLOTS.find(s=>s.id===selectedMealSlot).time };
+    if (!day.slots[selectedMealSlot]) {
+        const cfg = getMealSlotById(selectedMealSlot);
+        day.slots[selectedMealSlot] = {
+            items: [],
+            name: cfg ? cfg.name : selectedMealSlot,        // snapshot do nome (preserva se o campo for removido depois)
+            time: cfg ? cfg.time : '',                       // horário previsto (snapshot)
+            realTime: (dt === today()) ? nowHHMM() : ''      // hora real auto só no dia de hoje (igual à medicação)
+        };
+    }
     day.slots[selectedMealSlot].items.push({
         id: uid(),
         foodId: food.id,
@@ -2285,6 +2374,71 @@ function saveMeal() {
     save();
     toast('Refeição salva!');
     showPage('dash');
+}
+
+// ========== HORÁRIOS (previsto + realizado) ==========
+// Hora atual no formato HH:MM
+function nowHHMM() {
+    const n = new Date();
+    return String(n.getHours()).padStart(2, '0') + ':' + String(n.getMinutes()).padStart(2, '0');
+}
+
+// Horário de uma refeição: previsto (config do campo) + realizado (registro do dia).
+// Retrocompat: se não houver realTime mas o slot legado tiver um time diferente do
+// previsto, trata esse time como o realizado.
+function mealTimeInfo(slotCfg, daySlot) {
+    const prev = (slotCfg && slotCfg.time) || '';
+    let real = (daySlot && daySlot.realTime) || '';
+    if (!real && daySlot && daySlot.time && daySlot.time !== prev) real = daySlot.time;
+    return { prev, real };
+}
+
+// Editor de hora reutilizável (refeição e medicação). onSave(valor) recebe 'HH:MM' ou '' (limpar).
+function openTimeEditor(title, current, onSave) {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = `
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>${title}</h3>
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Hora (HH:MM)</label>
+                <input type="time" id="time-edit-input" class="form-input" value="${current || nowHHMM()}">
+            </div>
+            <div style="display:flex;gap:8px">
+                <button class="btn btn-primary" id="time-edit-save" style="flex:1">Salvar</button>
+                ${current ? `<button class="btn btn-outline" id="time-edit-clear" style="color:var(--red)">Limpar</button>` : ''}
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+    const input = document.getElementById('time-edit-input');
+    document.getElementById('time-edit-save').onclick = () => { const v = input.value || ''; overlay.remove(); onSave(v); };
+    const clr = document.getElementById('time-edit-clear');
+    if (clr) clr.onclick = () => { overlay.remove(); onSave(''); };
+    setTimeout(() => input.focus(), 50);
+}
+
+// Registrar/editar a hora real em que a refeição selecionada foi feita
+function editMealRealTime() {
+    const dt = curDate();
+    const day = getDayData(dt);
+    const cfg = getMealSlotById(selectedMealSlot);
+    const slot = day.slots[selectedMealSlot];
+    const cur = (slot && slot.realTime) || '';
+    const nome = (cfg && cfg.name) || (slot && slot.name) || selectedMealSlot;
+    openTimeEditor('Hora real — ' + nome, cur, (val) => {
+        if (!day.slots[selectedMealSlot]) {
+            day.slots[selectedMealSlot] = { items: [], name: cfg ? cfg.name : selectedMealSlot, time: cfg ? cfg.time : '', realTime: '' };
+        }
+        day.slots[selectedMealSlot].realTime = val;
+        save();
+        if (cPage === 'meal') rMeal();
+        if (cPage === 'dash') rDash();
+        toast(val ? '✓ Hora registrada' : 'Hora removida');
+    });
 }
 
 // ========== RENDER: HYDRATION ==========
@@ -2646,6 +2800,33 @@ function rGoals() {
             }).join('')}
         </div>
 
+        ${!isModuleEnabled('refeicao') ? '' : `
+        <div class="card mb-12">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                <span class="card-title" style="margin:0">🍽 Campos de refeição</span>
+                <button class="btn btn-primary btn-sm" onclick="openMealSlotEditor()">+ Adicionar</button>
+            </div>
+            <div style="font-size:11px;color:var(--text3);margin-bottom:12px;line-height:1.5">
+                Renomeie, defina o horário previsto, marque os que valem só em dia de treino, ligue/desligue ou reordene. Campos "só treino" somem nos dias de descanso (mas reaparecem se você já tiver registrado algo neles).
+            </div>
+            ${getMealSlots().map((s, i, arr) => `
+                <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;${s.ativo === false ? 'opacity:.55' : ''}">
+                    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+                        <div style="min-width:0;flex:1">
+                            <div style="font-size:14px;font-weight:600;color:var(--text)">${s.name}${s.treinoOnly ? ' <span style="font-size:10px;color:#f59e0b;font-weight:700">🏋️ treino</span>' : ''}${s.ativo === false ? ' <span style="font-size:10px;color:var(--red);font-weight:700">desligado</span>' : ''}</div>
+                            <div style="font-size:11px;color:var(--text3);margin-top:2px">🕐 previsto ${s.time || '--:--'}</div>
+                        </div>
+                        <button class="toggle ${s.ativo !== false ? 'on' : ''}" onclick="toggleMealSlotActive('${s.id}')" style="flex-shrink:0" title="Ligar/desligar"></button>
+                    </div>
+                    <div style="display:flex;gap:6px;margin-top:8px">
+                        <button class="btn btn-outline btn-sm" onclick="moveMealSlot('${s.id}',-1)" ${i === 0 ? 'disabled style="opacity:.4"' : ''}>↑</button>
+                        <button class="btn btn-outline btn-sm" onclick="moveMealSlot('${s.id}',1)" ${i === arr.length - 1 ? 'disabled style="opacity:.4"' : ''}>↓</button>
+                        <button class="btn btn-outline btn-sm" style="flex:1" onclick="openMealSlotEditor('${s.id}')">Editar</button>
+                        <button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="deleteMealSlot('${s.id}')">Excluir</button>
+                    </div>
+                </div>`).join('')}
+        </div>`}
+
         <div class="card mb-12">
             <div class="card-title">Configurações</div>
             <div class="cfg-item">
@@ -2681,6 +2862,92 @@ function editGoal(field, dayType) {
         rGoals();
         toast('Meta atualizada');
     }
+}
+
+// ========== CAMPOS DE REFEIÇÃO — CONFIG (CRUD + ordem) ==========
+function moveMealSlot(id, dir) {
+    const arr = getMealSlots();
+    const i = arr.findIndex(s => s.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= arr.length) return;
+    const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+    save();
+    rGoals();
+}
+
+function toggleMealSlotActive(id) {
+    const s = getMealSlotById(id);
+    if (!s) return;
+    s.ativo = (s.ativo === false); // desligado → ligado; ligado/indefinido → desligado
+    save();
+    rGoals();
+    toast(s.ativo ? `✓ ${s.name} ligado` : `${s.name} desligado`);
+}
+
+function deleteMealSlot(id) {
+    const s = getMealSlotById(id);
+    if (!s) return;
+    let temHistorico = false;
+    Object.keys(D.days || {}).forEach(dt => {
+        const slot = D.days[dt].slots && D.days[dt].slots[id];
+        if (slot && slot.items && slot.items.length > 0) temHistorico = true;
+    });
+    const msg = temHistorico
+        ? `Remover o campo "${s.name}"?\n\nVocê já registrou refeições nele. Os dados NÃO serão apagados — continuam contando nos totais e aparecendo nos dias em que existem. O campo só deixa de aparecer para novos registros.`
+        : `Remover o campo "${s.name}"?`;
+    if (!confirm(msg)) return;
+    D.mealSlots = getMealSlots().filter(x => x.id !== id);
+    save();
+    rGoals();
+    toast('Campo removido');
+}
+
+function openMealSlotEditor(id) {
+    const editing = id ? getMealSlotById(id) : null;
+    const s = editing || { name: '', time: '', treinoOnly: false, ativo: true };
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = `
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>${editing ? 'Editar' : 'Novo'} campo de refeição</h3>
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Nome</label>
+                <input type="text" id="slot-name" class="form-input" placeholder="Ex: Ceia" value="${s.name || ''}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Horário previsto</label>
+                <input type="time" id="slot-time" class="form-input" value="${s.time || ''}">
+            </div>
+            <label style="display:flex;align-items:center;gap:8px;margin-bottom:16px;cursor:pointer">
+                <input type="checkbox" id="slot-treino" ${s.treinoOnly ? 'checked' : ''} style="width:18px;height:18px;flex-shrink:0">
+                <span style="font-size:13px;color:var(--text2)">🏋️ Só em dia de treino (some nos dias de descanso)</span>
+            </label>
+            <button class="btn btn-primary w-full" onclick="saveMealSlot(${editing ? `'${id}'` : 'null'})">Salvar</button>
+        </div>`;
+    document.body.appendChild(overlay);
+    setTimeout(() => { const el = $('slot-name'); if (el) el.focus(); }, 50);
+}
+
+function saveMealSlot(id) {
+    const name = ($('slot-name').value || '').trim();
+    const time = $('slot-time').value || '';
+    const treinoOnly = $('slot-treino').checked;
+    if (!name) return toast('Informe o nome do campo', true);
+    if (id) {
+        const s = getMealSlotById(id);
+        if (s) { s.name = name; s.time = time; s.treinoOnly = treinoOnly; }
+    } else {
+        getMealSlots().push({ id: 'slot_' + uid(), name, time, treinoOnly, ativo: true });
+    }
+    save();
+    const modal = document.querySelector('.modal-overlay');
+    if (modal) modal.remove();
+    rGoals();
+    toast('Campo salvo');
 }
 
 function saveVital(field, value) {
@@ -4419,7 +4686,7 @@ function getMedsToday(dtParam) {
             let status = 'pending';
             if (wasTaken) status = 'taken';
             else if (isT && nowMin - horarioMin > 30) status = 'late';   // 'late' só faz sentido hoje
-            doses.push({ medId: m.id, nome: m.nome, dosagem: m.dosagem, horario: h, status });
+            doses.push({ medId: m.id, nome: m.nome, dosagem: m.dosagem, horario: h, status, real: map[h] || '' });
         });
     });
     return doses.sort((a, b) => a.horario.localeCompare(b.horario));
@@ -4444,6 +4711,27 @@ function toggleMedTaken(medId, horario) {
     if (cPage === 'dash') rDash();
     if (cPage === 'meds') rMeds();
     toast(wasTaken ? 'Desmarcado' : '✓ Registrado');
+}
+
+// Ajustar a hora REAL em que a dose foi tomada (ex: marcou no app depois de tomar).
+// Limpar (valor vazio) desmarca a dose e repõe o estoque.
+function editMedTakenTime(medId, horario) {
+    const dt = curDate();
+    const map = getMedTakenMap(dt, medId);
+    if (!map[horario]) return; // só ajusta dose já tomada
+    const med = (D.meds || []).find(m => m.id === medId);
+    openTimeEditor('Hora tomada — ' + ((med && med.nome) || 'medicação') + ' (previsto ' + horario + ')', map[horario], (val) => {
+        if (val) {
+            map[horario] = val;
+        } else {
+            delete map[horario];
+            if (med && typeof med.estoque === 'number') med.estoque += 1;
+        }
+        save();
+        if (cPage === 'dash') rDash();
+        if (cPage === 'meds') rMeds();
+        toast(val ? '✓ Hora ajustada' : 'Dose desmarcada');
+    });
 }
 
 // ========== MEDICAMENTOS — RENDER ==========
@@ -4626,7 +4914,7 @@ function deleteMed(medId) {
 
 // ========== MÓDULOS OPCIONAIS ==========
 const MODULE_META = {
-    refeicao:     { label: 'Refeições',       icon: '🍽',  desc: 'Registrar pré-treino, café, almoço, lanche e jantar' },
+    refeicao:     { label: 'Refeições',       icon: '🍽',  desc: 'Registrar as refeições do dia (campos configuráveis)' },
     hidratacao:   { label: 'Hidratação',      icon: '💧', desc: 'Acompanhar consumo de água ao longo do dia' },
     medicamentos: { label: 'Medicamentos',    icon: '💊', desc: 'Cadastrar remédios/suplementos e marcar doses' },
     treino:       { label: 'Treino',          icon: '🏋️', desc: 'Templates A/B/C, execução guiada e histórico' },
