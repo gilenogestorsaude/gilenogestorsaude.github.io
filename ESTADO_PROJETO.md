@@ -1,12 +1,40 @@
 # Estado do Projeto — Gestão Saúde
 
 **Última atualização:** 2026-05-31
-**Versão atual em produção:** v1.9.3 (v1.9.4 pronta — deploy pendente)
+**Versão atual em produção:** v1.9.5
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
 
 > Este documento é o **handoff vivo** do projeto. Qualquer nova sessão de trabalho começa lendo este arquivo pra entender estado atual, decisões já tomadas, e próximos passos.
+
+---
+
+## Resumo da sessão 2026-05-31 — v1.9.5 (MODO PRO preview + import PDF "em construção" + camada profissional)
+
+**Decisão de produto (Gileno):** cada usuário precisa importar o **próprio** PDF (nutri e personal) — senão a feature não serve. Mas isso exige backend (a chave da IA NÃO pode ir no app, repo é público) → vira **Versão Pro paga, futura**. Pra não atrasar o lançamento: publicar já com a feature **anunciada como "em construção"** (feature flag + teaser).
+
+**O que entrou:**
+- **Modo Pro (preview)** — gesto secreto: **5 toques no "v1.9.x" do header** liga/desliga `D.proPreview` (toast + badge **PRO** roxo). `proTap()` com debounce 1,5s. É o "modo desenvolvedor" do Android. **Trava COSMÉTICA de propósito** — repo público; o cadeado REAL será no backend quando a Pro existir (cobrança/quem-é-Pro no servidor).
+- **Card "📋 Importar plano" (PRO) em Metas** com 2 botões: **🥗 nutri** e **🏋️ personal**. Público vê "🔒 em breve" → modal "🚧 Em construção". Tester com preview ON: **nutri** abre o import real (colar-JSON concierge, `openDietImport`); personal ainda é teaser (treino Pro não construído). `openProFeature(kind)` roteia.
+- **Camada profissional (semente da ideia de indicação/monetização):** `dietPlan.meta.professional {name, role, council, phone, instagram}`. `planProfessionalHtml()` rende contato **clicável** — WhatsApp (`wa.me/55…`), `tel:`, Instagram. Fallback p/ `meta.source`. O PDF da nutri já traz nome+CRN+telefone → o import (Pro) capturará isso de graça.
+- `D.workoutPlan` reservado (espelha `dietPlan`, p/ o treino na Pro).
+
+**Arquitetura do treino (descoberto nesta sessão):** o treino JÁ tem as 3 camadas prontas de antes — `D.workoutTemplates[]` (plano A/B/C) + `D.treinos[]` (execução) + `executeTemplate()` ("fazer a partir do plano"). Ou seja, o "sugestão+execução" do treino **já funciona**; só falta a mesma porta de entrada (PDF→template) = a feature Pro. Mesmo princípio da dieta.
+
+**Verificação:** JavaScriptCore com **gate automático verify-then-commit** (só commita se sintaxe OK + 0 FAIL + ≥20 PASS + proTap presente sem duplicata). O gate **barrou** um commit onde o Edit do `proTap` falhou por âncora errada (header tinha onclick mas a função não existia) — provou seu valor. Após corrigir: **22/22 checks** (gesto 5-toques toggle, roteamento nutri/personal com e sem preview, contato WhatsApp/tel, fallbacks).
+
+**Deploy:** `APP_VERSION`+`sw.js` → **1.9.5**.
+
+### 🔭 ROADMAP — Versão Pro (import de PDF) — decisão pendente de QUANDO/COMO
+Caminhos pra transformar PDF→plano (cada usuário, self-service):
+- **A — Concierge (atual):** usuário manda PDF, Claude (eu) gero o JSON, ele cola. Zero infra, não escala. Bom pra fase família.
+- **B — Builder manual no app:** tela pro usuário montar o plano à mão (reusa busca TACO). Self-service, sem backend/custo, mas trabalhoso.
+- **C — IA lê o PDF:** PDF → **VPS do Gileno** (pasta `VPS_Diagnostico`) ou Cloud Function → Claude API → JSON → `processDietImport`. Self-service real. Precisa backend + custo/PDF + **revisão obrigatória** (saúde: nunca importar cego — usuário confere/corrige/confirma).
+- Recomendação registrada: validar parsing com 2-3 formatos de PDF **antes** de fixar infra.
+
+### 💰 ROADMAP — Monetização "espaço profissional" (ideia do Gileno) — FUTURO, NÃO agora
+Vender espaço/indicação pra nutri/personal/**médicos** (vínculo com módulo Consultas). Separar SEMPRE: **(A) guardar o contato do profissional do próprio usuário** = feito agora (útil, baixo risco) vs. **(B) vender indicação a terceiros** = receita só com audiência + **risco regulatório** (publicidade de saúde é regulada por CFM/CRN/CREF; "anúncio disfarçado de recomendação do app" é perigoso). Decidir com público + checagem jurídica. NÃO implementar (B) na fase de testes.
 
 ---
 
