@@ -112,6 +112,7 @@ select.form-input{-webkit-appearance:none;appearance:none;background-image:url("
 .header-logo{width:32px;height:32px;border-radius:8px}
 .header-title{font-size:22px;font-weight:800;letter-spacing:-.3px;color:#0a0f0a}
 .header-version{font-size:9px;opacity:.6;margin-left:2px;color:#0a0f0a}
+.pro-badge{font-size:9px;font-weight:800;letter-spacing:.5px;background:linear-gradient(135deg,#7c3aed,#a855f7);color:#fff;padding:2px 8px;border-radius:5px;flex-shrink:0}
 .header-actions{display:flex;gap:6px;align-items:center}
 .header-btn{width:32px;height:32px;border-radius:8px;border:none;background:rgba(0,0,0,.12);color:#0a0f0a;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;transition:background .2s}
 .header-btn:active{background:rgba(0,0,0,.22)}
@@ -493,7 +494,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.9.4';
+const APP_VERSION = '1.9.5';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -501,6 +502,23 @@ let D = null; // data object
 let cPage = 'login';
 let editingMealIndex = -1;
 let selectedMealSlot = 'almoco';
+// Modo Pro (preview): gesto secreto = 5 toques na versão. Destrava o import (preview) só pro tester.
+// Trava cosmética de propósito — o repo é público; o cadeado REAL virá no backend quando a versão Pro existir.
+let _proTapCount = 0, _proTapTimer = null;
+function proTap() {
+    _proTapCount++;
+    if (_proTapTimer) clearTimeout(_proTapTimer);
+    _proTapTimer = setTimeout(() => { _proTapCount = 0; }, 1500);
+    if (_proTapCount >= 5) {
+        _proTapCount = 0;
+        if (!D) return;
+        D.proPreview = !D.proPreview;
+        save();
+        toast(D.proPreview ? '🔓 Modo Pro (preview) ativado' : 'Modo Pro (preview) desativado');
+        if (cPage === 'dash') rDash();
+        if (cPage === 'goals') rGoals();
+    }
+}
 let gDate = null; // dia em visualização/edição (null = hoje real). Permite ver/corrigir dias anteriores.
 let TACO = []; // Tabela TACO (UNICAMP) carregada on-demand pra autocomplete
 
@@ -669,7 +687,13 @@ function defaultD() {
         // Campos de refeição configuráveis (renomear, horário previsto, só-treino, ligar/desligar, ordem)
         mealSlots: DEFAULT_MEAL_SLOTS.map(s => ({ ...s })),
         // Plano alimentar (prescrição da nutri) — SUGESTÃO, separada da execução (D.days). null = sem plano.
+        // meta.professional (opcional): { name, role, council, phone, instagram } — semente da camada
+        // profissional (nutri/personal/médico). Futuro: indicação/contato e, na versão Pro, espaço pago.
         dietPlan: null,
+        // Plano de treino (prescrição do personal) — espelha dietPlan; preenchido na versão Pro.
+        workoutPlan: null,
+        // Modo Pro (preview) — destrava import de PDF (em construção) só pro tester via gesto secreto.
+        proPreview: false,
         // Water by date: { '2026-03-01': [ { time: '05:15', vol: 500, source: 'Dexilant', auto: true }, ... ] }
         water: {},
         // Goals — kcal/prot/water sempre setados; carbo/gord opcionais (0 = sem meta, so mostra valor)
@@ -899,6 +923,8 @@ async function load() {
             });
             if (!D.consultas) D.consultas = [];
             if (typeof D.dietPlan === 'undefined') D.dietPlan = null;
+            if (typeof D.workoutPlan === 'undefined') D.workoutPlan = null; // reservado: plano do personal (espelha dietPlan)
+            if (typeof D.proPreview !== 'boolean') D.proPreview = false;
             // v1.1.2 — adiciona carbo/gord aos foods existentes (default 0)
             if (D.foods) {
                 D.foods.forEach(f => {
@@ -1373,7 +1399,7 @@ function rDash() {
         <div class="header-top">
             <div class="header-brand">
                 <div class="header-title">Olá, ${userName.split(' ')[0]} 👋</div>
-                <span class="header-version">v${APP_VERSION} · <span style="background:#dc2626;color:#fff;padding:1px 5px;border-radius:4px;font-weight:700;letter-spacing:.3px;opacity:1">BETA</span>${!navigator.onLine ? ' · <span style="background:#92400e;color:#fff;padding:1px 5px;border-radius:4px;font-weight:700">📡 OFFLINE</span>' : ''}</span>
+                <span class="header-version" onclick="proTap()" style="cursor:pointer">v${APP_VERSION} · <span style="background:#dc2626;color:#fff;padding:1px 5px;border-radius:4px;font-weight:700;letter-spacing:.3px;opacity:1">BETA</span>${D.proPreview ? ' · <span style="background:#7c3aed;color:#fff;padding:1px 5px;border-radius:4px;font-weight:700">PRO</span>' : ''}${!navigator.onLine ? ' · <span style="background:#92400e;color:#fff;padding:1px 5px;border-radius:4px;font-weight:700">📡 OFFLINE</span>' : ''}</span>
             </div>
             <div class="header-actions">
                 <button class="header-btn" onclick="shareApp()" title="Compartilhar">⬆</button>
@@ -2711,6 +2737,60 @@ function doDietImport() {
     if (cPage === 'goals') rGoals();
 }
 
+// Contato clicável do profissional vinculado ao plano (camada profissional — semente).
+// Lê meta.professional {name, role, council, phone, instagram}; cai pra meta.source (texto) se não houver.
+function planProfessionalHtml(meta) {
+    if (!meta) return '';
+    const pro = meta.professional;
+    if (!pro) return meta.source ? `<div style="font-size:11px;color:var(--text3);margin-top:4px">Por: ${meta.source}</div>` : '';
+    const titulo = [pro.name, pro.role].filter(Boolean).join(' · ');
+    const cons = pro.council ? ` <span style="color:var(--text3)">(${pro.council})</span>` : '';
+    const digits = (pro.phone || '').replace(/[^0-9]/g, '');
+    let contato = '';
+    if (digits.length >= 10) {
+        const intl = digits.length <= 11 ? '55' + digits : digits; // assume BR se vier sem DDI
+        contato += `<a href="https://wa.me/${intl}" target="_blank" rel="noopener" style="color:var(--primary);font-weight:600">WhatsApp</a> · <a href="tel:+${intl}" style="color:var(--primary);font-weight:600">Ligar</a>`;
+    } else if (pro.phone) {
+        contato += `<span style="color:var(--text2)">${pro.phone}</span>`;
+    }
+    if (pro.instagram) {
+        const ig = pro.instagram.replace(/^@/, '');
+        contato += `${contato ? ' · ' : ''}<a href="https://instagram.com/${ig}" target="_blank" rel="noopener" style="color:var(--primary);font-weight:600">@${ig}</a>`;
+    }
+    return `<div style="font-size:11px;color:var(--text2);margin-top:6px">👩‍⚕️ ${titulo}${cons}</div>${contato ? `<div style="font-size:12px;margin-top:3px">${contato}</div>` : ''}`;
+}
+
+// Roteia os botões do card Pro. Trava cosmética (repo público): cadeado real será no backend.
+function openProFeature(kind) {
+    // Tester com preview ligado: nutri abre o import real (colar-JSON, concierge). Treino ainda não existe.
+    if (D.proPreview && kind === 'nutri') return openDietImport();
+    const titulo = kind === 'personal' ? 'Treino do personal (PDF)' : 'Plano da nutricionista (PDF)';
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = `
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>🚧 ${titulo}</h3>
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            </div>
+            <div class="modal-body">
+                <div style="text-align:center;padding:8px 0 4px">
+                    <div style="font-size:40px;margin-bottom:8px">🔒</div>
+                    <div style="font-weight:700;color:var(--text);margin-bottom:6px">Recurso da Versão Pro</div>
+                    <div style="font-size:13px;color:var(--text2);line-height:1.6">
+                        Em breve você vai poder enviar o <strong>PDF do seu ${kind === 'personal' ? 'personal trainer' : 'nutricionista'}</strong> e o app monta seu plano automaticamente — como sugestão, ao lado do que você registra no dia a dia.
+                    </div>
+                    <div style="font-size:11px;color:var(--text3);margin-top:12px">Estamos construindo isso com cuidado. 💪</div>
+                </div>
+                <div class="modal-actions" style="margin-top:16px">
+                    <button class="btn btn-primary w-full" onclick="this.closest('.modal-overlay').remove()">Entendi</button>
+                </div>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+}
+
 function clearDietPlan() {
     if (!confirm('Remover o plano alimentar?\n\nSeus registros de refeições NÃO são afetados — some apenas a sugestão. Campos criados pelo plano (ex.: Sobremesa) permanecem e podem ser removidos em "Campos de refeição".')) return;
     D.dietPlan = null;
@@ -3146,16 +3226,25 @@ function rGoals() {
 
         ${!isModuleEnabled('refeicao') ? '' : `
         <div class="card mb-12 plan-card">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px">
-                <span class="card-title" style="margin:0">📋 Plano alimentar</span>
-                <button class="btn btn-primary btn-sm" onclick="openDietImport()">Importar</button>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px">
+                <span class="card-title" style="margin:0">📋 Importar plano</span>
+                <span class="pro-badge">PRO</span>
             </div>
-            <div style="font-size:11px;color:var(--text3);line-height:1.5">
-                ${D.dietPlan
-                    ? `Plano ativo: <strong style="color:var(--text)">${(D.dietPlan.meta || {}).name || '—'}</strong> · previsto ${fmtN((D.dietPlan.meta || {}).kcalTarget || 0)} kcal/dia. Aparece como sugestão em cada refeição.`
-                    : 'Nenhum plano importado. Importe a prescrição da nutricionista pra ver a sugestão dentro de cada refeição.'}
+            <div style="font-size:11px;color:var(--text3);line-height:1.5;margin-bottom:10px">
+                Envie o PDF do seu profissional e o app monta seu plano automaticamente — como <strong style="color:var(--text)">sugestão</strong>, lado a lado com o que você registra. <span style="color:var(--accent);font-weight:700">🚧 Em construção.</span>
             </div>
-            ${D.dietPlan ? `<button class="btn btn-outline btn-sm" style="margin-top:10px;color:var(--red)" onclick="clearDietPlan()">Remover plano</button>` : ''}
+            <button class="btn btn-outline w-full" style="justify-content:space-between;margin-bottom:8px" onclick="openProFeature('nutri')">
+                <span>🥗 Plano da nutricionista (PDF)</span><span style="font-size:10px;color:var(--text3);flex-shrink:0">${D.proPreview ? '✓ preview' : '🔒 em breve'}</span>
+            </button>
+            <button class="btn btn-outline w-full" style="justify-content:space-between" onclick="openProFeature('personal')">
+                <span>🏋️ Treino do personal (PDF)</span><span style="font-size:10px;color:var(--text3);flex-shrink:0">🔒 em breve</span>
+            </button>
+            ${D.dietPlan ? `
+            <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
+                <div style="font-size:11px;color:var(--text3)">Plano ativo: <strong style="color:var(--text)">${(D.dietPlan.meta || {}).name || '—'}</strong> · ${fmtN((D.dietPlan.meta || {}).kcalTarget || 0)} kcal/dia</div>
+                ${planProfessionalHtml(D.dietPlan.meta)}
+                <button class="btn btn-outline btn-sm" style="margin-top:8px;color:var(--red)" onclick="clearDietPlan()">Remover plano</button>
+            </div>` : ''}
         </div>`}
 
         ${!isModuleEnabled('refeicao') ? '' : `
@@ -3196,7 +3285,7 @@ function rGoals() {
                 <button class="toggle ${D.bphEnabled ? 'on' : ''}" onclick="toggleBPH()"></button>
             </div>
             <div class="cfg-item">
-                <div><div class="cfg-label">Versão</div><div class="cfg-desc">v${APP_VERSION} · BETA</div></div>
+                <div><div class="cfg-label">Versão</div><div class="cfg-desc">v${APP_VERSION} · BETA${D.proPreview ? ' · 🔓 Pro preview ON' : ''}</div></div>
             </div>
             ${isAdmin() ? `
             <div class="cfg-item">
