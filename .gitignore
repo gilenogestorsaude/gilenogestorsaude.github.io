@@ -2,3 +2,5 @@
 _design/
 dieta-fase1.json
 *.plan.json
+dieta-fase1.*
+.DS_Store
