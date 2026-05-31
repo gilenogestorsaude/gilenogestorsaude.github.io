@@ -245,6 +245,9 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
 .added-item:last-child{border-bottom:none}
 .added-remove{width:24px;height:24px;border-radius:6px;background:var(--red-bg);color:var(--red);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
 .added-move{width:24px;height:24px;border-radius:6px;background:var(--blue-bg);color:var(--blue);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+.modal-actions{display:flex;gap:8px;margin-top:4px}
+.modal-body{margin-top:4px}
+.plan-card{border-left:3px solid var(--primary)}
 .added-total{display:flex;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:2px solid var(--primary);font-weight:700;font-size:13px}
 </style>
 </head>
@@ -490,7 +493,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.9.2';
+const APP_VERSION = '1.9.3';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -665,6 +668,8 @@ function defaultD() {
         days: {},
         // Campos de refeição configuráveis (renomear, horário previsto, só-treino, ligar/desligar, ordem)
         mealSlots: DEFAULT_MEAL_SLOTS.map(s => ({ ...s })),
+        // Plano alimentar (prescrição da nutri) — SUGESTÃO, separada da execução (D.days). null = sem plano.
+        dietPlan: null,
         // Water by date: { '2026-03-01': [ { time: '05:15', vol: 500, source: 'Dexilant', auto: true }, ... ] }
         water: {},
         // Goals — kcal/prot/water sempre setados; carbo/gord opcionais (0 = sem meta, so mostra valor)
@@ -893,6 +898,7 @@ async function load() {
                 if (typeof D.modules[m] === 'undefined') D.modules[m] = true;
             });
             if (!D.consultas) D.consultas = [];
+            if (typeof D.dietPlan === 'undefined') D.dietPlan = null;
             // v1.1.2 — adiciona carbo/gord aos foods existentes (default 0)
             if (D.foods) {
                 D.foods.forEach(f => {
@@ -1928,6 +1934,8 @@ function rMeal() {
             <button class="btn btn-outline btn-sm" style="flex-shrink:0" onclick="editMealRealTime()">${tinfo.real ? 'Editar' : '+ Hora real'}</button>
         </div>
 
+        ${planCardHtml(selectedMealSlot)}
+
         ${slot.items && slot.items.length > 0 ? `
         <div class="card mb-12">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px">
@@ -2481,6 +2489,169 @@ function saveMeal() {
     showPage('dash');
 }
 
+// ========== PLANO ALIMENTAR (dieta da nutri = SUGESTÃO) ==========
+// D.dietPlan é a prescrição, SEPARADA da execução (D.days[].slots). Estrutura:
+// { meta:{name,source,date,kcalTarget,waterTargetMl,note,importedAt},
+//   slots:[ { slotId, name, time, lines:[ {foodId,grams} | {label,options:[{foodId,grams}]} ] } ] }
+
+// Plano do slot selecionado (ou null)
+function getPlanSlot(slotId) {
+    const p = D && D.dietPlan;
+    if (!p || !Array.isArray(p.slots)) return null;
+    return p.slots.find(s => s.slotId === slotId) || null;
+}
+
+// Macros de uma linha do plano (foodId + gramas), lendo do banco D.foods
+function planLineMacros(foodId, grams) {
+    const f = D.foods.find(x => x.id === foodId);
+    if (!f) return { name: '(alimento não cadastrado)', kcal: 0, prot: 0, carbo: 0, gord: 0, missing: true };
+    const r = grams / (f.ref || 100);
+    return { name: f.name, kcal: f.kcal * r, prot: f.prot * r, carbo: (f.carbo || 0) * r, gord: (f.gord || 0) * r };
+}
+
+// Subtotal previsto de um slot do plano (substituições contam pela 1ª opção)
+function planSlotSubtotal(planSlot) {
+    let k = 0, p = 0;
+    (planSlot.lines || []).forEach(ln => {
+        const ref = ln.options ? ln.options[0] : ln;
+        if (!ref) return;
+        const m = planLineMacros(ref.foodId, ref.grams);
+        k += m.kcal; p += m.prot;
+    });
+    return { kcal: k, prot: p };
+}
+
+// Card do plano exibido dentro da refeição (Parte 1: leitura/sugestão)
+function planCardHtml(slotId) {
+    const ps = getPlanSlot(slotId);
+    if (!ps) return '';
+    let linesHtml = '';
+    (ps.lines || []).forEach(ln => {
+        if (ln.options) {
+            const opts = ln.options.map((o, idx) => {
+                const m = planLineMacros(o.foodId, o.grams);
+                const pref = idx === 0 ? '▸ ' : '<span style="color:var(--text3)">ou </span>';
+                return `<div style="font-size:12px;color:var(--text2);padding:3px 0 3px 10px">${pref}${m.name} <span style="color:var(--text3)">${fmt(o.grams)}g · ${fmtN(m.kcal)}kcal · ${fmt(m.prot)}g prot</span></div>`;
+            }).join('');
+            linesHtml += `<div style="padding:6px 0;border-bottom:1px solid var(--border)"><div style="font-size:12px;font-weight:700;color:var(--text)">${ln.label || 'Escolha'} — opções:</div>${opts}</div>`;
+        } else {
+            const m = planLineMacros(ln.foodId, ln.grams);
+            linesHtml += `<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)"><span style="font-size:13px;color:var(--text)">${m.name} <span style="color:var(--text3)">${fmt(ln.grams)}g</span></span><span style="font-size:11px;color:var(--text3);flex-shrink:0">${fmtN(m.kcal)}kcal · ${fmt(m.prot)}g</span></div>`;
+        }
+    });
+    const sub = planSlotSubtotal(ps);
+    return `
+        <div class="card mb-12 plan-card">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px">
+                <span class="card-title" style="margin:0">📋 Plano da nutri</span>
+                <span style="font-size:11px;color:var(--text3);flex-shrink:0">previsto ${fmtN(sub.kcal)} kcal · ${fmt(sub.prot)}g prot</span>
+            </div>
+            ${linesHtml}
+        </div>`;
+}
+
+// Processa o plano colado (objeto já parseado). Muta D.foods/mealSlots/dietPlan.
+// Separado do I/O pra ser testável. Retorna { ok, addedFoods, createdSlots, error }.
+function processDietImport(parsed) {
+    if (!parsed || typeof parsed !== 'object') return { ok: false, error: 'JSON inválido' };
+    if (!Array.isArray(parsed.slots) || parsed.slots.length === 0) return { ok: false, error: 'Plano sem refeições (campo "slots")' };
+
+    // 1) Alimentos novos — adiciona só os que não existem (preserva edições do usuário)
+    let addedFoods = 0;
+    (parsed.newFoods || []).forEach(f => {
+        if (!f || !f.id || !f.name) return;
+        if (D.foods.find(x => x.id === f.id)) return;
+        D.foods.push({
+            id: f.id, name: f.name, ref: f.ref || 100, unit: f.unit || 'g',
+            kcal: +f.kcal || 0, prot: +f.prot || 0, carbo: +f.carbo || 0, gord: +f.gord || 0,
+            nota: f.nota || ''
+        });
+        addedFoods++;
+    });
+
+    // 2) Resolve cada slot do plano → campo real (por id, depois por nome); cria se faltar.
+    //    Novos campos entram logo após o último resolvido, preservando a ordem do plano.
+    let createdSlots = 0;
+    const resolvedSlots = [];
+    let cursor = -1;
+    parsed.slots.forEach(ps => {
+        const wantName = normalizeStr(ps.name);
+        let idx = ps.match ? D.mealSlots.findIndex(s => s.id === ps.match) : -1;
+        if (idx < 0) idx = D.mealSlots.findIndex(s => normalizeStr(s.name) === wantName);
+        let slotId;
+        if (idx >= 0) {
+            slotId = D.mealSlots[idx].id;
+            cursor = idx;
+        } else {
+            const base = normalizeStr(ps.name).replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').substr(0, 16) || 'refeicao';
+            slotId = base + '_' + uid().substr(0, 4);
+            const novo = { id: slotId, name: ps.name, time: ps.time || '', treinoOnly: !!ps.treinoOnly, ativo: true };
+            const at = (cursor >= 0 ? cursor + 1 : D.mealSlots.length);
+            D.mealSlots.splice(at, 0, novo);
+            cursor = at;
+            createdSlots++;
+        }
+        resolvedSlots.push({ slotId: slotId, name: ps.name, time: ps.time || '', lines: ps.lines || [] });
+    });
+
+    // 3) Guarda o plano (substitui qualquer anterior)
+    const meta = Object.assign({}, parsed.meta || {});
+    meta.importedAt = today();
+    D.dietPlan = { meta: meta, slots: resolvedSlots };
+
+    return { ok: true, addedFoods: addedFoods, createdSlots: createdSlots };
+}
+
+function openDietImport() {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+    const cur = D.dietPlan
+        ? `<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Plano atual: <strong style="color:var(--text)">${(D.dietPlan.meta || {}).name || '—'}</strong>. Importar de novo substitui o plano (seus registros do dia não são afetados).</div>`
+        : '';
+    overlay.innerHTML = `
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>Importar plano alimentar</h3>
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            </div>
+            ${cur}
+            <div class="form-group">
+                <label class="form-label">Cole o plano (JSON enviado pelo assistente)</label>
+                <textarea id="diet-import-text" class="form-input" style="min-height:140px;font-family:monospace;font-size:12px" placeholder='{ "meta": {...}, "newFoods": [...], "slots": [...] }'></textarea>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-outline" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+                <button class="btn btn-primary" style="flex:1" onclick="doDietImport()">Importar</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+}
+
+function doDietImport() {
+    const txt = (($('diet-import-text') || {}).value || '').trim();
+    if (!txt) return toast('Cole o plano primeiro', true);
+    let parsed;
+    try { parsed = JSON.parse(txt); }
+    catch (e) { return toast('JSON inválido — verifique o texto colado', true); }
+    const res = processDietImport(parsed);
+    if (!res.ok) return toast(res.error || 'Falha ao importar', true);
+    save();
+    const ov = document.querySelector('.modal-overlay'); if (ov) ov.remove();
+    toast(`✓ Plano importado · ${res.addedFoods} alimento(s) novo(s), ${res.createdSlots} campo(s) novo(s)`);
+    if (cPage === 'meal') rMeal();
+    if (cPage === 'goals') rGoals();
+}
+
+function clearDietPlan() {
+    if (!confirm('Remover o plano alimentar?\n\nSeus registros de refeições NÃO são afetados — some apenas a sugestão. Campos criados pelo plano (ex.: Sobremesa) permanecem e podem ser removidos em "Campos de refeição".')) return;
+    D.dietPlan = null;
+    save();
+    toast('Plano removido');
+    if (cPage === 'goals') rGoals();
+    if (cPage === 'meal') rMeal();
+}
+
 // ========== HORÁRIOS (previsto + realizado) ==========
 // Hora atual no formato HH:MM
 function nowHHMM() {
@@ -2904,6 +3075,20 @@ function rGoals() {
                 </div>`;
             }).join('')}
         </div>
+
+        ${!isModuleEnabled('refeicao') ? '' : `
+        <div class="card mb-12 plan-card">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px">
+                <span class="card-title" style="margin:0">📋 Plano alimentar</span>
+                <button class="btn btn-primary btn-sm" onclick="openDietImport()">Importar</button>
+            </div>
+            <div style="font-size:11px;color:var(--text3);line-height:1.5">
+                ${D.dietPlan
+                    ? `Plano ativo: <strong style="color:var(--text)">${(D.dietPlan.meta || {}).name || '—'}</strong> · previsto ${fmtN((D.dietPlan.meta || {}).kcalTarget || 0)} kcal/dia. Aparece como sugestão em cada refeição.`
+                    : 'Nenhum plano importado. Importe a prescrição da nutricionista pra ver a sugestão dentro de cada refeição.'}
+            </div>
+            ${D.dietPlan ? `<button class="btn btn-outline btn-sm" style="margin-top:10px;color:var(--red)" onclick="clearDietPlan()">Remover plano</button>` : ''}
+        </div>`}
 
         ${!isModuleEnabled('refeicao') ? '' : `
         <div class="card mb-12">

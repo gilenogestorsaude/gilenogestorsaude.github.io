@@ -1,12 +1,34 @@
 # Estado do Projeto — Gestão Saúde
 
 **Última atualização:** 2026-05-31
-**Versão atual em produção:** v1.9.1 (v1.9.2 pronta — deploy pendente)
+**Versão atual em produção:** v1.9.2 (v1.9.3 pronta — deploy pendente)
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
 
 > Este documento é o **handoff vivo** do projeto. Qualquer nova sessão de trabalho começa lendo este arquivo pra entender estado atual, decisões já tomadas, e próximos passos.
+
+---
+
+## Resumo da sessão 2026-05-31 — v1.9.3 (PLANO ALIMENTAR — Parte 1: sugestão)
+
+**Import da dieta da nutri como SUGESTÃO** (objetivo do Gileno: "dieta como sugestão + execução em paralelo" = planejado vs. realizado). Esta é a **Parte 1 de 2**.
+
+**Arquitetura — 3 camadas:** (1) Plano `D.dietPlan` = prescrição, NOVA estrutura separada; (2) Execução `D.days[dt].slots` = o que comeu (já existia, intacta); (3) Comparação = sobrepõe as duas. Parte 1 entrega (1) + leitura; **Parte 2 (PENDENTE)** = "✓ comi" 1-toque, seletor de substituição, "comi tudo", aderência Plano vs. Comido.
+
+**Estrutura `D.dietPlan`:** `{ meta:{name,source,date,kcalTarget,waterTargetMl,note,importedAt}, slots:[{slotId,name,time,lines:[ {foodId,grams} | {label,options:[{foodId,grams}]} ]}] }`. As `options` modelam as substituições "ou" do PDF (ex.: proteína do almoço = frango/bife/camarão/boi/atum). `slotId` aponta pra campo real de `D.mealSlots`.
+
+**Funções novas** (após `saveMeal`): `getPlanSlot`, `planLineMacros`, `planSlotSubtotal`, `planCardHtml` (card 📋 read-only no topo de cada refeição), `processDietImport` (lógica pura/testável — muta foods/slots/dietPlan), `openDietImport`/`doDietImport` (modal cola-JSON), `clearDietPlan`. CSS: `.plan-card` (borda verde esq.), `.modal-actions`, `.modal-body`.
+
+**Import (cola-JSON, decisão de privacidade do Gileno):** repo é público → plano NÃO vai no código. Botão "Importar" em Metas (card 📋 Plano alimentar) → cola o JSON → vai pro Firestore privado. `processDietImport`: adiciona só foods novos (não duplica por id), casa slots por `match`(id)→nome, cria os que faltam logo após o último resolvido (Sobremesa entra após Almoço), guarda o plano. **Idempotente** (reimport = 0 dups). NÃO mexe em metas (água/kcal) — decisão do Gileno: metas são editáveis pelo usuário.
+
+**Fonte de dados:** `dieta-fase1.json` (gerado por script, **gitignored** — tem dado pessoal). Plano da Débora Teixeira (CRN 29204), FASE 1: 7 refeições, 21 alimentos, total **1.756 kcal** (PDF: 1.764 — dif. arredondamento). PDF só tinha kcal → **macros enriquecidos via TACO** (P/C/G). ⚠️ Proteína do plano ~150g < meta do app (180/160) — registrado, não alterado.
+
+**Verificação:** JavaScriptCore — **31 checks** (sintaxe do arquivo + `processDietImport` REAL × `dieta-fase1.json` real: não-duplicação, criação/ordem de Sobremesa, substituições, subtotais, total 1.756, idempotência). Todos passaram.
+
+**Deploy:** `APP_VERSION`+`sw.js` → **1.9.3**.
+
+**PRÓXIMO (Parte 2):** "✓ comi" copia linha do plano → execução (com seletor de substituição); botão "comi tudo conforme o plano"; indicador de aderência (Plano vs. Comido por refeição e no dia). Depois: treino (mesmo padrão plano/execução).
 
 ---
 
