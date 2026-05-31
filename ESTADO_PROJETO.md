@@ -1,12 +1,27 @@
 # Estado do Projeto — Gestão Saúde
 
-**Última atualização:** 2026-05-30
-**Versão atual em produção:** v1.9.0
+**Última atualização:** 2026-05-31
+**Versão atual em produção:** v1.9.0 (v1.9.1 pronta — deploy pendente)
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
 
 > Este documento é o **handoff vivo** do projeto. Qualquer nova sessão de trabalho começa lendo este arquivo pra entender estado atual, decisões já tomadas, e próximos passos.
+
+---
+
+## Resumo da sessão 2026-05-31 — v1.9.1
+
+**Ordenação alfabética dos alimentos** (feedback do Gileno). Antes, alimento novo (criado no "+ Novo" ou trazido da TACO) ia pro **fim** da lista. Agora:
+
+1. **Catálogo "Adicionar Alimento"** — renderizado em ordem alfabética (cópia ordenada via `D.foods.slice().sort(byNameAsc)`; a ordem salva em `D.foods` não muda). Vale também para a busca (`filterFoods`).
+2. **Itens da refeição montada** — cada slot (Café da manhã, Almoço…) exibe os itens em ordem alfabética. `slot.items` é ordenado **in-place** no render de `rMeal` (o índice continua alinhado com `removeMealItem`) **e** ao adicionar (`addFoodToMeal`, antes do `save()`), então o histórico salvo já fica ordenado.
+
+Comparador único **`byNameAsc`** (definido perto de `fmt`/`fmtN`): `localeCompare(b, 'pt-BR', { sensitivity:'base' })` — ignora acento e maiúscula. Sem migração de dados: refeições antigas se reordenam ao serem abertas.
+
+**Verificação:** JavaScriptCore (sandbox sem Node/preview) — parse de sintaxe do arquivo inteiro + **15 checks** (lógica + funções **reais** `filterFoods`/`foodItemHtml`/`getDayData` em ambiente stub, incluindo alinhamento de índice do `removeMealItem`). Todos passaram.
+
+**Deploy:** pendente — `git push` no repo `gilenogestorsaude.github.io`. `APP_VERSION` e `sw.js` em **1.9.1** → cache busting + reload automático no aparelho.
 
 ---
 

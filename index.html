@@ -489,7 +489,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.9.0';
+const APP_VERSION = '1.9.1';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -535,6 +535,8 @@ const uid = () => Math.random().toString(36).substr(2, 9) + Date.now().toString(
 const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); };
 const fmt = v => (v == null || Number.isNaN(v)) ? '0' : Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 1 });
 const fmtN = v => (v == null || Number.isNaN(v)) ? '0' : Math.round(Number(v)).toLocaleString('pt-BR');
+// Comparador alfabético pt-BR (ignora acentos e maiúsculas) — usado nas listas de alimentos e itens de refeição
+const byNameAsc = (a, b) => (a.name || '').localeCompare(b.name || '', 'pt-BR', { sensitivity: 'base' });
 
 // ========== DATA ATIVA (navegação de dias anteriores) ==========
 // curDate() é a data que as telas de registro (Início, Refeição, Água, Metas)
@@ -1878,6 +1880,7 @@ function rMeal() {
     let totalKcal = 0, totalProt = 0;
     if (slot.items && slot.items.length > 0) {
         let totalCarbo = 0, totalGord = 0;
+        slot.items.sort(byNameAsc); // ordem alfabética; in-place mantém o índice alinhado com removeMealItem
         slot.items.forEach((item, i) => {
             totalKcal  += item.kcal  || 0;
             totalProt  += item.prot  || 0;
@@ -1903,9 +1906,9 @@ function rMeal() {
         window._slotGord  = totalGord;
     }
 
-    // Food list
+    // Food list — ordem alfabética (cópia, não altera a ordem salva em D.foods)
     let foodsHtml = '';
-    D.foods.forEach(f => {
+    D.foods.slice().sort(byNameAsc).forEach(f => {
         foodsHtml += foodItemHtml(f);
     });
 
@@ -1976,7 +1979,7 @@ function foodItemHtml(f) {
 function filterFoods() {
     const q = $('food-search').value.toLowerCase();
     let html = '';
-    D.foods.filter(f => f.name.toLowerCase().includes(q)).forEach(f => {
+    D.foods.filter(f => f.name.toLowerCase().includes(q)).sort(byNameAsc).forEach(f => {
         html += foodItemHtml(f);
     });
     $('food-list').innerHTML = html;
@@ -2057,6 +2060,7 @@ function addFoodToMeal(foodId) {
         carbo: Math.round((food.carbo || 0) * ratio * 10) / 10,
         gord:  Math.round((food.gord  || 0) * ratio * 10) / 10
     });
+    day.slots[selectedMealSlot].items.sort(byNameAsc); // salva a refeição já em ordem alfabética
 
     save();
     document.querySelector('.modal-overlay').remove();
