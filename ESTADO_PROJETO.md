@@ -1,12 +1,26 @@
 # Estado do Projeto — Gestão Saúde
 
 **Última atualização:** 2026-05-31
-**Versão atual em produção:** v1.9.5
+**Versão atual em produção:** v1.9.7
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
 
 > Este documento é o **handoff vivo** do projeto. Qualquer nova sessão de trabalho começa lendo este arquivo pra entender estado atual, decisões já tomadas, e próximos passos.
+
+---
+
+## Resumo da sessão 2026-05-31 — v1.9.6 e v1.9.7 (refinos do plano alimentar, em uso real)
+
+Ajustes que surgiram quando o Gileno foi importar/testar o plano da Débora de verdade.
+
+**v1.9.6 — gesto do Modo Pro mais fácil no celular.** O alvo de 9px no "v1.9.x" do header era difícil de acertar 5× no telefone. Agora o gesto também funciona na linha **"Versão" em Configurações** (alvo grande, `onclick="proTap()"`); janela entre toques subiu de 1,5s → **2,5s**; e a partir do 2º toque aparece feedback *"faltam N toque(s)…"*. Mesma função `proTap`, só mais tolerante.
+
+**v1.9.7 — ajustar a quantidade ao registrar item do plano** (feedback central do Gileno: "a quantidade indicada nem sempre é a consumida"). Antes, o ✓ de cada linha da sugestão registrava **direto** a grama do plano. Agora o ✓ chama **`openAddFood(foodId, prefillGrams)`** — o MESMO modal de "Adicionar Alimento", com a grama do plano **pré-preenchida e editável** + recálculo de macros ao vivo. `openAddFood` ganhou 2º param opcional `prefillGrams` (sem ele, cai na `food.ref` como antes — retrocompatível). A antiga `logPlanLine` (registro sem ajuste) foi **removida**; o botão **"✓ Comi tudo"** segue para registro em lote (1ª opção das substituições).
+
+**Processo (importante p/ próximas sessões):** adotado **gate automático verify-then-commit** via JavaScriptCore — um script bash roda a suíte + checa sintaxe e SÓ commita/pusha se FAIL=0. O gate **barrou commits quebrados 2×** nesta leva (Edit com âncora errada deixando função ausente; teste cosmético desatualizado) — provou o valor. Sempre rodar o gate antes de subir.
+
+**Como o Gileno usa o import (estado atual = concierge):** o app NÃO lê PDF ainda (é a feature Pro "em construção"). Fluxo real hoje: Claude gera o JSON do PDF → Gileno **liga o Modo Pro (5 toques em Versão)** → Metas → "📋 Importar plano" → 🥗 nutri → cola o JSON. O JSON do plano FASE 1 vive em `dieta-fase1.json`/`.min.json` (**gitignored**, dado pessoal); cópia pronta pra colar em `~/Downloads/plano-dieta-fase1-COLAR.txt`. ⚠️ Campo do whey/creatina no plano = **"Dejejum"** (sem s) pra casar com o campo real do Gileno.
 
 ---
 
