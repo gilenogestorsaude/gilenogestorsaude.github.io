@@ -244,6 +244,7 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
 .added-item{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)}
 .added-item:last-child{border-bottom:none}
 .added-remove{width:24px;height:24px;border-radius:6px;background:var(--red-bg);color:var(--red);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+.added-move{width:24px;height:24px;border-radius:6px;background:var(--blue-bg);color:var(--blue);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
 .added-total{display:flex;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:2px solid var(--primary);font-weight:700;font-size:13px}
 </style>
 </head>
@@ -489,7 +490,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.9.1';
+const APP_VERSION = '1.9.2';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1888,7 +1889,7 @@ function rMeal() {
             totalGord  += item.gord  || 0;
             itemsHtml += `
                 <div class="added-item">
-                    <button class="added-remove" onclick="removeMealItem(${i})">×</button>
+                    <button class="added-remove" onclick="removeMealItem(${i})" title="Remover">×</button>
                     <div style="flex:1;min-width:0">
                         <div style="font-size:13px;font-weight:600;color:var(--text)">${item.name}</div>
                         <div style="font-size:11px;color:var(--text3)">${fmt(item.grams)}g</div>
@@ -1899,6 +1900,7 @@ function rMeal() {
                         <div style="color:#3b82f6">${fmt(item.carbo||0)}g carb</div>
                         <div style="color:#a855f7">${fmt(item.gord||0)}g gord</div>
                     </div>
+                    <button class="added-move" onclick="openMoveItem(${i})" title="Mover para outra refeição">⇄</button>
                 </div>`;
         });
         // expoe os totais de carbo/gord pra usar no rodape do card
@@ -1928,7 +1930,10 @@ function rMeal() {
 
         ${slot.items && slot.items.length > 0 ? `
         <div class="card mb-12">
-            <div class="card-title">Itens — ${curSlotCfg.name}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px">
+                <span class="card-title" style="margin:0">Itens — ${curSlotCfg.name}</span>
+                <button class="btn btn-outline btn-sm" style="flex-shrink:0" onclick="openMoveMeal()" title="Mover todos para outra refeição">⇄ Mover</button>
+            </div>
             ${itemsHtml}
             <div class="added-total" style="flex-direction:column;align-items:stretch;gap:4px">
                 <div style="display:flex;justify-content:space-between"><span>Total kcal</span><span>${fmtN(totalKcal)} kcal</span></div>
@@ -2372,6 +2377,102 @@ function removeMealItem(index) {
         save();
         rMeal();
     }
+}
+
+// ===== MOVER ITENS ENTRE REFEIÇÕES =====
+// Garante que o slot do dia exista (cria com snapshot da config). Usado ao mover.
+function ensureDaySlot(day, slotId) {
+    if (!day.slots[slotId]) {
+        const cfg = getMealSlotById(slotId);
+        day.slots[slotId] = { items: [], name: cfg ? cfg.name : slotId, time: cfg ? cfg.time : '', realTime: '' };
+    }
+    return day.slots[slotId];
+}
+
+// Nome amigável de um slot (config viva ou snapshot do dia)
+function slotDisplayName(slotId) {
+    const cfg = getMealSlotById(slotId);
+    if (cfg) return cfg.name;
+    const s = getDayData(curDate()).slots[slotId];
+    return (s && s.name) ? s.name : slotId;
+}
+
+// Modal genérico: escolhe a refeição de destino. onclickExpr usa %ID% como placeholder do slot.
+function openMealDestPicker(titulo, onclickExpr) {
+    const dt = curDate();
+    const destinos = getDaySlots(dt).filter(s => s.id !== selectedMealSlot);
+    if (destinos.length === 0) return toast('Não há outra refeição neste dia', true);
+    const botoes = destinos.map(s =>
+        `<button class="btn btn-outline w-full" style="justify-content:flex-start;margin-bottom:8px" onclick="${onclickExpr.replace('%ID%', s.id)}">${s.name}${s.time ? ` · ${s.time}` : ''}</button>`
+    ).join('');
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = `
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>${titulo}</h3>
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            </div>
+            <div class="modal-body">
+                ${botoes}
+                <div class="modal-actions">
+                    <button class="btn btn-outline" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+                </div>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+}
+
+// Mover UM item da refeição atual para outra
+function openMoveItem(index) {
+    const slot = getDayData(curDate()).slots[selectedMealSlot];
+    if (!slot || !slot.items || !slot.items[index]) return;
+    openMealDestPicker(`Mover "${slot.items[index].name}" para:`, `moveMealItem(${index}, '%ID%')`);
+}
+
+function moveMealItem(index, toSlotId) {
+    const dt = curDate();
+    const day = getDayData(dt);
+    const fromSlot = day.slots[selectedMealSlot];
+    if (!fromSlot || !fromSlot.items || !fromSlot.items[index]) return;
+    const item = fromSlot.items.splice(index, 1)[0];
+    ensureDaySlot(day, toSlotId);
+    day.slots[toSlotId].items.push(item);
+    day.slots[toSlotId].items.sort(byNameAsc);
+    const ov = document.querySelector('.modal-overlay'); if (ov) ov.remove();
+    save();
+    toast(`${item.name} → ${slotDisplayName(toSlotId)}`);
+    rMeal();
+}
+
+// Mover TODOS os itens da refeição atual para outra
+function openMoveMeal() {
+    const slot = getDayData(curDate()).slots[selectedMealSlot];
+    if (!slot || !slot.items || slot.items.length === 0) return toast('Nada para mover', true);
+    const n = slot.items.length;
+    openMealDestPicker(`Mover ${n} ${n > 1 ? 'itens' : 'item'} de "${slotDisplayName(selectedMealSlot)}" para:`, `moveMealAll('%ID%')`);
+}
+
+function moveMealAll(toSlotId) {
+    const dt = curDate();
+    const day = getDayData(dt);
+    const fromId = selectedMealSlot;
+    const fromSlot = day.slots[fromId];
+    if (!fromSlot || !fromSlot.items || fromSlot.items.length === 0) return;
+    const existedBefore = !!day.slots[toSlotId];
+    const fromRealTime = fromSlot.realTime || '';
+    ensureDaySlot(day, toSlotId);
+    // destino recém-criado herda o horário real da origem (preserva quando você comeu)
+    if (!existedBefore && !day.slots[toSlotId].realTime && fromRealTime) day.slots[toSlotId].realTime = fromRealTime;
+    day.slots[toSlotId].items = day.slots[toSlotId].items.concat(fromSlot.items);
+    day.slots[toSlotId].items.sort(byNameAsc);
+    delete day.slots[fromId];     // origem ficou vazia → remove o slot
+    selectedMealSlot = toSlotId;  // navega para o destino, mostrando o resultado
+    const ov = document.querySelector('.modal-overlay'); if (ov) ov.remove();
+    save();
+    toast(`Movido para ${slotDisplayName(toSlotId)} ✓`);
+    rMeal();
 }
 
 function saveMeal() {

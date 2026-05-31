@@ -1,12 +1,31 @@
 # Estado do Projeto — Gestão Saúde
 
 **Última atualização:** 2026-05-31
-**Versão atual em produção:** v1.9.0 (v1.9.1 pronta — deploy pendente)
+**Versão atual em produção:** v1.9.1 (v1.9.2 pronta — deploy pendente)
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
 
 > Este documento é o **handoff vivo** do projeto. Qualquer nova sessão de trabalho começa lendo este arquivo pra entender estado atual, decisões já tomadas, e próximos passos.
+
+---
+
+## Resumo da sessão 2026-05-31 — v1.9.2
+
+**Mover alimento/refeição entre os campos** (feedback do Gileno: registrou no Almoço, era Café da manhã). Antes só dava pra apagar e recadastrar. Agora há **duas** formas:
+
+1. **Mover um item** — cada alimento na lista "Itens — X" ganhou um botão ⇄ azul (à direita, longe do × vermelho de remover). Abre um seletor com as outras refeições do dia; o item vai pra escolhida.
+2. **Mover a refeição inteira** — botão "⇄ Mover" no cabeçalho do card "Itens — X" move **todos** os itens daquele campo de uma vez.
+
+**Regras:**
+- Destinos = `getDaySlots(dt)` menos o slot atual (os mesmos chips que aparecem no topo).
+- Ao mover, o destino é re-ordenado alfabético (mantém o ajuste da v1.9.1). Se o destino já tinha itens, faz **merge**.
+- **Item individual:** o slot de origem continua existindo (mesmo vazio). **Refeição inteira:** o slot de origem é removido e a navegação vai pro destino; se o destino for novo, herda o **horário real** da origem (preserva quando você comeu).
+- Helpers novos: `ensureDaySlot`, `slotDisplayName`, `openMealDestPicker` (modal genérico de destino), `openMoveItem`/`moveMealItem`, `openMoveMeal`/`moveMealAll`. CSS: `.added-move`.
+
+**Verificação:** JavaScriptCore (sandbox sem Node/preview) — parse de sintaxe do arquivo inteiro + **15 checks** rodando o **texto real** das funções de mover + o `getDaySlots` real extraídos do arquivo (destinos sem o slot atual, mover tudo, mover item, merge, preservação de horário, nada perdido, índice inválido sem quebrar). Todos passaram.
+
+**Deploy:** pendente — `APP_VERSION` e `sw.js` em **1.9.2**.
 
 ---
 
