@@ -494,7 +494,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.9.5';
+const APP_VERSION = '1.9.6';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -502,21 +502,24 @@ let D = null; // data object
 let cPage = 'login';
 let editingMealIndex = -1;
 let selectedMealSlot = 'almoco';
-// Modo Pro (preview): gesto secreto = 5 toques na versão. Destrava o import (preview) só pro tester.
+// Modo Pro (preview): gesto = 5 toques na versão (header ou Configurações). Destrava o import só pro tester.
 // Trava cosmética de propósito — o repo é público; o cadeado REAL virá no backend quando a versão Pro existir.
+// Janela de 2.5s entre toques + contagem regressiva visível (o alvo de 9px no header era difícil no celular).
 let _proTapCount = 0, _proTapTimer = null;
 function proTap() {
+    if (!D) return;
     _proTapCount++;
     if (_proTapTimer) clearTimeout(_proTapTimer);
-    _proTapTimer = setTimeout(() => { _proTapCount = 0; }, 1500);
+    _proTapTimer = setTimeout(() => { _proTapCount = 0; }, 2500);
     if (_proTapCount >= 5) {
         _proTapCount = 0;
-        if (!D) return;
         D.proPreview = !D.proPreview;
         save();
-        toast(D.proPreview ? '🔓 Modo Pro (preview) ativado' : 'Modo Pro (preview) desativado');
+        toast(D.proPreview ? '🔓 Modo Pro (preview) ATIVADO' : 'Modo Pro (preview) desativado');
         if (cPage === 'dash') rDash();
         if (cPage === 'goals') rGoals();
+    } else if (_proTapCount >= 2) {
+        toast('Modo Pro: faltam ' + (5 - _proTapCount) + ' toque(s)…');
     }
 }
 let gDate = null; // dia em visualização/edição (null = hoje real). Permite ver/corrigir dias anteriores.
@@ -3284,7 +3287,7 @@ function rGoals() {
                 <div><div class="cfg-label">Estratégia BPH (bloqueio noturno)</div><div class="cfg-desc">Bloqueia hidratação após ${D.bphCutoff}h pra evitar urinação noturna. Desligue se não tem HPB.</div></div>
                 <button class="toggle ${D.bphEnabled ? 'on' : ''}" onclick="toggleBPH()"></button>
             </div>
-            <div class="cfg-item">
+            <div class="cfg-item" onclick="proTap()" style="cursor:pointer" title="Toque 5x para o modo preview">
                 <div><div class="cfg-label">Versão</div><div class="cfg-desc">v${APP_VERSION} · BETA${D.proPreview ? ' · 🔓 Pro preview ON' : ''}</div></div>
             </div>
             ${isAdmin() ? `
