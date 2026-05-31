@@ -1,12 +1,31 @@
 # Estado do Projeto — Gestão Saúde
 
 **Última atualização:** 2026-05-31
-**Versão atual em produção:** v1.9.2 (v1.9.3 pronta — deploy pendente)
+**Versão atual em produção:** v1.9.3 (v1.9.4 pronta — deploy pendente)
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
 
 > Este documento é o **handoff vivo** do projeto. Qualquer nova sessão de trabalho começa lendo este arquivo pra entender estado atual, decisões já tomadas, e próximos passos.
+
+---
+
+## Resumo da sessão 2026-05-31 — v1.9.4 (PLANO ALIMENTAR — Parte 2: execução em paralelo)
+
+Fecha o objetivo "dieta como sugestão + execução em paralelo". A Parte 1 (v1.9.3) trouxe o plano como leitura; esta traz o **registro de 1 toque** e a **aderência** (planejado × realizado), sem nunca misturar as duas camadas.
+
+**No card "📋 Plano da nutri" de cada refeição:**
+- **✓ por linha** — registra aquele item do plano na execução (`logPlanLine`). Numa substituição ("ou"), cada opção tem seu ✓ → você escolhe qual comeu (frango? camarão?).
+- **✓ Comi tudo** — registra a refeição inteira conforme o plano (`logWholePlanMeal`); substituições usam a **1ª opção**.
+- **Aderência** — "Previsto X kcal/prot · Comido Y kcal/prot (Z% das kcal)", comparando o plano com o que foi de fato registrado no dia (`slotRealTotals`).
+
+**Núcleo reaproveitável:** `addMealItemToSlot(slotId,foodId,grams)` — adiciona à execução com escala de macros, hora real auto no 1º item do dia, e re-ordena alfabético (igual `addFoodToMeal`, mas sem depender de modal/`selectedMealSlot`). É a base do registro de 1 toque. A execução continua sendo `D.days[dt].slots` — registro via plano é idêntico a registrar na mão; o plano (`D.dietPlan`) nunca é alterado pelo ato de comer.
+
+**Verificação:** JavaScriptCore — **28 checks** com funções reais × `dieta-fase1.json`: comi-tudo cria 4 itens no almoço (subst.=frango 1ª opção, não as outras), escolha de substituição (camarão 193g→174kcal/36,7g), aderência comido=previsto, hora real auto, ordem alfabética, bordas (foodId inválido / grama 0 → false). Todos passaram.
+
+**Deploy:** `APP_VERSION`+`sw.js` → **1.9.4**.
+
+**PRÓXIMO:** importar o plano real (passar o JSON da `dieta-fase1.json` pro Gileno colar) e validar no aparelho. Depois: treino (mesmo padrão plano/execução). Possível futuro: aderência do **dia inteiro** no dashboard (hoje é por refeição).
 
 ---
 

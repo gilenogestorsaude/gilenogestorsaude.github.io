@@ -493,7 +493,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.9.3';
+const APP_VERSION = '1.9.4';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -2521,30 +2521,98 @@ function planSlotSubtotal(planSlot) {
     return { kcal: k, prot: p };
 }
 
-// Card do plano exibido dentro da refeição (Parte 1: leitura/sugestão)
+// Adiciona um item à execução de um slot, a partir de foodId+gramas (sem I/O de modal).
+// Reaproveitado por logPlanLine/logWholePlanMeal. Retorna true se adicionou.
+function addMealItemToSlot(slotId, foodId, grams) {
+    const food = D.foods.find(f => f.id === foodId);
+    if (!food || !(grams > 0)) return false;
+    const ratio = grams / (food.ref || 100);
+    const day = getDayData(curDate());
+    ensureDaySlot(day, slotId);
+    // hora real auto no 1º item do dia de hoje (igual addFoodToMeal)
+    if (curDate() === today() && !day.slots[slotId].realTime && day.slots[slotId].items.length === 0) {
+        day.slots[slotId].realTime = nowHHMM();
+    }
+    day.slots[slotId].items.push({
+        id: uid(), foodId: food.id, name: food.name, grams: grams,
+        kcal:  Math.round(food.kcal  * ratio * 10) / 10,
+        prot:  Math.round(food.prot  * ratio * 10) / 10,
+        carbo: Math.round((food.carbo || 0) * ratio * 10) / 10,
+        gord:  Math.round((food.gord  || 0) * ratio * 10) / 10
+    });
+    day.slots[slotId].items.sort(byNameAsc);
+    return true;
+}
+
+// Totais REAIS já registrados num slot do dia atual (execução)
+function slotRealTotals(slotId) {
+    const slot = getDayData(curDate()).slots[slotId];
+    let k = 0, p = 0;
+    if (slot && slot.items) slot.items.forEach(it => { k += it.kcal || 0; p += it.prot || 0; });
+    return { kcal: k, prot: p };
+}
+
+// "✓ comi" de uma linha/opção do plano → registra na execução
+function logPlanLine(slotId, foodId, grams) {
+    if (!addMealItemToSlot(slotId, foodId, grams)) return toast('Não foi possível registrar', true);
+    save();
+    const f = D.foods.find(x => x.id === foodId);
+    toast((f ? f.name : 'Item') + ' registrado ✓');
+    if (cPage === 'meal') rMeal();
+}
+
+// "✓ Comi tudo" → registra a refeição inteira conforme o plano (substituição usa a 1ª opção)
+function logWholePlanMeal(slotId) {
+    const ps = getPlanSlot(slotId);
+    if (!ps) return;
+    let n = 0;
+    (ps.lines || []).forEach(ln => {
+        const ref = ln.options ? ln.options[0] : ln;
+        if (ref && addMealItemToSlot(slotId, ref.foodId, ref.grams)) n++;
+    });
+    if (n === 0) return toast('Nada para registrar', true);
+    save();
+    toast(`✓ ${n} ${n > 1 ? 'itens registrados' : 'item registrado'} conforme o plano`);
+    if (cPage === 'meal') rMeal();
+}
+
+// Card do plano dentro da refeição: sugestão (read) + registro de 1 toque + aderência (Plano × Comido)
 function planCardHtml(slotId) {
     const ps = getPlanSlot(slotId);
     if (!ps) return '';
+    const btn = (foodId, grams) => `<button onclick="logPlanLine('${slotId}','${foodId}',${grams})" title="Registrar que comi isto" style="flex-shrink:0;width:26px;height:26px;border-radius:7px;background:var(--green-bg);color:var(--green);border:none;cursor:pointer;font-size:14px;font-weight:700">✓</button>`;
     let linesHtml = '';
     (ps.lines || []).forEach(ln => {
         if (ln.options) {
             const opts = ln.options.map((o, idx) => {
                 const m = planLineMacros(o.foodId, o.grams);
                 const pref = idx === 0 ? '▸ ' : '<span style="color:var(--text3)">ou </span>';
-                return `<div style="font-size:12px;color:var(--text2);padding:3px 0 3px 10px">${pref}${m.name} <span style="color:var(--text3)">${fmt(o.grams)}g · ${fmtN(m.kcal)}kcal · ${fmt(m.prot)}g prot</span></div>`;
+                return `<div style="display:flex;align-items:center;gap:8px;padding:3px 0 3px 10px">
+                    <span style="flex:1;min-width:0;font-size:12px;color:var(--text2)">${pref}${m.name} <span style="color:var(--text3)">${fmt(o.grams)}g · ${fmtN(m.kcal)}kcal · ${fmt(m.prot)}g prot</span></span>
+                    ${btn(o.foodId, o.grams)}
+                </div>`;
             }).join('');
-            linesHtml += `<div style="padding:6px 0;border-bottom:1px solid var(--border)"><div style="font-size:12px;font-weight:700;color:var(--text)">${ln.label || 'Escolha'} — opções:</div>${opts}</div>`;
+            linesHtml += `<div style="padding:6px 0;border-bottom:1px solid var(--border)"><div style="font-size:12px;font-weight:700;color:var(--text)">${ln.label || 'Escolha'} — escolha uma:</div>${opts}</div>`;
         } else {
             const m = planLineMacros(ln.foodId, ln.grams);
-            linesHtml += `<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)"><span style="font-size:13px;color:var(--text)">${m.name} <span style="color:var(--text3)">${fmt(ln.grams)}g</span></span><span style="font-size:11px;color:var(--text3);flex-shrink:0">${fmtN(m.kcal)}kcal · ${fmt(m.prot)}g</span></div>`;
+            linesHtml += `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+                <span style="flex:1;min-width:0;font-size:13px;color:var(--text)">${m.name} <span style="color:var(--text3)">${fmt(ln.grams)}g · ${fmtN(m.kcal)}kcal · ${fmt(m.prot)}g</span></span>
+                ${btn(ln.foodId, ln.grams)}
+            </div>`;
         }
     });
     const sub = planSlotSubtotal(ps);
+    const real = slotRealTotals(slotId);
+    const pctK = sub.kcal > 0 ? Math.round(real.kcal / sub.kcal * 100) : 0;
     return `
         <div class="card mb-12 plan-card">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px">
                 <span class="card-title" style="margin:0">📋 Plano da nutri</span>
-                <span style="font-size:11px;color:var(--text3);flex-shrink:0">previsto ${fmtN(sub.kcal)} kcal · ${fmt(sub.prot)}g prot</span>
+                <button class="btn btn-primary btn-sm" style="flex-shrink:0" onclick="logWholePlanMeal('${slotId}')" title="Registrar a refeição inteira conforme o plano (substituições usam a 1ª opção)">✓ Comi tudo</button>
+            </div>
+            <div style="font-size:11px;margin-bottom:10px;color:var(--text3);line-height:1.5">
+                Previsto <strong style="color:var(--text)">${fmtN(sub.kcal)} kcal · ${fmt(sub.prot)}g prot</strong><br>
+                Comido <strong style="color:${real.kcal > 0 ? 'var(--primary)' : 'var(--text3)'}">${fmtN(real.kcal)} kcal · ${fmt(real.prot)}g prot</strong>${sub.kcal > 0 ? ` <span style="color:var(--text3)">(${pctK}% das kcal)</span>` : ''}
             </div>
             ${linesHtml}
         </div>`;
