@@ -494,7 +494,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.9.6';
+const APP_VERSION = '1.9.7';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -2027,12 +2027,15 @@ function filterFoods() {
     $('food-list').innerHTML = html;
 }
 
-function openAddFood(foodId) {
+function openAddFood(foodId, prefillGrams) {
     const food = D.foods.find(f => f.id === foodId);
     if (!food) return;
 
     const carbo = food.carbo || 0;
     const gord  = food.gord  || 0;
+    // Quantidade inicial: a do plano (✓ da sugestão da nutri) se vier; senão a referência do alimento. Sempre editável.
+    const initGrams = (prefillGrams != null && prefillGrams > 0) ? prefillGrams : food.ref;
+    const r0 = initGrams / food.ref;
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
@@ -2048,13 +2051,13 @@ function openAddFood(foodId) {
             </p>
             <div class="form-group">
                 <label class="form-label">Quantidade (${food.unit || 'g'})</label>
-                <input type="number" id="food-grams" class="form-input" value="${food.ref}" inputmode="decimal" autofocus>
+                <input type="number" id="food-grams" class="form-input" value="${initGrams}" inputmode="decimal" autofocus>
             </div>
             <div id="food-calc" style="background:var(--bg);border-radius:8px;padding:10px 12px;margin-bottom:16px;font-size:13px;color:var(--text)">
-                <div style="display:flex;justify-content:space-between;margin-bottom:2px"><span style="color:var(--text2)">Calorias</span><span style="font-weight:600" id="calc-kcal">${fmt(food.kcal)}</span></div>
-                <div style="display:flex;justify-content:space-between;margin-bottom:2px"><span style="color:var(--text2)">Proteína</span><span style="font-weight:600;color:var(--primary)" id="calc-prot">${fmt(food.prot)}g</span></div>
-                <div style="display:flex;justify-content:space-between;margin-bottom:2px"><span style="color:var(--text2)">Carboidrato</span><span style="font-weight:600;color:#3b82f6" id="calc-carbo">${fmt(carbo)}g</span></div>
-                <div style="display:flex;justify-content:space-between"><span style="color:var(--text2)">Gordura</span><span style="font-weight:600;color:#a855f7" id="calc-gord">${fmt(gord)}g</span></div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:2px"><span style="color:var(--text2)">Calorias</span><span style="font-weight:600" id="calc-kcal">${fmt(food.kcal * r0)}</span></div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:2px"><span style="color:var(--text2)">Proteína</span><span style="font-weight:600;color:var(--primary)" id="calc-prot">${fmt(food.prot * r0)}g</span></div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:2px"><span style="color:var(--text2)">Carboidrato</span><span style="font-weight:600;color:#3b82f6" id="calc-carbo">${fmt(carbo * r0)}g</span></div>
+                <div style="display:flex;justify-content:space-between"><span style="color:var(--text2)">Gordura</span><span style="font-weight:600;color:#a855f7" id="calc-gord">${fmt(gord * r0)}g</span></div>
             </div>
             <button class="btn btn-primary w-full" onclick="addFoodToMeal('${food.id}')">Adicionar</button>
         </div>
@@ -2551,7 +2554,7 @@ function planSlotSubtotal(planSlot) {
 }
 
 // Adiciona um item à execução de um slot, a partir de foodId+gramas (sem I/O de modal).
-// Reaproveitado por logPlanLine/logWholePlanMeal. Retorna true se adicionou.
+// Reaproveitado por logWholePlanMeal ("Comi tudo"). Retorna true se adicionou.
 function addMealItemToSlot(slotId, foodId, grams) {
     const food = D.foods.find(f => f.id === foodId);
     if (!food || !(grams > 0)) return false;
@@ -2581,14 +2584,10 @@ function slotRealTotals(slotId) {
     return { kcal: k, prot: p };
 }
 
-// "✓ comi" de uma linha/opção do plano → registra na execução
-function logPlanLine(slotId, foodId, grams) {
-    if (!addMealItemToSlot(slotId, foodId, grams)) return toast('Não foi possível registrar', true);
-    save();
-    const f = D.foods.find(x => x.id === foodId);
-    toast((f ? f.name : 'Item') + ' registrado ✓');
-    if (cPage === 'meal') rMeal();
-}
+// Registro de item do plano (v1.9.7): o ✓ de cada linha abre openAddFood(foodId, grams) —
+// modal com a quantidade do plano PRÉ-PREENCHIDA e EDITÁVEL + cálculo de macros ao vivo.
+// (A antiga logPlanLine, que registrava direto sem ajuste, foi removida.) "Comi tudo" abaixo
+// é o único registro em lote, sem ajuste por item, usando a 1ª opção das substituições.
 
 // "✓ Comi tudo" → registra a refeição inteira conforme o plano (substituição usa a 1ª opção)
 function logWholePlanMeal(slotId) {
@@ -2609,7 +2608,7 @@ function logWholePlanMeal(slotId) {
 function planCardHtml(slotId) {
     const ps = getPlanSlot(slotId);
     if (!ps) return '';
-    const btn = (foodId, grams) => `<button onclick="logPlanLine('${slotId}','${foodId}',${grams})" title="Registrar que comi isto" style="flex-shrink:0;width:26px;height:26px;border-radius:7px;background:var(--green-bg);color:var(--green);border:none;cursor:pointer;font-size:14px;font-weight:700">✓</button>`;
+    const btn = (foodId, grams) => `<button onclick="openAddFood('${foodId}',${grams})" title="Registrar — ajuste a quantidade antes de confirmar" style="flex-shrink:0;width:26px;height:26px;border-radius:7px;background:var(--green-bg);color:var(--green);border:none;cursor:pointer;font-size:14px;font-weight:700">✓</button>`;
     let linesHtml = '';
     (ps.lines || []).forEach(ln => {
         if (ln.options) {
