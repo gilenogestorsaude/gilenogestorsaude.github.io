@@ -494,7 +494,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.9.7';
+const APP_VERSION = '1.9.8';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -2759,13 +2759,16 @@ function planProfessionalHtml(meta) {
         const ig = pro.instagram.replace(/^@/, '');
         contato += `${contato ? ' · ' : ''}<a href="https://instagram.com/${ig}" target="_blank" rel="noopener" style="color:var(--primary);font-weight:600">@${ig}</a>`;
     }
-    return `<div style="font-size:11px;color:var(--text2);margin-top:6px">👩‍⚕️ ${titulo}${cons}</div>${contato ? `<div style="font-size:12px;margin-top:3px">${contato}</div>` : ''}`;
+    const pemoji = /personal|trein|coach|educ/i.test((pro.role || '') + ' ' + (pro.name || '')) ? '🏋️' : '👩‍⚕️';
+    return `<div style="font-size:11px;color:var(--text2);margin-top:6px">${pemoji} ${titulo}${cons}</div>${contato ? `<div style="font-size:12px;margin-top:3px">${contato}</div>` : ''}`;
 }
 
 // Roteia os botões do card Pro. Trava cosmética (repo público): cadeado real será no backend.
 function openProFeature(kind) {
-    // Tester com preview ligado: nutri abre o import real (colar-JSON, concierge). Treino ainda não existe.
+    // Tester com preview ligado: nutri e personal abrem o import real (colar-JSON, concierge).
+    // Sem o preview, cai no cadeado "em breve" abaixo — import é recurso Pro.
     if (D.proPreview && kind === 'nutri') return openDietImport();
+    if (D.proPreview && kind === 'personal') return openWorkoutImport();
     const titulo = kind === 'personal' ? 'Treino do personal (PDF)' : 'Plano da nutricionista (PDF)';
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
@@ -2800,6 +2803,128 @@ function clearDietPlan() {
     toast('Plano removido');
     if (cPage === 'goals') rGoals();
     if (cPage === 'meal') rMeal();
+}
+
+// ========== PLANO DE TREINO (treino do personal = recurso Pro) ==========
+// Espelha o import da dieta, mas o treino do personal cai DIRETO nos templates
+// executáveis (D.workoutTemplates) — a divisão prescrição→execução já é nativa do
+// módulo de treino (template = prescrição; D.treinos = execução). D.workoutPlan guarda
+// só a meta (nome do plano + contato do profissional) pra exibir o vínculo, igual à nutri.
+// JSON colado: { meta:{name,source,date,note,professional:{name,role,council,phone,instagram}},
+//   templates:[ { nome, notas?, exercicios:[ {match?,nome,grupo,series,reps,carga,metodo?,notas?} ] } ] }
+//   match = id do EXERCISE_CATALOG (puxa a foto); sem match cai pro emoji do grupo.
+
+// Processa o treino colado (objeto já parseado). Muta D.workoutTemplates/workoutPlan.
+// Separado do I/O pra ser testável. Retorna { ok, addedTemplates, updatedTemplates, totalEx, error }.
+function processWorkoutImport(parsed) {
+    if (!parsed || typeof parsed !== 'object') return { ok: false, error: 'JSON inválido' };
+    if (!Array.isArray(parsed.templates) || parsed.templates.length === 0) return { ok: false, error: 'Treino sem fichas (campo "templates")' };
+    if (!Array.isArray(D.workoutTemplates)) D.workoutTemplates = [];
+
+    let addedTemplates = 0, updatedTemplates = 0, totalEx = 0;
+    parsed.templates.forEach(t => {
+        if (!t || !t.nome || !Array.isArray(t.exercicios) || t.exercicios.length === 0) return;
+        const exercicios = t.exercicios.map(ex => {
+            // resolve no catálogo (por id em "match", depois por nome exato) → puxa a foto
+            let cat = ex.match ? findExerciseInCatalog(ex.match) : null;
+            if (!cat) cat = findExerciseInCatalog(ex.nome);
+            // carga: número direto; string "40"/"40,5" → número; vazio → null (igual saveTemplate)
+            let carga = ex.carga;
+            if (typeof carga === 'string') {
+                const c = carga.replace(',', '.').trim();
+                carga = c === '' ? null : (isNaN(parseFloat(c)) ? c : parseFloat(c));
+            } else if (typeof carga !== 'number') {
+                carga = null;
+            }
+            const o = {
+                id: uid(),
+                exerciseId: cat ? cat.id : null,
+                nome: ex.nome || (cat ? cat.nome : 'Exercício'),
+                grupo: ex.grupo || (cat ? cat.grupo : 'outro'),
+                series: parseInt(ex.series) || 3,
+                reps: String(ex.reps == null ? '' : ex.reps).trim() || '8-12',
+                carga: carga,
+                metodo: ex.metodo || ''
+            };
+            if (ex.notas) o.notas = ex.notas;
+            return o;
+        });
+        totalEx += exercicios.length;
+        const novo = { id: uid(), nome: t.nome, exercicios: exercicios, notas: t.notas || '', createdAt: Date.now() };
+        // Re-import seguro: ficha de mesmo nome é substituída no lugar (preserva o id e a data
+        // de criação pra não quebrar referências no histórico); nome novo é anexado.
+        const idx = D.workoutTemplates.findIndex(x => normalizeStr(x.nome) === normalizeStr(t.nome));
+        if (idx >= 0) {
+            novo.id = D.workoutTemplates[idx].id;
+            novo.createdAt = D.workoutTemplates[idx].createdAt || novo.createdAt;
+            D.workoutTemplates[idx] = novo;
+            updatedTemplates++;
+        } else {
+            D.workoutTemplates.push(novo);
+            addedTemplates++;
+        }
+    });
+
+    if (addedTemplates === 0 && updatedTemplates === 0) return { ok: false, error: 'Nenhuma ficha válida (cada uma precisa de "nome" e "exercicios")' };
+
+    // Provenance: guarda só a meta (nome do plano + profissional) — espelha o vínculo da nutri.
+    const meta = Object.assign({}, parsed.meta || {});
+    meta.importedAt = today();
+    D.workoutPlan = { meta: meta };
+
+    return { ok: true, addedTemplates: addedTemplates, updatedTemplates: updatedTemplates, totalEx: totalEx };
+}
+
+function openWorkoutImport() {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+    const cur = (D.workoutPlan && D.workoutPlan.meta)
+        ? `<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Treino atual: <strong style="color:var(--text)">${D.workoutPlan.meta.name || '—'}</strong>. Importar de novo atualiza as fichas de mesmo nome (seu histórico de sessões não é afetado).</div>`
+        : '';
+    overlay.innerHTML = `
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>Importar treino do personal</h3>
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            </div>
+            ${cur}
+            <div class="form-group">
+                <label class="form-label">Cole o treino (JSON enviado pelo assistente)</label>
+                <textarea id="workout-import-text" class="form-input" style="min-height:140px;font-family:monospace;font-size:12px" placeholder='{ "meta": {...}, "templates": [...] }'></textarea>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-outline" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+                <button class="btn btn-primary" style="flex:1" onclick="doWorkoutImport()">Importar</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+}
+
+function doWorkoutImport() {
+    const txt = (($('workout-import-text') || {}).value || '').trim();
+    if (!txt) return toast('Cole o treino primeiro', true);
+    let parsed;
+    try { parsed = JSON.parse(txt); }
+    catch (e) { return toast('JSON inválido — verifique o texto colado', true); }
+    const res = processWorkoutImport(parsed);
+    if (!res.ok) return toast(res.error || 'Falha ao importar', true);
+    save();
+    const ov = document.querySelector('.modal-overlay'); if (ov) ov.remove();
+    const partes = [];
+    if (res.addedTemplates) partes.push(`${res.addedTemplates} ficha(s) nova(s)`);
+    if (res.updatedTemplates) partes.push(`${res.updatedTemplates} atualizada(s)`);
+    toast(`✓ Treino importado · ${partes.join(', ')} · ${res.totalEx} exercício(s)`);
+    if (cPage === 'goals') rGoals();
+    if (cPage === 'treino') rTreino();
+}
+
+function clearWorkoutPlan() {
+    if (!confirm('Remover o vínculo do treino do personal?\n\nSuas fichas (Treino A, B, C...) e o histórico NÃO são afetados — some apenas o vínculo com o profissional. As fichas podem ser removidas em Treino.')) return;
+    D.workoutPlan = null;
+    save();
+    toast('Vínculo do treino removido');
+    if (cPage === 'goals') rGoals();
 }
 
 // ========== HORÁRIOS (previsto + realizado) ==========
@@ -3226,7 +3351,7 @@ function rGoals() {
             }).join('')}
         </div>
 
-        ${!isModuleEnabled('refeicao') ? '' : `
+        ${(!isModuleEnabled('refeicao') && !isModuleEnabled('treino')) ? '' : `
         <div class="card mb-12 plan-card">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px">
                 <span class="card-title" style="margin:0">📋 Importar plano</span>
@@ -3239,13 +3364,19 @@ function rGoals() {
                 <span>🥗 Plano da nutricionista (PDF)</span><span style="font-size:10px;color:var(--text3);flex-shrink:0">${D.proPreview ? '✓ preview' : '🔒 em breve'}</span>
             </button>
             <button class="btn btn-outline w-full" style="justify-content:space-between" onclick="openProFeature('personal')">
-                <span>🏋️ Treino do personal (PDF)</span><span style="font-size:10px;color:var(--text3);flex-shrink:0">🔒 em breve</span>
+                <span>🏋️ Treino do personal (PDF)</span><span style="font-size:10px;color:var(--text3);flex-shrink:0">${D.proPreview ? '✓ preview' : '🔒 em breve'}</span>
             </button>
             ${D.dietPlan ? `
             <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
                 <div style="font-size:11px;color:var(--text3)">Plano ativo: <strong style="color:var(--text)">${(D.dietPlan.meta || {}).name || '—'}</strong> · ${fmtN((D.dietPlan.meta || {}).kcalTarget || 0)} kcal/dia</div>
                 ${planProfessionalHtml(D.dietPlan.meta)}
                 <button class="btn btn-outline btn-sm" style="margin-top:8px;color:var(--red)" onclick="clearDietPlan()">Remover plano</button>
+            </div>` : ''}
+            ${(D.workoutPlan && D.workoutPlan.meta) ? `
+            <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
+                <div style="font-size:11px;color:var(--text3)">Treino ativo: <strong style="color:var(--text)">${D.workoutPlan.meta.name || '—'}</strong></div>
+                ${planProfessionalHtml(D.workoutPlan.meta)}
+                <button class="btn btn-outline btn-sm" style="margin-top:8px;color:var(--red)" onclick="clearWorkoutPlan()">Remover vínculo</button>
             </div>` : ''}
         </div>`}
 

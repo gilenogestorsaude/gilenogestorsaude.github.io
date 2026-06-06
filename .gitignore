@@ -3,4 +3,7 @@ _design/
 dieta-fase1.json
 *.plan.json
 dieta-fase1.*
+# PDFs de planos (nutri/personal) — dado pessoal, fora do repo público
+Treino_Gileno_Paiva.pdf
+*.plan.pdf
 .DS_Store
