@@ -494,7 +494,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.9.9';
+const APP_VERSION = '1.9.10';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -928,7 +928,7 @@ async function load() {
             if (typeof D.dietPlan === 'undefined') D.dietPlan = null;
             if (typeof D.workoutPlan === 'undefined') D.workoutPlan = null; // reservado: plano do personal (espelha dietPlan)
             if (typeof D.proPreview !== 'boolean') D.proPreview = false;
-            migrateWorkoutOrigem(D); // v1.9.9 — fichas importadas antes da v1.9.9 herdam o destaque roxo
+            reconcileWorkoutOrigem(D); // v1.9.10 — define quem é do personal (autoritativo por ids, ou heurística legada)
             // v1.1.2 — adiciona carbo/gord aos foods existentes (default 0)
             if (D.foods) {
                 D.foods.forEach(f => {
@@ -1736,26 +1736,25 @@ function rDash() {
         })()}
 
         <!-- Treino -->
-        ${!isModuleEnabled('treino') ? '' : `
-        <div class="card mb-12">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-                <span class="card-title" style="margin:0">🏋️ Treino</span>
-                <button class="btn btn-outline btn-sm" onclick="showPage('treino')">Templates</button>
-            </div>
-            ${(() => {
-                const last = getLastTreino();
-                const week = getTreinosWeek();
-                const tpls = D.workoutTemplates || [];
-                const dayIsTreino = (dayType === 'treino');
-                const startAction = tpls.length === 0
-                    ? `onclick="openTemplateEditor()"`
-                    : `onclick="showPage('treino')"`;
-                const startLabel = tpls.length === 0
-                    ? '+ Criar primeiro treino'
-                    : `▶ Iniciar treino${tpls.length > 0 ? ` (${tpls.length} template${tpls.length === 1 ? '' : 's'})` : ''}`;
-                const startBtn = `<button class="btn btn-primary" style="width:100%;padding:14px;font-size:15px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:8px;margin-top:8px" ${startAction}>${startLabel}</button>`;
+        ${!isModuleEnabled('treino') ? '' : (() => {
+            const collapsed = isCollapsed('treino');
+            const last = getLastTreino();
+            const week = getTreinosWeek();
+            const tpls = D.workoutTemplates || [];
+            const dayIsTreino = (dayType === 'treino');
+            // Resumo (quando recolhido)
+            let summary;
+            if (tpls.length === 0) summary = 'Nenhum treino criado';
+            else if (!last) summary = `${tpls.length} fichas • sem sessão ainda`;
+            else { const d = daysSince(last.data); summary = `${tpls.length} fichas • última ${d === 0 ? 'hoje' : (d === 1 ? 'há 1 dia' : `há ${d} dias`)}`; }
+            // Botão de ação (primário, igual aos cards de Refeições/Medicamentos)
+            const actBtn = tpls.length === 0
+                ? `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation();openTemplateEditor()">+ Criar</button>`
+                : `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation();showPage('treino')">Treinar</button>`;
+            // Corpo (quando expandido)
+            const body = (() => {
                 if (!last) {
-                    return `<div style="font-size:12px;color:var(--text3);text-align:center;padding:8px 0">${tpls.length === 0 ? 'Crie seu Treino A com exercícios planejados.' : 'Nenhuma sessão registrada ainda.'}</div>${startBtn}`;
+                    return `<div style="font-size:12px;color:var(--text3);text-align:center;padding:8px 0">${tpls.length === 0 ? 'Crie seu Treino A com exercícios planejados.' : 'Nenhuma sessão registrada ainda.'}</div>`;
                 }
                 const dias = daysSince(last.data);
                 const dStr = dias === 0 ? 'hoje' : (dias === 1 ? 'há 1 dia' : `há ${dias} dias`);
@@ -1767,7 +1766,7 @@ function rDash() {
                         ⏰ Hoje é dia de treino e você ainda não registrou.
                     </div>` : '';
                 return `
-                    <div style="display:flex;gap:8px;margin-bottom:8px">
+                    <div style="display:flex;gap:8px">
                         <div style="flex:1;text-align:center;padding:8px;background:var(--bg);border-radius:12px">
                             <div style="font-size:10px;color:var(--text3)">Esta semana</div>
                             <div style="font-size:18px;font-weight:700;color:var(--primary)">${week.length}</div>
@@ -1780,10 +1779,21 @@ function rDash() {
                         </div>
                     </div>
                     ${alert}
-                    ${startBtn}
                 `;
-            })()}
-        </div>`}
+            })();
+            return `
+            <div class="card mb-12">
+                <div onclick="toggleCollapse('treino')" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;${collapsed ? '' : 'margin-bottom:10px'}">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0">
+                        <span style="font-size:14px;transition:transform .2s;display:inline-block;${collapsed ? '' : 'transform:rotate(90deg)'}">▶</span>
+                        <span class="card-title" style="margin:0">🏋️ Treino</span>
+                        ${collapsed ? `<span style="font-size:11px;color:var(--text3);font-weight:500">${summary}</span>` : ''}
+                    </div>
+                    ${actBtn}
+                </div>
+                ${collapsed ? '' : body}
+            </div>`;
+        })()}
 
         <!-- Consultas -->
         ${!isModuleEnabled('consultas') ? '' : `
@@ -2823,6 +2833,7 @@ function processWorkoutImport(parsed) {
     if (!Array.isArray(D.workoutTemplates)) D.workoutTemplates = [];
 
     let addedTemplates = 0, updatedTemplates = 0, totalEx = 0;
+    const planIds = []; // ids das fichas deste plano → vínculo autoritativo (quem é do personal)
     const personalName = (parsed.meta && parsed.meta.professional && parsed.meta.professional.name) || (parsed.meta && parsed.meta.source) || 'Personal';
     parsed.templates.forEach(t => {
         if (!t || !t.nome || !Array.isArray(t.exercicios) || t.exercicios.length === 0) return;
@@ -2865,31 +2876,40 @@ function processWorkoutImport(parsed) {
             D.workoutTemplates.push(novo);
             addedTemplates++;
         }
+        planIds.push(novo.id);
     });
 
     if (addedTemplates === 0 && updatedTemplates === 0) return { ok: false, error: 'Nenhuma ficha válida (cada uma precisa de "nome" e "exercicios")' };
 
-    // Provenance: guarda só a meta (nome do plano + profissional) — espelha o vínculo da nutri.
+    // Provenance: meta (nome do plano + profissional) + templateIds = vínculo autoritativo das fichas.
     const meta = Object.assign({}, parsed.meta || {});
     meta.importedAt = today();
-    D.workoutPlan = { meta: meta };
+    D.workoutPlan = { meta: meta, templateIds: planIds };
 
     return { ok: true, addedTemplates: addedTemplates, updatedTemplates: updatedTemplates, totalEx: totalEx };
 }
 
-// Migração 1x: fichas importadas antes da v1.9.9 não tinham `origem`. Se há plano do personal
-// vinculado, marca as existentes como 'personal' (herdam o destaque roxo SEM recolar). O flag
-// _origemMigrated impede re-marcar fichas criadas à mão depois (essas nascem sem origem e
-// devem continuar genéricas). Idempotente. Retorna quantas foram marcadas.
-function migrateWorkoutOrigem(d) {
-    if (!d || !d.workoutPlan || !d.workoutPlan.meta || d._origemMigrated) return 0;
-    const pn = (d.workoutPlan.meta.professional && d.workoutPlan.meta.professional.name) || d.workoutPlan.meta.source || 'Personal';
-    let n = 0;
-    (d.workoutTemplates || []).forEach(t => {
-        if (!t.origem) { t.origem = 'personal'; t.personalName = pn; n++; }
+// Reconcilia quais fichas são do personal (origem='personal'). Roda na carga, idempotente.
+// - Plano COM templateIds (imports v1.9.10+): autoritativo — id na lista = personal; fora = genérico.
+// - Plano legado (v1.9.8/9, sem templateIds): heurística pelo nome — fichas do concierge vêm como
+//   "Nome — grupos" (com travessão); fichas criadas à mão não têm. Corrige o bug da marcação cega
+//   anterior SEM exigir recolar e sem marcar por engano os treinos antigos de teste ("Treino A".."E").
+// - Sem plano vinculado: nada é personal.
+function reconcileWorkoutOrigem(d) {
+    if (!d) return;
+    const tpls = d.workoutTemplates || [];
+    const plan = d.workoutPlan;
+    const hasPlan = !!(plan && plan.meta);
+    const ids = (plan && Array.isArray(plan.templateIds)) ? plan.templateIds : null;
+    const pn = hasPlan ? ((plan.meta.professional && plan.meta.professional.name) || plan.meta.source || 'Personal') : '';
+    tpls.forEach(t => {
+        let isPersonal;
+        if (!hasPlan) isPersonal = false;
+        else if (ids) isPersonal = ids.indexOf(t.id) >= 0;
+        else isPersonal = (t.nome || '').indexOf('—') >= 0 || (t.nome || '').indexOf('–') >= 0; // travessão = nome do concierge
+        if (isPersonal) { t.origem = 'personal'; t.personalName = pn; }
+        else if (t.origem === 'personal') { delete t.origem; delete t.personalName; }
     });
-    d._origemMigrated = true;
-    return n;
 }
 
 function openWorkoutImport() {
@@ -3898,14 +3918,11 @@ function rTreino() {
             </div>`;
     }
 
-    // Cards de templates
-    let listHtml = '';
-    tpls.forEach((tpl, idx) => {
+    // Card de uma ficha (helper) — destaque roxo se for do personal
+    const renderTplCard = (tpl, letter) => {
         const grupos = templateGruposResumo(tpl);
         const gruposLabel = grupos.map(g => g.label).join('/') || 'Sem exercícios';
         const exCount = (tpl.exercicios || []).length;
-        const letter = String.fromCharCode(65 + idx); // A, B, C...
-        // Cor do letter — pega cor do primeiro grupo OU primary
         const letterColor = grupos.length > 0 ? grupos[0].color : 'var(--primary)';
         const perso = tpl.origem === 'personal';
         const persoNome = (tpl.personalName || '').trim();
@@ -3915,7 +3932,7 @@ function rTreino() {
         const cardStyle = perso
             ? `cursor:pointer;border:1px solid ${VIOLETA}55;border-left:4px solid ${VIOLETA};background:linear-gradient(180deg,${VIOLETA}0d,transparent)`
             : 'cursor:pointer';
-        listHtml += `
+        return `
             <div class="card mb-8" onclick="executeTemplate('${tpl.id}')" style="${cardStyle}">
                 <div style="display:flex;align-items:center;gap:12px">
                     <div style="width:48px;height:48px;border-radius:12px;background:${letterColor}22;color:${letterColor};display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:800;flex-shrink:0">${letter}</div>
@@ -3930,7 +3947,24 @@ function rTreino() {
                     <button class="btn-icon btn-outline" onclick="event.stopPropagation();openTemplateEditor('${tpl.id}')" title="Editar" style="width:32px;height:32px;font-size:12px">✏</button>
                 </div>
             </div>`;
-    });
+    };
+
+    // Divisória de seção
+    const sectionHeader = (label, color, line) => `
+        <div style="display:flex;align-items:center;gap:8px;margin:18px 2px 8px">
+            <span style="font-size:11px;font-weight:800;letter-spacing:.5px;color:${color};white-space:nowrap">${label}</span>
+            <div style="flex:1;height:1px;background:${line}"></div>
+        </div>`;
+
+    // Duas seções: plano do personal (sob o banner) e os treinos próprios
+    const personalTpls = tpls.filter(t => t.origem === 'personal');
+    const ownTpls = tpls.filter(t => t.origem !== 'personal');
+    let listHtml = '';
+    personalTpls.forEach((tpl, i) => { listHtml += renderTplCard(tpl, String.fromCharCode(65 + i)); });
+    if (ownTpls.length) {
+        if (personalTpls.length) listHtml += sectionHeader('🏠 MEUS TREINOS', 'var(--text3)', 'var(--border)');
+        ownTpls.forEach((tpl, i) => { listHtml += renderTplCard(tpl, String.fromCharCode(65 + i)); });
+    }
 
     $('treino-body').innerHTML = `
         ${planBannerHtml}
