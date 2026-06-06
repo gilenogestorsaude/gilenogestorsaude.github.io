@@ -494,7 +494,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.9.10';
+const APP_VERSION = '1.9.11';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -697,6 +697,9 @@ function defaultD() {
         workoutPlan: null,
         // Modo Pro (preview) — destrava import de PDF (em construção) só pro tester via gesto secreto.
         proPreview: false,
+        // Treino — personalização (ponto de partida; o ajuste fino é no dedo durante o treino)
+        restDefault: 90, // descanso padrão (s) que inicia o cronômetro regressivo na execução
+        cargaStep: 1,    // passo do +/- da carga (kg) — pesos redondos (1,2,3...)
         // Water by date: { '2026-03-01': [ { time: '05:15', vol: 500, source: 'Dexilant', auto: true }, ... ] }
         water: {},
         // Goals — kcal/prot/water sempre setados; carbo/gord opcionais (0 = sem meta, so mostra valor)
@@ -929,6 +932,8 @@ async function load() {
             if (typeof D.workoutPlan === 'undefined') D.workoutPlan = null; // reservado: plano do personal (espelha dietPlan)
             if (typeof D.proPreview !== 'boolean') D.proPreview = false;
             reconcileWorkoutOrigem(D); // v1.9.10 — define quem é do personal (autoritativo por ids, ou heurística legada)
+            if (typeof D.restDefault !== 'number' || D.restDefault < 15) D.restDefault = 90; // v1.9.11
+            if (typeof D.cargaStep !== 'number' || D.cargaStep <= 0) D.cargaStep = 1;
             // v1.1.2 — adiciona carbo/gord aos foods existentes (default 0)
             if (D.foods) {
                 D.foods.forEach(f => {
@@ -2964,6 +2969,18 @@ function clearWorkoutPlan() {
     if (cPage === 'goals') rGoals();
 }
 
+// Config do treino (Configurações) — ponto de partida; o ajuste fino é no dedo durante a execução.
+function adjustRestDefault(delta) {
+    D.restDefault = Math.max(15, (D.restDefault || 90) + delta);
+    save();
+    if (cPage === 'goals') rGoals();
+}
+function adjustCargaStep(delta) {
+    D.cargaStep = Math.max(1, Math.round(((D.cargaStep || 1) + delta) * 10) / 10);
+    save();
+    if (cPage === 'goals') rGoals();
+}
+
 // ========== HORÁRIOS (previsto + realizado) ==========
 // Hora atual no formato HH:MM
 function nowHHMM() {
@@ -3415,6 +3432,30 @@ function rGoals() {
                 ${planProfessionalHtml(D.workoutPlan.meta)}
                 <button class="btn btn-outline btn-sm" style="margin-top:8px;color:var(--red)" onclick="clearWorkoutPlan()">Remover vínculo</button>
             </div>` : ''}
+        </div>`}
+
+        ${!isModuleEnabled('treino') ? '' : `
+        <div class="card mb-12">
+            <div class="card-title">🏋️ Treino</div>
+            <div style="font-size:11px;color:var(--text3);line-height:1.5;margin-bottom:12px">
+                Pontos de partida pra execução. Durante o treino você ajusta no dedo: cronômetro <strong style="color:var(--text)">−15s/+15s</strong> e carga <strong style="color:var(--text)">− / +</strong>.
+            </div>
+            <div class="cfg-item">
+                <div><div class="cfg-label">Descanso padrão</div><div class="cfg-desc">Inicia o cronômetro regressivo entre as séries</div></div>
+                <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+                    <button class="btn btn-outline btn-sm" style="width:34px" onclick="adjustRestDefault(-15)">−</button>
+                    <span style="font-size:14px;font-weight:700;color:var(--text);min-width:48px;text-align:center">${D.restDefault || 90}s</span>
+                    <button class="btn btn-outline btn-sm" style="width:34px" onclick="adjustRestDefault(15)">+</button>
+                </div>
+            </div>
+            <div class="cfg-item">
+                <div><div class="cfg-label">Passo da carga</div><div class="cfg-desc">Quanto cada toque no −/+ muda (pesos redondos)</div></div>
+                <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+                    <button class="btn btn-outline btn-sm" style="width:34px" onclick="adjustCargaStep(-1)">−</button>
+                    <span style="font-size:14px;font-weight:700;color:var(--text);min-width:48px;text-align:center">${fmtCarga(D.cargaStep || 1)} kg</span>
+                    <button class="btn btn-outline btn-sm" style="width:34px" onclick="adjustCargaStep(1)">+</button>
+                </div>
+            </div>
         </div>`}
 
         ${!isModuleEnabled('refeicao') ? '' : `
@@ -4242,6 +4283,20 @@ function deleteTemplate(id) {
 let activeExecution = null; // { templateId, nome, exercicios:[{...com 'feito':bool}], startTime }
 let execTimerInterval = null;
 
+// Maior carga registrada pra um exercício na sessão mais recente que o contém — referência de progressão
+function lastCargaFor(nome) {
+    if (!nome || !Array.isArray(D.treinos)) return null;
+    const key = nome.trim().toLowerCase();
+    for (let i = D.treinos.length - 1; i >= 0; i--) {
+        const ex = (D.treinos[i].exercicios || []).find(e => (e.nome || '').trim().toLowerCase() === key);
+        if (ex && Array.isArray(ex.series) && ex.series.length) {
+            const max = Math.max(...ex.series.map(s => s.carga || 0));
+            if (max > 0) return max;
+        }
+    }
+    return null;
+}
+
 function executeTemplate(templateId) {
     const tpl = (D.workoutTemplates || []).find(t => t.id === templateId);
     if (!tpl) return;
@@ -4249,13 +4304,21 @@ function executeTemplate(templateId) {
         templateId: tpl.id,
         nome: tpl.nome,
         notas: tpl.notas,
-        exercicios: tpl.exercicios.map(ex => ({
-            ...ex,
-            id: uid(),
-            feito: false,
-            // séries planejadas viram array pra marcar individualmente
-            seriesDone: Array.from({ length: parseInt(ex.series) || 3 }, () => false)
-        })),
+        exercicios: tpl.exercicios.map(ex => {
+            const prescrita = (typeof ex.carga === 'number') ? ex.carga : parseFloat(String(ex.carga == null ? '' : ex.carga).replace(',', '.'));
+            const ultima = lastCargaFor(ex.nome); // começa da última vez (progressão); senão, da ficha
+            return {
+                ...ex,
+                id: uid(),
+                feito: false,
+                carga: (ultima != null ? ultima : (isNaN(prescrita) ? 0 : prescrita)), // numérico, ajustável no +/-
+                cargaRef: ultima,            // "última vez" (referência, ou null)
+                // séries planejadas viram array pra marcar individualmente
+                seriesDone: Array.from({ length: parseInt(ex.series) || 3 }, () => false)
+            };
+        }),
+        restValue: (typeof D.restDefault === 'number' ? D.restDefault : 90), // ponto de partida do cronômetro
+        restRemaining: null, // null = não descansando
         startTime: Date.now()
     };
     showPage('treino-execute');
@@ -4283,6 +4346,62 @@ function stopExecTimer() {
     }
 }
 
+// ===== Cronômetro de descanso (regressivo, ajustável no dedo) =====
+let restTimerInterval = null;
+function fmtMMSS(sec) {
+    sec = Math.max(0, Math.round(sec));
+    return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+}
+function stopRestTimer() {
+    if (restTimerInterval) { clearInterval(restTimerInterval); restTimerInterval = null; }
+}
+function startRest() { // dispara ao marcar uma série
+    if (!activeExecution) return;
+    activeExecution.restRemaining = activeExecution.restValue;
+    stopRestTimer();
+    restTimerInterval = setInterval(tickRest, 1000);
+    rTreinoExecute(); // mostra a barra do descanso
+}
+function tickRest() {
+    if (!activeExecution || activeExecution.restRemaining == null) { stopRestTimer(); return; }
+    activeExecution.restRemaining -= 1;
+    if (activeExecution.restRemaining <= 0) {
+        stopRestTimer();
+        activeExecution.restRemaining = null;
+        if (navigator.vibrate) { try { navigator.vibrate(400); } catch (e) {} }
+        const b = $('rest-bar'); if (b) b.style.display = 'none';
+        toast('Descanso concluído 💪');
+        return;
+    }
+    const el = $('rest-countdown'); if (el) el.textContent = fmtMMSS(activeExecution.restRemaining);
+}
+function adjustRest(delta) { // −15s / +15s na hora (varia por exercício); persiste o valor pro próximo descanso
+    if (!activeExecution) return;
+    activeExecution.restValue = Math.max(15, (activeExecution.restValue || 90) + delta);
+    if (activeExecution.restRemaining != null) activeExecution.restRemaining = Math.max(1, activeExecution.restRemaining + delta);
+    const el = $('rest-countdown'); if (el) el.textContent = fmtMMSS(activeExecution.restRemaining || 0);
+    const rv = $('rest-value'); if (rv) rv.textContent = activeExecution.restValue + 's';
+}
+function skipRest() {
+    if (!activeExecution) return;
+    stopRestTimer();
+    activeExecution.restRemaining = null;
+    const b = $('rest-bar'); if (b) b.style.display = 'none';
+}
+
+// ===== Carga com +/- (tipo "rolon", sem digitar) =====
+function fmtCarga(c) {
+    const n = (typeof c === 'number') ? c : (parseFloat(String(c == null ? 0 : c).replace(',', '.')) || 0);
+    return (Math.round(n * 10) / 10).toString().replace('.', ',');
+}
+function adjustCarga(exIdx, delta) {
+    if (!activeExecution) return;
+    const ex = activeExecution.exercicios[exIdx];
+    const cur = (typeof ex.carga === 'number') ? ex.carga : (parseFloat(String(ex.carga || 0).replace(',', '.')) || 0);
+    ex.carga = Math.max(0, Math.round((cur + delta) * 10) / 10);
+    const el = $('cargaval_' + exIdx); if (el) el.textContent = fmtCarga(ex.carga) + ' kg'; // sem re-render (não pula o scroll)
+}
+
 function rTreinoExecute() {
     const body = $('treino-execute-body');
     if (!body || !activeExecution) return;
@@ -4293,12 +4412,14 @@ function rTreinoExecute() {
     const feitos = activeExecution.exercicios.filter(e => e.feito).length;
     if (subEl) subEl.textContent = `${feitos}/${totalEx} exercícios feitos`;
 
+    const step = (typeof D.cargaStep === 'number' && D.cargaStep > 0) ? D.cargaStep : 1;
     let exHtml = '';
     activeExecution.exercicios.forEach((ex, exIdx) => {
         const grupo = getMuscleGroup(ex.grupo);
         const dotsHtml = ex.seriesDone.map((done, sIdx) => `
             <span onclick="toggleExecSerie(${exIdx}, ${sIdx})" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:12px;font-weight:700;${done ? 'background:var(--primary);color:#0a0f0a' : 'background:var(--border);color:var(--text3)'}">${sIdx + 1}</span>
         `).join('');
+        const stepBtn = (d, label) => `<button onclick="adjustCarga(${exIdx}, ${d})" style="width:34px;height:34px;border-radius:9px;background:var(--bg);border:1px solid var(--border);color:var(--text);font-size:18px;font-weight:800;cursor:pointer;flex-shrink:0">${label}</button>`;
         exHtml += `
             <div class="card mb-8" style="${ex.feito ? 'opacity:.6' : ''}">
                 <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
@@ -4306,25 +4427,42 @@ function rTreinoExecute() {
                     <div style="flex:1;min-width:0">
                         <div style="font-size:14px;font-weight:700;color:var(--text);${ex.feito ? 'text-decoration:line-through' : ''}">${ex.nome}</div>
                         <div style="font-size:11px;color:${grupo.color};font-weight:600">${grupo.label}${ex.metodo ? ' • ' + ex.metodo : ''}</div>
-                        <div style="font-size:11px;color:var(--text3);margin-top:2px">${ex.series} x ${ex.reps}${ex.carga !== '' && ex.carga != null ? ' • ' + ex.carga + ' kg' : ''}</div>
+                        <div style="font-size:11px;color:var(--text3);margin-top:2px">${ex.series} x ${ex.reps}${ex.cargaRef != null ? ` • <span style="color:var(--text2)">última: ${fmtCarga(ex.cargaRef)} kg</span>` : ''}</div>
                     </div>
                     <button onclick="toggleExecExercise(${exIdx})" class="meal-check ${ex.feito ? 'done' : ''}" style="width:32px;height:32px;border-radius:8px;cursor:pointer;flex-shrink:0">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
                     </button>
                 </div>
-                <div style="display:flex;align-items:center;gap:6px;padding-top:6px;border-top:1px solid var(--border)">
-                    <span style="font-size:10px;color:var(--text3);font-weight:600;margin-right:4px">SÉRIES:</span>
+                <div style="display:flex;align-items:center;gap:6px;padding-top:8px;border-top:1px solid var(--border);flex-wrap:wrap">
+                    <span style="font-size:10px;color:var(--text3);font-weight:600;margin-right:2px">SÉRIES:</span>
                     ${dotsHtml}
+                    <div style="display:flex;align-items:center;gap:7px;margin-left:auto">
+                        <span style="font-size:10px;color:var(--text3);font-weight:600">CARGA:</span>
+                        ${stepBtn(-step, '−')}
+                        <span id="cargaval_${exIdx}" style="font-size:15px;font-weight:800;color:var(--text);min-width:64px;text-align:center;font-variant-numeric:tabular-nums">${fmtCarga(ex.carga)} kg</span>
+                        ${stepBtn(step, '+')}
+                    </div>
                 </div>
             </div>`;
     });
 
+    const resting = activeExecution.restRemaining != null;
+    const restBar = `
+        <div id="rest-bar" style="display:${resting ? 'flex' : 'none'};position:fixed;left:12px;right:12px;bottom:14px;z-index:50;align-items:center;gap:8px;background:var(--primary);color:#0a0f0a;border-radius:14px;padding:10px 12px;box-shadow:0 8px 24px rgba(0,0,0,.4)">
+            <span style="font-size:13px;font-weight:800">⏱ Descanso</span>
+            <button onclick="adjustRest(-15)" style="height:32px;padding:0 9px;border-radius:8px;background:rgba(0,0,0,.18);border:none;color:#0a0f0a;font-size:12px;font-weight:800;cursor:pointer">−15s</button>
+            <span id="rest-countdown" style="font-size:24px;font-weight:800;font-variant-numeric:tabular-nums;min-width:58px;text-align:center">${fmtMMSS(activeExecution.restRemaining || 0)}</span>
+            <button onclick="adjustRest(15)" style="height:32px;padding:0 9px;border-radius:8px;background:rgba(0,0,0,.18);border:none;color:#0a0f0a;font-size:12px;font-weight:800;cursor:pointer">+15s</button>
+            <button onclick="skipRest()" style="margin-left:auto;height:32px;padding:0 12px;border-radius:8px;background:#0a0f0a;border:none;color:#fff;font-size:12px;font-weight:800;cursor:pointer">Pular</button>
+        </div>`;
+
     body.innerHTML = `
         ${exHtml}
-        <div style="display:flex;gap:8px;margin-top:16px">
+        <div style="display:flex;gap:8px;margin-top:16px;margin-bottom:84px">
             <button class="btn btn-outline" style="flex:1" onclick="cancelExecution()">Cancelar</button>
             <button class="btn btn-primary" style="flex:2" onclick="finishExecution()">🏁 FIM — Registrar</button>
         </div>
+        ${restBar}
     `;
 }
 
@@ -4338,10 +4476,15 @@ function toggleExecExercise(exIdx) {
 
 function toggleExecSerie(exIdx, sIdx) {
     const ex = activeExecution.exercicios[exIdx];
-    ex.seriesDone[sIdx] = !ex.seriesDone[sIdx];
+    const wasDone = ex.seriesDone[sIdx];
+    ex.seriesDone[sIdx] = !wasDone;
     // Marca exercício como feito se todas as séries estiverem feitas
     ex.feito = ex.seriesDone.every(d => d);
-    rTreinoExecute();
+    if (!wasDone && ex.seriesDone[sIdx]) {
+        startRest(); // marcou uma série → inicia o descanso (já re-renderiza)
+    } else {
+        rTreinoExecute();
+    }
 }
 
 function cancelExecution() {
@@ -4349,6 +4492,7 @@ function cancelExecution() {
     const anyDone = activeExecution.exercicios.some(e => e.feito || e.seriesDone.some(d => d));
     if (anyDone && !confirm('Cancelar treino? O progresso desta sessão será descartado.')) return;
     stopExecTimer();
+    stopRestTimer();
     activeExecution = null;
     showPage('treino');
 }
@@ -4386,6 +4530,7 @@ function finishExecution() {
     D.treinos.push(sessao);
     save();
     stopExecTimer();
+    stopRestTimer();
     activeExecution = null;
     toast('✓ Treino registrado no histórico');
     showPage('treino');
