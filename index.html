@@ -494,7 +494,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.9.8';
+const APP_VERSION = '1.9.9';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -928,6 +928,7 @@ async function load() {
             if (typeof D.dietPlan === 'undefined') D.dietPlan = null;
             if (typeof D.workoutPlan === 'undefined') D.workoutPlan = null; // reservado: plano do personal (espelha dietPlan)
             if (typeof D.proPreview !== 'boolean') D.proPreview = false;
+            migrateWorkoutOrigem(D); // v1.9.9 — fichas importadas antes da v1.9.9 herdam o destaque roxo
             // v1.1.2 — adiciona carbo/gord aos foods existentes (default 0)
             if (D.foods) {
                 D.foods.forEach(f => {
@@ -2822,6 +2823,7 @@ function processWorkoutImport(parsed) {
     if (!Array.isArray(D.workoutTemplates)) D.workoutTemplates = [];
 
     let addedTemplates = 0, updatedTemplates = 0, totalEx = 0;
+    const personalName = (parsed.meta && parsed.meta.professional && parsed.meta.professional.name) || (parsed.meta && parsed.meta.source) || 'Personal';
     parsed.templates.forEach(t => {
         if (!t || !t.nome || !Array.isArray(t.exercicios) || t.exercicios.length === 0) return;
         const exercicios = t.exercicios.map(ex => {
@@ -2850,7 +2852,7 @@ function processWorkoutImport(parsed) {
             return o;
         });
         totalEx += exercicios.length;
-        const novo = { id: uid(), nome: t.nome, exercicios: exercicios, notas: t.notas || '', createdAt: Date.now() };
+        const novo = { id: uid(), nome: t.nome, exercicios: exercicios, notas: t.notas || '', origem: 'personal', personalName: personalName, createdAt: Date.now() };
         // Re-import seguro: ficha de mesmo nome é substituída no lugar (preserva o id e a data
         // de criação pra não quebrar referências no histórico); nome novo é anexado.
         const idx = D.workoutTemplates.findIndex(x => normalizeStr(x.nome) === normalizeStr(t.nome));
@@ -2873,6 +2875,21 @@ function processWorkoutImport(parsed) {
     D.workoutPlan = { meta: meta };
 
     return { ok: true, addedTemplates: addedTemplates, updatedTemplates: updatedTemplates, totalEx: totalEx };
+}
+
+// Migração 1x: fichas importadas antes da v1.9.9 não tinham `origem`. Se há plano do personal
+// vinculado, marca as existentes como 'personal' (herdam o destaque roxo SEM recolar). O flag
+// _origemMigrated impede re-marcar fichas criadas à mão depois (essas nascem sem origem e
+// devem continuar genéricas). Idempotente. Retorna quantas foram marcadas.
+function migrateWorkoutOrigem(d) {
+    if (!d || !d.workoutPlan || !d.workoutPlan.meta || d._origemMigrated) return 0;
+    const pn = (d.workoutPlan.meta.professional && d.workoutPlan.meta.professional.name) || d.workoutPlan.meta.source || 'Personal';
+    let n = 0;
+    (d.workoutTemplates || []).forEach(t => {
+        if (!t.origem) { t.origem = 'personal'; t.personalName = pn; n++; }
+    });
+    d._origemMigrated = true;
+    return n;
 }
 
 function openWorkoutImport() {
@@ -3844,6 +3861,26 @@ function rTreino() {
         return;
     }
 
+    const VIOLETA = '#7c3aed';
+
+    // Faixa "Plano do seu personal" — deixa claro que o treino é personalizado (não genérico)
+    let planBannerHtml = '';
+    if (D.workoutPlan && D.workoutPlan.meta) {
+        const m = D.workoutPlan.meta;
+        const prof = (m.professional && m.professional.name) || m.source || '';
+        planBannerHtml = `
+            <div class="card mb-12" style="border:1px solid ${VIOLETA}55;border-left:4px solid ${VIOLETA};background:linear-gradient(135deg,${VIOLETA}1a,transparent)">
+                <div style="display:flex;align-items:center;gap:10px">
+                    <span style="font-size:22px">🏋️</span>
+                    <div style="flex:1;min-width:0">
+                        <div style="font-size:10px;font-weight:800;letter-spacing:.5px;color:${VIOLETA}">PLANO DO SEU PERSONAL</div>
+                        <div style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${m.name || 'Plano personalizado'}</div>
+                        ${prof ? `<div style="font-size:11px;color:var(--text2)">por ${prof}</div>` : ''}
+                    </div>
+                </div>
+            </div>`;
+    }
+
     // Última sessão registrada — destaque no topo
     let lastSessionHtml = '';
     if (last) {
@@ -3870,13 +3907,22 @@ function rTreino() {
         const letter = String.fromCharCode(65 + idx); // A, B, C...
         // Cor do letter — pega cor do primeiro grupo OU primary
         const letterColor = grupos.length > 0 ? grupos[0].color : 'var(--primary)';
+        const perso = tpl.origem === 'personal';
+        const persoNome = (tpl.personalName || '').trim();
+        const persoBadge = perso
+            ? `<span style="display:inline-flex;align-items:center;gap:3px;font-size:9.5px;font-weight:800;letter-spacing:.4px;color:#fff;background:${VIOLETA};padding:2px 7px;border-radius:999px;white-space:nowrap">🏋️ ${persoNome ? persoNome.toUpperCase() : 'DO SEU PERSONAL'}</span>`
+            : '';
+        const cardStyle = perso
+            ? `cursor:pointer;border:1px solid ${VIOLETA}55;border-left:4px solid ${VIOLETA};background:linear-gradient(180deg,${VIOLETA}0d,transparent)`
+            : 'cursor:pointer';
         listHtml += `
-            <div class="card mb-8" onclick="executeTemplate('${tpl.id}')" style="cursor:pointer">
+            <div class="card mb-8" onclick="executeTemplate('${tpl.id}')" style="${cardStyle}">
                 <div style="display:flex;align-items:center;gap:12px">
                     <div style="width:48px;height:48px;border-radius:12px;background:${letterColor}22;color:${letterColor};display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:800;flex-shrink:0">${letter}</div>
                     <div style="flex:1;min-width:0">
                         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:2px">
                             <span style="font-size:14px;font-weight:700;color:var(--text)">${tpl.nome || ('Treino ' + letter)}</span>
+                            ${persoBadge}
                         </div>
                         <div style="font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${gruposLabel}</div>
                         <div style="font-size:11px;color:var(--text3);margin-top:2px">${exCount} exercício${exCount === 1 ? '' : 's'}</div>
@@ -3887,6 +3933,7 @@ function rTreino() {
     });
 
     $('treino-body').innerHTML = `
+        ${planBannerHtml}
         ${lastSessionHtml}
         ${listHtml}
         <button class="btn btn-outline" style="width:100%;margin-top:8px;border-style:dashed;color:var(--primary);font-weight:700" onclick="openTemplateEditor()">+ Novo treino</button>
