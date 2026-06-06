@@ -494,7 +494,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.9.11';
+const APP_VERSION = '1.9.12';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -4468,10 +4468,15 @@ function rTreinoExecute() {
 
 function toggleExecExercise(exIdx) {
     const ex = activeExecution.exercicios[exIdx];
-    ex.feito = !ex.feito;
+    const wasDone = ex.feito;
+    ex.feito = !wasDone;
     // Se marcou como feito, marca todas as séries como done; se desmarcou, zera
     ex.seriesDone = ex.seriesDone.map(() => ex.feito);
-    rTreinoExecute();
+    if (!wasDone && ex.feito) {
+        startRest(); // marcar o exercício inteiro também dispara o descanso (já re-renderiza)
+    } else {
+        rTreinoExecute();
+    }
 }
 
 function toggleExecSerie(exIdx, sIdx) {
