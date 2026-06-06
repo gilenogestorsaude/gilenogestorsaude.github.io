@@ -494,7 +494,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.9.12';
+const APP_VERSION = '1.9.13';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -4448,7 +4448,7 @@ function rTreinoExecute() {
 
     const resting = activeExecution.restRemaining != null;
     const restBar = `
-        <div id="rest-bar" style="display:${resting ? 'flex' : 'none'};position:fixed;left:12px;right:12px;bottom:14px;z-index:50;align-items:center;gap:8px;background:var(--primary);color:#0a0f0a;border-radius:14px;padding:10px 12px;box-shadow:0 8px 24px rgba(0,0,0,.4)">
+        <div id="rest-bar" style="display:${resting ? 'flex' : 'none'};position:fixed;left:12px;right:12px;bottom:calc(76px + env(safe-area-inset-bottom));z-index:101;align-items:center;gap:8px;background:var(--primary);color:#0a0f0a;border-radius:14px;padding:10px 12px;box-shadow:0 8px 24px rgba(0,0,0,.4)">
             <span style="font-size:13px;font-weight:800">⏱ Descanso</span>
             <button onclick="adjustRest(-15)" style="height:32px;padding:0 9px;border-radius:8px;background:rgba(0,0,0,.18);border:none;color:#0a0f0a;font-size:12px;font-weight:800;cursor:pointer">−15s</button>
             <span id="rest-countdown" style="font-size:24px;font-weight:800;font-variant-numeric:tabular-nums;min-width:58px;text-align:center">${fmtMMSS(activeExecution.restRemaining || 0)}</span>
