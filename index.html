@@ -499,7 +499,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.10.1';
+const APP_VERSION = '1.10.2';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -4088,13 +4088,14 @@ function rTreino() {
         const dias = daysSince(last.data);
         const dStr = dias === 0 ? 'hoje' : (dias === 1 ? 'há 1 dia' : `há ${dias} dias`);
         lastSessionHtml = `
-            <div class="card mb-12" style="background:var(--surface2);border-left:3px solid var(--primary)">
+            <div class="card mb-12" onclick="showPage('treino-history')" style="background:var(--surface2);border-left:3px solid var(--primary);cursor:pointer">
                 <div style="display:flex;align-items:center;gap:10px">
                     <span style="font-size:20px">🏆</span>
                     <div style="flex:1;min-width:0">
                         <div style="font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.5px">ÚLTIMO TREINO REGISTRADO</div>
                         <div style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${last.nome} <span style="font-weight:500;color:var(--text3);font-size:12px">• ${dStr}</span></div>
                     </div>
+                    <span style="font-size:13px;color:var(--text3);white-space:nowrap">📁 histórico ›</span>
                 </div>
             </div>`;
     }
@@ -4152,6 +4153,7 @@ function rTreino() {
         ${lastSessionHtml}
         ${listHtml}
         <button class="btn btn-outline" style="width:100%;margin-top:8px;border-style:dashed;color:var(--primary);font-weight:700" onclick="openTemplateEditor()">+ Novo treino</button>
+        <button class="btn btn-outline" style="width:100%;margin-top:8px" onclick="showPage('treino-history')">📁 Ver histórico de sessões${last ? ' (' + (D.treinos || []).length + ')' : ''}</button>
     `;
 }
 
