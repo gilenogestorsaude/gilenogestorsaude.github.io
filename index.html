@@ -284,6 +284,9 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
             Ao entrar ou criar conta, você concorda com os <a href="termos.html" target="_blank">Termos de Uso</a>
             e a <a href="privacidade.html" target="_blank">Política de Privacidade</a>.
         </p>
+        <p style="margin-top:14px;font-size:12px;text-align:center">
+            <a href="#" onclick="showPage('install');return false" style="color:var(--primary);font-weight:700">📲 Como instalar como app no celular</a>
+        </p>
     </div>
 </div>
 
@@ -443,6 +446,15 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
     <div class="page-body" id="goals-body"></div>
 </div>
 
+<!-- ========== PAGE: INSTALAR (PWA) ========== -->
+<div id="page-install" class="page">
+    <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+        <button class="btn-icon btn-outline" onclick="installBack()" style="width:36px;height:36px">←</button>
+        <div style="flex:1"><div style="font-size:16px;font-weight:700">📲 Instalar como app</div></div>
+    </div>
+    <div class="page-body" id="install-body"></div>
+</div>
+
 <!-- ========== BOTTOM NAV ========== -->
 <div class="bottom-nav hidden" id="bottom-nav">
     <button class="nav-item active" onclick="showPage('dash')" data-page="dash">
@@ -499,7 +511,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.10.2';
+const APP_VERSION = '1.10.3';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1148,10 +1160,12 @@ auth.onAuthStateChanged(async user => {
         } else if (D && !D._welcomeSeen) {
             setTimeout(showWelcomeModal, 600);
         }
+        maybeRouteHash();
     } else {
         D = null;
         showPage('login');
         $('bottom-nav').classList.add('hidden');
+        maybeRouteHash();
     }
 });
 
@@ -1217,6 +1231,138 @@ function showPage(name) {
     else if (name === 'vitais') rVitais();
     else if (name === 'goals') rGoals();
     else if (name === 'admin') rAdmin();
+    else if (name === 'install') rInstall();
+}
+
+// ========== INSTALAÇÃO (PWA — Adicionar à Tela de Início) ==========
+let deferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredInstallPrompt = e;            // Android/desktop Chrome: temos botão nativo
+    if (cPage === 'install') rInstall();
+});
+window.addEventListener('appinstalled', () => {
+    deferredInstallPrompt = null;
+    try { toast('✓ App instalado!'); } catch (e) {}
+    if (cPage === 'install') rInstall();
+});
+window.addEventListener('hashchange', () => {
+    if (location.hash === '#instalar' || location.hash === '#install') showPage('install');
+});
+
+function isStandalone() {
+    return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+}
+function maybeRouteHash() {
+    if (location.hash === '#instalar' || location.hash === '#install') showPage('install');
+}
+function detectPlatform() {
+    const ua = (navigator.userAgent || '').toLowerCase();
+    const isIOS = /iphone|ipad|ipod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const isAndroid = /android/.test(ua);
+    const inApp = /fban|fbav|instagram|micromessenger|whatsapp|; wv\)|line\//.test(ua);
+    const iosSafari = isIOS && /safari/.test(ua) && !/crios|fxios|edgios|opios/.test(ua);
+    if (isIOS) return { os: 'ios', iosSafari, inApp };
+    if (isAndroid) return { os: 'android', inApp };
+    return { os: 'desktop' };
+}
+function installBack() {
+    if (location.hash) { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} }
+    showPage(U ? 'dash' : 'login');
+}
+function dismissInstallBanner() {
+    try { localStorage.setItem('installBannerDismissed', '1'); } catch (e) {}
+    const el = document.getElementById('install-banner');
+    if (el) el.remove();
+}
+function installBannerHtml() {
+    if (isStandalone()) return '';
+    try { if (localStorage.getItem('installBannerDismissed') === '1') return ''; } catch (e) {}
+    return `
+        <div id="install-banner" class="card mb-12" style="border:1px solid var(--primary);background:linear-gradient(135deg,rgba(16,185,129,.14),transparent);display:flex;align-items:center;gap:10px">
+            <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;cursor:pointer" onclick="showPage('install')">
+                <span style="font-size:22px">📲</span>
+                <div style="flex:1;min-width:0">
+                    <div style="font-size:13px;font-weight:700;color:var(--text)">Instale como app no seu celular</div>
+                    <div style="font-size:11px;color:var(--text2)">Abre da tela inicial, em tela cheia. Toque para ver como ›</div>
+                </div>
+            </div>
+            <button class="btn-icon btn-outline" onclick="event.stopPropagation();dismissInstallBanner()" title="Dispensar" style="width:28px;height:28px;font-size:12px;flex-shrink:0">✕</button>
+        </div>`;
+}
+function copyAppUrl() {
+    const url = 'https://saude.gilenogestao.com.br';
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(() => toast('✓ Endereço copiado')).catch(() => toast(url));
+    } else { toast(url); }
+}
+async function doInstallPrompt() {
+    if (!deferredInstallPrompt) return;
+    deferredInstallPrompt.prompt();
+    try { await deferredInstallPrompt.userChoice; } catch (e) {}
+    deferredInstallPrompt = null;
+    rInstall();
+}
+function installStep(n, html) {
+    return `<div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:14px">
+        <div style="width:28px;height:28px;border-radius:50%;background:var(--primary);color:#0a0f0a;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:14px">${n}</div>
+        <div style="flex:1;font-size:14px;color:var(--text);line-height:1.5;padding-top:3px">${html}</div>
+    </div>`;
+}
+function rInstall() {
+    if (isStandalone()) {
+        $('install-body').innerHTML = `
+            <div class="card text-center" style="padding:32px 20px;margin-top:8px">
+                <div style="font-size:48px;margin-bottom:12px">✅</div>
+                <div style="font-size:17px;font-weight:700;margin-bottom:6px">App já instalado!</div>
+                <div style="font-size:13px;color:var(--text3)">Você já está usando o Gestão Saúde como aplicativo. 🎉</div>
+            </div>`;
+        return;
+    }
+    const p = detectPlatform();
+    const introCard = (txt) => `<div class="card mb-12" style="background:var(--surface2)"><div style="font-size:13px;color:var(--text2);line-height:1.5">${txt}</div></div>`;
+    let html = '';
+
+    if (p.os === 'ios') {
+        if (p.inApp || !p.iosSafari) {
+            html += `<div class="card mb-12" style="border:1px solid #f59e0b;background:rgba(251,191,36,.12)">
+                <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:6px">⚠️ Abra no Safari primeiro</div>
+                <div style="font-size:13px;color:var(--text2);line-height:1.5">No iPhone, só o <strong>Safari</strong> consegue instalar o app (pelo WhatsApp, Instagram ou Chrome não dá). Toque nos <strong>3 pontinhos</strong> ou no ícone de compartilhar e escolha <strong>"Abrir no Safari"</strong> — ou copie o endereço e cole no Safari.</div>
+                <button class="btn btn-outline" style="width:100%;margin-top:10px" onclick="copyAppUrl()">📋 Copiar endereço do app</button>
+            </div>`;
+        }
+        html += introCard('Instalar no iPhone leva 10 segundos e deixa o app igual a qualquer outro, na sua tela inicial:');
+        html += installStep(1, 'Toque no botão <strong>Compartilhar</strong> — o quadradinho com a seta pra cima <span style="font-size:16px">⬆️</span> (na barra de baixo do Safari).');
+        html += installStep(2, 'Role a lista e toque em <strong>"Adicionar à Tela de Início"</strong>.');
+        html += installStep(3, 'Toque em <strong>"Adicionar"</strong> no canto superior direito.');
+        html += installStep(4, 'Pronto! O ícone <strong>🏥 Gestão Saúde</strong> aparece na sua tela. Abra sempre por ele.');
+    } else if (p.os === 'android') {
+        if (deferredInstallPrompt) {
+            html += `<div class="card mb-12" style="border:1px solid var(--primary);text-align:center">
+                <div style="font-size:14px;font-weight:700;margin-bottom:4px">Instalação com 1 toque 🎉</div>
+                <div style="font-size:12px;color:var(--text2);margin-bottom:12px">Seu celular já reconheceu o app.</div>
+                <button class="btn btn-primary" style="width:100%" onclick="doInstallPrompt()">📲 Instalar agora</button>
+            </div>`;
+            html += introCard('Se o botão acima não funcionar, dá pra instalar pelo menu do Chrome:');
+        } else {
+            html += introCard('Instalar no Android deixa o app na sua tela inicial, em tela cheia:');
+        }
+        html += installStep(1, 'Toque no menu <strong>⋮</strong> (três pontinhos) no canto superior direito do Chrome.');
+        html += installStep(2, 'Toque em <strong>"Instalar app"</strong> (ou "Adicionar à tela inicial").');
+        html += installStep(3, 'Confirme em <strong>"Instalar"</strong>. O ícone aparece na sua tela. 🎉');
+    } else {
+        if (deferredInstallPrompt) {
+            html += `<div class="card mb-12" style="border:1px solid var(--primary);text-align:center">
+                <button class="btn btn-primary" style="width:100%" onclick="doInstallPrompt()">💻 Instalar no computador</button>
+            </div>`;
+        }
+        html += introCard('Pra instalar no computador (Chrome ou Edge):');
+        html += installStep(1, 'Procure o ícone de <strong>instalar</strong> (um monitor com seta, ⊕) no canto direito da barra de endereço.');
+        html += installStep(2, 'Ou abra o menu <strong>⋮</strong> → <strong>"Instalar Gestão Saúde"</strong>.');
+        html += installStep(3, 'Confirme. O app abre em janela própria, como um programa.');
+    }
+    html += `<div style="font-size:11px;color:var(--text3);text-align:center;margin-top:10px;line-height:1.5">É grátis e não ocupa espaço como um app comum — funciona até offline depois da 1ª abertura.</div>`;
+    $('install-body').innerHTML = html;
 }
 
 // ========== ADMIN ==========
@@ -1746,6 +1892,7 @@ function rDash() {
 
     $('dash-body').innerHTML = `
         ${dateStripHtml()}
+        ${installBannerHtml()}
         ${alerts}
         <!-- Progresso -->
         ${!isModuleEnabled('refeicao') ? '' : `
@@ -3630,6 +3777,10 @@ function rGoals() {
                 <div><div class="cfg-label">👥 Painel Admin</div><div class="cfg-desc">Ver usuários cadastrados e atividade</div></div>
                 <button class="btn btn-outline btn-sm" onclick="showPage('admin')">Abrir</button>
             </div>` : ''}
+            <div class="cfg-item">
+                <div><div class="cfg-label">📲 Instalar como app</div><div class="cfg-desc">Coloca o app na tela inicial do celular</div></div>
+                <button class="btn btn-outline btn-sm" onclick="showPage('install')">Ver como</button>
+            </div>
             <div class="cfg-item">
                 <div><div class="cfg-label">📄 Termos e Privacidade</div><div class="cfg-desc">
                     <a href="termos.html" target="_blank">Termos de Uso</a> ·
@@ -5973,7 +6124,7 @@ window.addEventListener('offline', () => {
 });
 
 function shareApp() {
-    const url = 'https://gilenogestorsaude.github.io';
+    const url = 'https://saude.gilenogestao.com.br';
     const text = `Oi! Tô testando um app pessoal de gestão de saúde — refeições, hidratação, treino, medicamentos e sinais vitais, tudo num lugar só. 🌱
 
 Tá em fase de testes (BETA) e queria muito a sua opinião sincera: o que faz sentido, o que tá confuso, o que falta.
