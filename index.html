@@ -278,6 +278,7 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
         </button>
         <p style="margin-top:16px;font-size:12px;color:var(--text3);text-align:center">
             Não tem conta? <a href="#" onclick="registerEmail()">Criar conta</a>
+            &nbsp;·&nbsp; <a href="#" onclick="resetPassword();return false">Esqueci minha senha</a>
         </p>
         <p style="margin-top:10px;font-size:11px;color:var(--text3);text-align:center">
             Ao entrar ou criar conta, você concorda com os <a href="termos.html" target="_blank">Termos de Uso</a>
@@ -498,7 +499,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.10.0';
+const APP_VERSION = '1.10.1';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -991,6 +992,18 @@ function registerEmail() {
     if (!email || !pass) return toast('Preencha email e senha', true);
     if (pass.length < 6) return toast('Senha mínima: 6 caracteres', true);
     auth.createUserWithEmailAndPassword(email, pass).catch(e => toast('Erro: ' + e.message, true));
+}
+
+function resetPassword() {
+    const email = $('login-email').value.trim();
+    if (!email) return toast('Digite seu e-mail no campo acima e toque de novo em "Esqueci minha senha"', true);
+    auth.sendPasswordResetEmail(email)
+        .then(() => toast('📧 Enviamos um link de redefinição pra ' + email + '. Olhe também o spam.'))
+        .catch(e => {
+            if (e.code === 'auth/user-not-found') toast('Não existe conta com esse e-mail', true);
+            else if (e.code === 'auth/invalid-email') toast('E-mail inválido', true);
+            else toast('Erro: ' + e.message, true);
+        });
 }
 
 function loginGoogle() {
