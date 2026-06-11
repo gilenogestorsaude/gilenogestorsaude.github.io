@@ -520,7 +520,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.10.4';
+const APP_VERSION = '1.10.5';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1385,53 +1385,102 @@ function openTutorialFromWelcome() {
     closeWelcomeModal();
     showPage('tutorial');
 }
-function tutSection(icon, title, bodyHtml) {
-    return `<div class="card mb-12">
-        <div style="font-size:15px;font-weight:800;color:var(--text);margin-bottom:8px">${icon} ${title}</div>
-        <div style="font-size:13px;color:var(--text2);line-height:1.65">${bodyHtml}</div>
-    </div>`;
+// Carrossel "stories": 1 cartão por tela, fonte grande, arrasta pro lado.
+let tutIndex = 0;
+function tutSlides() {
+    return [
+        { icon: '🌱', title: 'Bem-vindo! 👋', body:
+            `O <strong>Gestão Saúde</strong> reúne sua rotina de saúde num lugar só.<br><br>
+             Aqui vai o essencial pra começar — é rapidinho.<br><br>
+             <span style="color:var(--text3)">Arraste pro lado ou toque em <strong>Próximo ›</strong></span>` },
+        { icon: '🧭', title: 'As 5 áreas', body:
+            `Na barra de baixo você navega:<br><br>
+             🏠 <strong>Início</strong> — o resumo do seu dia.<br>
+             🍽️ <strong>Refeição</strong> — o que você comeu.<br>
+             💧 <strong>Água</strong> — cada copo ou garrafa.<br>
+             💊 <strong>Meds</strong> — seus remédios e horários.<br>
+             🎯 <strong>Metas</strong> — metas e configurações.` },
+        { icon: '✍️', title: 'O básico do dia', body:
+            `🍽️ <strong>Refeição:</strong> escolha o alimento e a quantidade.<br><br>
+             💧 <strong>Água:</strong> toque no volume que bebeu.<br><br>
+             💊 <strong>Remédio:</strong> toque no círculo quando tomar.<br><br>
+             📊 <strong>Peso / Pressão:</strong> no Início, toque em <strong>Sinais Vitais</strong>.<br><br>
+             Tudo é salvo sozinho. ✅` },
+        { icon: '🏋️', title: 'Treino', body:
+            `Crie suas fichas (Treino A, B, C…) com exercícios, séries e cargas.<br><br>
+             <strong>Execute série a série:</strong> marque o que fez e ajuste a carga no dedo com −/+. O descanso é cronometrado sozinho.<br><br>
+             Veja seu <strong>histórico</strong> e seus recordes 🏆.
+             <div style="margin-top:14px;padding:11px 13px;border-radius:10px;background:rgba(124,58,237,.13);font-size:14px;color:var(--text2)">📋 Importar a ficha do seu <strong>personal</strong> ou o plano da <strong>nutri</strong> direto no app é um recurso da versão <strong style="color:#7c3aed">Pro</strong> (em breve).</div>` },
+        { icon: '🎛️', title: 'Deixe do seu jeito', body:
+            `Em <strong>🎯 Metas → Configurações</strong>:<br><br>
+             • <strong>Desligue</strong> os módulos que não usa — o app fica só com o que importa pra você.<br><br>
+             • Tema claro ou escuro (☀ no topo).<br><br>
+             • Veja e registre <strong>dias anteriores</strong> com as setas ‹ › no topo.` },
+        { icon: '🔒', title: 'Seus dados & feedback', body:
+            `Seus dados ficam <strong>só na sua conta</strong> — ninguém mais vê.<br><br>
+             Este app está em <strong style="color:#dc2626">BETA</strong>: toda sugestão ajuda muito. Mande pro Gileno do jeito que preferir — print, áudio ou texto. 💬<br><br>
+             <button class="btn btn-outline" style="width:100%" onclick="showPage('install')">📲 Instalar como app no celular</button>` }
+    ];
 }
 function rTutorial() {
-    let html = `<div class="card mb-12" style="background:var(--surface2)">
-        <div style="font-size:13px;color:var(--text2);line-height:1.6">O <strong>Gestão Saúde</strong> reúne sua rotina num lugar só. Aqui vai o essencial pra começar — leva 2 minutinhos. 🌱</div>
-    </div>`;
-
-    html += tutSection('🧭', 'As áreas (barra de baixo)',
-        `🏠 <strong>Início</strong> — o resumo do seu dia: calorias, água, treino e remédios.<br>
-         🍽️ <strong>Refeição</strong> — registra o que você comeu.<br>
-         💧 <strong>Água</strong> — marca cada copo ou garrafa.<br>
-         💊 <strong>Meds</strong> — seus remédios e horários.<br>
-         🎯 <strong>Metas</strong> — suas metas e as configurações.`);
-
-    html += tutSection('✍️', 'O básico do dia',
-        `• <strong>Refeição:</strong> toque em 🍽️, escolha o alimento e a quantidade.<br>
-         • <strong>Água:</strong> toque em 💧 e no volume que bebeu.<br>
-         • <strong>Remédio:</strong> em 💊, toque no círculo quando tomar.<br>
-         • <strong>Peso / Pressão:</strong> no Início, toque no card de <strong>Sinais Vitais</strong> pra anotar.<br>
-         Tudo é salvo sozinho na sua conta. ✅`);
-
-    html += tutSection('🏋️', 'Treino',
-        `Em <strong>🏋️ Treino</strong> (a partir do Início):<br>
-         • Crie suas fichas (Treino A, B, C…) com exercícios, séries e cargas.<br>
-         • <strong>Execute série a série:</strong> marque cada série feita e ajuste a carga no dedo com −/+ — o cronômetro de descanso sobe sozinho.<br>
-         • Veja seu <strong>histórico</strong> e seus recordes 🏆 (toque no card "Último treino" ou em "📁 Ver histórico").
-         <div style="margin-top:10px;padding:9px 11px;border-radius:8px;background:rgba(124,58,237,.12);font-size:12px;color:var(--text2)">📋 Importar a ficha do seu <strong>personal</strong> ou o plano da <strong>nutricionista</strong> direto no app é um recurso da versão <strong style="color:#7c3aed">Pro</strong> (em breve).</div>`);
-
-    html += tutSection('🎛️', 'Deixe do seu jeito',
-        `Em <strong>🎯 Metas → Configurações</strong> você:<br>
-         • Liga/desliga os módulos que não usa — o app fica só com o que importa pra você.<br>
-         • Troca entre tema claro e escuro (☀ no topo).<br>
-         • Ajusta suas metas (calorias, água…).<br>
-         Dá pra ver e registrar <strong>dias anteriores</strong> também — use as setas ‹ › no topo das telas.`);
-
-    html += tutSection('🔒', 'Seus dados e seu feedback',
-        `Seus dados ficam <strong>só na sua conta</strong> — ninguém mais vê o que você registra.<br>
-         Este app está em <strong style="color:#dc2626">BETA</strong>: toda sugestão ajuda muito. Mande pro Gileno do jeito que preferir — print, áudio ou texto. 💬`);
-
-    html += `<button class="btn btn-outline" style="width:100%;margin-top:4px" onclick="showPage('install')">📲 Quer instalar como app no celular? Toque aqui</button>`;
-    html += `<div style="font-size:11px;color:var(--text3);text-align:center;margin-top:12px;line-height:1.5">Pra rever isto depois: <strong>Metas → Configurações → Como usar</strong>.</div>`;
-
-    $('tutorial-body').innerHTML = html;
+    tutIndex = 0;
+    const slides = tutSlides();
+    const slidesHtml = slides.map(s => `
+        <div style="min-width:100%;box-sizing:border-box;padding:10px 6px;display:flex;flex-direction:column;justify-content:center">
+            <div style="text-align:center;font-size:56px;line-height:1;margin-bottom:18px">${s.icon}</div>
+            <div style="text-align:center;font-size:23px;font-weight:800;color:var(--text);margin-bottom:18px">${s.title}</div>
+            <div style="font-size:17px;color:var(--text);line-height:1.7">${s.body}</div>
+        </div>`).join('');
+    const dots = slides.map((_, i) => `<span class="tut-dot" onclick="tutGo(${i})" style="width:9px;height:9px;border-radius:999px;background:var(--border);cursor:pointer;transition:all .2s"></span>`).join('');
+    $('tutorial-body').innerHTML = `
+        <div style="display:flex;flex-direction:column;min-height:calc(100vh - 170px)">
+            <div id="tut-viewport" style="overflow:hidden;flex:1">
+                <div id="tut-track" style="display:flex;height:100%;transition:transform .3s ease;will-change:transform">${slidesHtml}</div>
+            </div>
+            <div style="display:flex;justify-content:center;gap:7px;margin:18px 0 14px">${dots}</div>
+            <div style="display:flex;gap:10px">
+                <button id="tut-prev" class="btn btn-outline" style="flex:1" onclick="tutPrev()">‹ Voltar</button>
+                <button id="tut-next" class="btn btn-primary" style="flex:2;font-weight:700" onclick="tutNext()">Próximo ›</button>
+            </div>
+        </div>`;
+    tutBindSwipe();
+    tutUpdate();
+}
+function tutUpdate() {
+    const n = tutSlides().length;
+    const track = document.getElementById('tut-track');
+    if (track) track.style.transform = `translateX(-${tutIndex * 100}%)`;
+    document.querySelectorAll('.tut-dot').forEach((d, i) => {
+        const on = i === tutIndex;
+        d.style.background = on ? 'var(--primary)' : 'var(--border)';
+        d.style.width = on ? '24px' : '9px';
+    });
+    const prev = document.getElementById('tut-prev');
+    const next = document.getElementById('tut-next');
+    if (prev) prev.style.visibility = tutIndex === 0 ? 'hidden' : 'visible';
+    if (next) next.textContent = tutIndex >= n - 1 ? '✓ Começar' : 'Próximo ›';
+}
+function tutGo(i) {
+    const n = tutSlides().length;
+    tutIndex = Math.max(0, Math.min(n - 1, i));
+    tutUpdate();
+}
+function tutNext() {
+    if (tutIndex >= tutSlides().length - 1) { tutorialBack(); return; }
+    tutGo(tutIndex + 1);
+}
+function tutPrev() { tutGo(tutIndex - 1); }
+function tutBindSwipe() {
+    const vp = document.getElementById('tut-viewport');
+    if (!vp) return;
+    let x0 = null;
+    vp.ontouchstart = (e) => { x0 = e.touches[0].clientX; };
+    vp.ontouchend = (e) => {
+        if (x0 == null) return;
+        const dx = e.changedTouches[0].clientX - x0;
+        if (Math.abs(dx) > 40) tutGo(tutIndex + (dx < 0 ? 1 : -1));
+        x0 = null;
+    };
 }
 
 // ========== ADMIN ==========
