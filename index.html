@@ -446,6 +446,15 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
     <div class="page-body" id="goals-body"></div>
 </div>
 
+<!-- ========== PAGE: COMO USAR (TUTORIAL) ========== -->
+<div id="page-tutorial" class="page">
+    <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+        <button class="btn-icon btn-outline" onclick="tutorialBack()" style="width:36px;height:36px">←</button>
+        <div style="flex:1"><div style="font-size:16px;font-weight:700">📖 Como usar o app</div></div>
+    </div>
+    <div class="page-body" id="tutorial-body"></div>
+</div>
+
 <!-- ========== PAGE: INSTALAR (PWA) ========== -->
 <div id="page-install" class="page">
     <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
@@ -511,7 +520,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.10.3';
+const APP_VERSION = '1.10.4';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1191,7 +1200,8 @@ function showWelcomeModal() {
             <div style="font-size:11px;color:var(--text3);margin-bottom:14px;font-style:italic">
                 Manda feedback pro Gileno: print, áudio, texto — o que for melhor pra você.
             </div>
-            <button class="btn btn-primary" style="width:100%;padding:14px;font-size:15px;font-weight:700" onclick="closeWelcomeModal()">Entendi, vamos começar</button>
+            <button class="btn btn-primary" style="width:100%;padding:14px;font-size:15px;font-weight:700" onclick="openTutorialFromWelcome()">📖 Ver como usar (2 min)</button>
+            <button class="btn btn-outline" style="width:100%;padding:12px;font-size:14px;margin-top:8px" onclick="closeWelcomeModal()">Vou explorar sozinho</button>
         </div>
     `;
     document.body.appendChild(overlay);
@@ -1232,6 +1242,7 @@ function showPage(name) {
     else if (name === 'goals') rGoals();
     else if (name === 'admin') rAdmin();
     else if (name === 'install') rInstall();
+    else if (name === 'tutorial') rTutorial();
 }
 
 // ========== INSTALAÇÃO (PWA — Adicionar à Tela de Início) ==========
@@ -1246,15 +1257,15 @@ window.addEventListener('appinstalled', () => {
     try { toast('✓ App instalado!'); } catch (e) {}
     if (cPage === 'install') rInstall();
 });
-window.addEventListener('hashchange', () => {
-    if (location.hash === '#instalar' || location.hash === '#install') showPage('install');
-});
+window.addEventListener('hashchange', () => { maybeRouteHash(); });
 
 function isStandalone() {
     return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
 }
 function maybeRouteHash() {
-    if (location.hash === '#instalar' || location.hash === '#install') showPage('install');
+    const h = location.hash;
+    if (h === '#instalar' || h === '#install') showPage('install');
+    else if (h === '#tutorial' || h === '#comousar') showPage('tutorial');
 }
 function detectPlatform() {
     const ua = (navigator.userAgent || '').toLowerCase();
@@ -1363,6 +1374,64 @@ function rInstall() {
     }
     html += `<div style="font-size:11px;color:var(--text3);text-align:center;margin-top:10px;line-height:1.5">É grátis e não ocupa espaço como um app comum — funciona até offline depois da 1ª abertura.</div>`;
     $('install-body').innerHTML = html;
+}
+
+// ========== COMO USAR (TUTORIAL) ==========
+function tutorialBack() {
+    if (location.hash) { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} }
+    showPage(U ? 'dash' : 'login');
+}
+function openTutorialFromWelcome() {
+    closeWelcomeModal();
+    showPage('tutorial');
+}
+function tutSection(icon, title, bodyHtml) {
+    return `<div class="card mb-12">
+        <div style="font-size:15px;font-weight:800;color:var(--text);margin-bottom:8px">${icon} ${title}</div>
+        <div style="font-size:13px;color:var(--text2);line-height:1.65">${bodyHtml}</div>
+    </div>`;
+}
+function rTutorial() {
+    let html = `<div class="card mb-12" style="background:var(--surface2)">
+        <div style="font-size:13px;color:var(--text2);line-height:1.6">O <strong>Gestão Saúde</strong> reúne sua rotina num lugar só. Aqui vai o essencial pra começar — leva 2 minutinhos. 🌱</div>
+    </div>`;
+
+    html += tutSection('🧭', 'As áreas (barra de baixo)',
+        `🏠 <strong>Início</strong> — o resumo do seu dia: calorias, água, treino e remédios.<br>
+         🍽️ <strong>Refeição</strong> — registra o que você comeu.<br>
+         💧 <strong>Água</strong> — marca cada copo ou garrafa.<br>
+         💊 <strong>Meds</strong> — seus remédios e horários.<br>
+         🎯 <strong>Metas</strong> — suas metas e as configurações.`);
+
+    html += tutSection('✍️', 'O básico do dia',
+        `• <strong>Refeição:</strong> toque em 🍽️, escolha o alimento e a quantidade.<br>
+         • <strong>Água:</strong> toque em 💧 e no volume que bebeu.<br>
+         • <strong>Remédio:</strong> em 💊, toque no círculo quando tomar.<br>
+         • <strong>Peso / Pressão:</strong> no Início, toque no card de <strong>Sinais Vitais</strong> pra anotar.<br>
+         Tudo é salvo sozinho na sua conta. ✅`);
+
+    html += tutSection('🏋️', 'Treino',
+        `Em <strong>🏋️ Treino</strong> (a partir do Início):<br>
+         • Crie suas fichas (Treino A, B, C…) com exercícios, séries e cargas.<br>
+         • <strong>Execute série a série:</strong> marque cada série feita e ajuste a carga no dedo com −/+ — o cronômetro de descanso sobe sozinho.<br>
+         • Veja seu <strong>histórico</strong> e seus recordes 🏆 (toque no card "Último treino" ou em "📁 Ver histórico").
+         <div style="margin-top:10px;padding:9px 11px;border-radius:8px;background:rgba(124,58,237,.12);font-size:12px;color:var(--text2)">📋 Importar a ficha do seu <strong>personal</strong> ou o plano da <strong>nutricionista</strong> direto no app é um recurso da versão <strong style="color:#7c3aed">Pro</strong> (em breve).</div>`);
+
+    html += tutSection('🎛️', 'Deixe do seu jeito',
+        `Em <strong>🎯 Metas → Configurações</strong> você:<br>
+         • Liga/desliga os módulos que não usa — o app fica só com o que importa pra você.<br>
+         • Troca entre tema claro e escuro (☀ no topo).<br>
+         • Ajusta suas metas (calorias, água…).<br>
+         Dá pra ver e registrar <strong>dias anteriores</strong> também — use as setas ‹ › no topo das telas.`);
+
+    html += tutSection('🔒', 'Seus dados e seu feedback',
+        `Seus dados ficam <strong>só na sua conta</strong> — ninguém mais vê o que você registra.<br>
+         Este app está em <strong style="color:#dc2626">BETA</strong>: toda sugestão ajuda muito. Mande pro Gileno do jeito que preferir — print, áudio ou texto. 💬`);
+
+    html += `<button class="btn btn-outline" style="width:100%;margin-top:4px" onclick="showPage('install')">📲 Quer instalar como app no celular? Toque aqui</button>`;
+    html += `<div style="font-size:11px;color:var(--text3);text-align:center;margin-top:12px;line-height:1.5">Pra rever isto depois: <strong>Metas → Configurações → Como usar</strong>.</div>`;
+
+    $('tutorial-body').innerHTML = html;
 }
 
 // ========== ADMIN ==========
@@ -3777,6 +3846,10 @@ function rGoals() {
                 <div><div class="cfg-label">👥 Painel Admin</div><div class="cfg-desc">Ver usuários cadastrados e atividade</div></div>
                 <button class="btn btn-outline btn-sm" onclick="showPage('admin')">Abrir</button>
             </div>` : ''}
+            <div class="cfg-item">
+                <div><div class="cfg-label">📖 Como usar o app</div><div class="cfg-desc">Tutorial rápido das áreas e do dia a dia</div></div>
+                <button class="btn btn-outline btn-sm" onclick="showPage('tutorial')">Abrir</button>
+            </div>
             <div class="cfg-item">
                 <div><div class="cfg-label">📲 Instalar como app</div><div class="cfg-desc">Coloca o app na tela inicial do celular</div></div>
                 <button class="btn btn-outline btn-sm" onclick="showPage('install')">Ver como</button>
