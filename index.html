@@ -279,6 +279,10 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
         <p style="margin-top:16px;font-size:12px;color:var(--text3);text-align:center">
             Não tem conta? <a href="#" onclick="registerEmail()">Criar conta</a>
         </p>
+        <p style="margin-top:10px;font-size:11px;color:var(--text3);text-align:center">
+            Ao entrar ou criar conta, você concorda com os <a href="termos.html" target="_blank">Termos de Uso</a>
+            e a <a href="privacidade.html" target="_blank">Política de Privacidade</a>.
+        </p>
     </div>
 </div>
 
@@ -494,7 +498,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.9.15';
+const APP_VERSION = '1.10.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -743,7 +747,7 @@ function defaultD() {
         // Estratégia BPH (Hiperplasia Prostática Benigna): bloqueia hidratação
         // após bphCutoff pra evitar urinação noturna. Configurável — nem todo
         // usuário tem essa condição, e ela não é necessariamente irreversível.
-        bphEnabled: true
+        bphEnabled: false  // público: default OFF; o onboarding de consentimento pergunta (legados ganham true na migração)
     };
 }
 
@@ -1007,6 +1011,114 @@ function logout() {
     if (confirm('Sair da conta?')) auth.signOut();
 }
 
+// ========== LGPD: consentimento, exportar e excluir ==========
+function isFreshAccount() {
+    // conta sem nenhum registro = acabou de ser criada (onboarding pergunta BPH)
+    return !Object.keys(D.days || {}).length && !(D.treinos || []).length
+        && !Object.keys(D.vitals || {}).length && !Object.keys(D.water || {}).length;
+}
+
+function openConsentModal() {
+    if (document.getElementById('consent-modal')) return;
+    const fresh = isFreshAccount();
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'consent-modal';
+    overlay.innerHTML = `
+        <div class="modal-box" style="max-width:380px">
+            <div class="modal-header"><h3>🔒 Seus dados, suas regras</h3></div>
+            <p style="font-size:13px;line-height:1.5;margin:0 0 10px">
+                Seus registros (refeições, medicamentos, treinos, sinais vitais) são
+                <b>dados sensíveis de saúde</b>. Eles ficam guardados na sua conta, servem só para
+                o app funcionar para você, e <b>nunca</b> são vendidos ou compartilhados.
+                Você pode exportar ou excluir tudo quando quiser, em Metas → Configurações.
+            </p>
+            <label style="display:flex;gap:10px;align-items:flex-start;font-size:13px;line-height:1.45;margin:12px 0">
+                <input type="checkbox" id="consent-check" style="margin-top:2px;width:18px;height:18px;flex-shrink:0">
+                <span>Li e concordo com os <a href="termos.html" target="_blank">Termos de Uso</a> e a
+                <a href="privacidade.html" target="_blank">Política de Privacidade</a>, incluindo o
+                tratamento dos meus dados de saúde para o funcionamento do app.</span>
+            </label>
+            ${fresh ? `
+            <div style="background:var(--bg2,rgba(128,128,128,.08));border-radius:10px;padding:10px 12px;margin-bottom:12px">
+                <label style="display:flex;gap:10px;align-items:flex-start;font-size:13px;line-height:1.45">
+                    <input type="checkbox" id="consent-bph" style="margin-top:2px;width:18px;height:18px;flex-shrink:0">
+                    <span><b>Bloqueio noturno de líquidos?</b> Se você convive com HPB (próstata aumentada),
+                    o app pode bloquear a hidratação à noite. Dá pra mudar depois em Configurações.</span>
+                </label>
+            </div>` : ''}
+            <button class="btn btn-primary w-full" onclick="acceptConsent(${fresh})">Concordo e continuar</button>
+            <p style="text-align:center;margin:10px 0 0"><a href="#" onclick="logout();return false"
+                style="font-size:12px;color:var(--text3)">Não concordo, sair</a></p>
+        </div>`;
+    document.body.appendChild(overlay);
+}
+
+function acceptConsent(fresh) {
+    if (!($('consent-check') || {}).checked) return toast('Marque a caixa de concordância para continuar', true);
+    D.consent = { versao: '1.0', em: new Date().toISOString() };
+    if (fresh) D.bphEnabled = !!($('consent-bph') || {}).checked;
+    save();
+    const m = document.getElementById('consent-modal');
+    if (m) m.remove();
+    toast('✓ Tudo certo, bom uso!');
+    if (!D._welcomeSeen) setTimeout(showWelcomeModal, 400);
+}
+
+function exportMyData() {
+    const payload = { app: 'Gileno Gestão Saúde', versao: APP_VERSION,
+        exportadoEm: new Date().toISOString(), conta: U ? U.email : null, dados: D };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `gestao-saude-dados-${today()}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    toast('📦 Dados exportados');
+}
+
+function openDeleteAccount() {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = `
+        <div class="modal-box" style="max-width:360px">
+            <div class="modal-header">
+                <h3>🗑 Excluir minha conta</h3>
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            </div>
+            <p style="font-size:13px;line-height:1.5;color:var(--red)">
+                <b>Isso apaga sua conta e TODOS os seus registros, sem volta.</b>
+            </p>
+            <p style="font-size:13px;line-height:1.5">Se quiser guardar uma cópia, use antes o
+                "Exportar meus dados". Para confirmar, digite <b>EXCLUIR</b> abaixo:</p>
+            <div class="form-group"><input type="text" id="del-confirm" class="form-input"
+                placeholder="EXCLUIR" autocomplete="off"></div>
+            <button class="btn w-full" style="background:var(--red);color:#fff"
+                onclick="deleteMyAccount()">Excluir definitivamente</button>
+        </div>`;
+    document.body.appendChild(overlay);
+}
+
+async function deleteMyAccount() {
+    const v = (($('del-confirm') || {}).value || '').trim().toUpperCase();
+    if (v !== 'EXCLUIR') return toast('Digite EXCLUIR para confirmar', true);
+    try {
+        const uid = U.uid;
+        // 1º a conta (é a etapa que pode exigir login recente); o token ainda vale pro Firestore logo após
+        await auth.currentUser.delete();
+        await db.collection('users').doc(uid).delete();
+        document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
+        toast('Conta excluída. Cuide-se!');
+    } catch (e) {
+        if (e.code === 'auth/requires-recent-login') {
+            toast('Por segurança: saia, entre de novo e repita a exclusão.', true);
+        } else {
+            toast('Erro: ' + e.message, true);
+        }
+    }
+}
+
 auth.onAuthStateChanged(async user => {
     U = user;
     if (user) {
@@ -1017,8 +1129,10 @@ auth.onAuthStateChanged(async user => {
         if (D && D.theme === 'light') document.body.classList.add('light');
         // Carrega TACO em background (nao bloqueia render)
         loadTACO();
-        // Mostra modal de boas-vindas na primeira vez
-        if (D && !D._welcomeSeen) {
+        // LGPD primeiro (gate); boas-vindas em seguida (acceptConsent encadeia)
+        if (D && !D.consent) {
+            setTimeout(openConsentModal, 400);
+        } else if (D && !D._welcomeSeen) {
             setTimeout(showWelcomeModal, 600);
         }
     } else {
@@ -3503,6 +3617,19 @@ function rGoals() {
                 <div><div class="cfg-label">👥 Painel Admin</div><div class="cfg-desc">Ver usuários cadastrados e atividade</div></div>
                 <button class="btn btn-outline btn-sm" onclick="showPage('admin')">Abrir</button>
             </div>` : ''}
+            <div class="cfg-item">
+                <div><div class="cfg-label">📄 Termos e Privacidade</div><div class="cfg-desc">
+                    <a href="termos.html" target="_blank">Termos de Uso</a> ·
+                    <a href="privacidade.html" target="_blank">Política de Privacidade</a></div></div>
+            </div>
+            <div class="cfg-item">
+                <div><div class="cfg-label">📦 Exportar meus dados</div><div class="cfg-desc">Baixa um arquivo com tudo o que está na sua conta</div></div>
+                <button class="btn btn-outline btn-sm" onclick="exportMyData()">Exportar</button>
+            </div>
+            <div class="cfg-item">
+                <div><div class="cfg-label">Excluir minha conta</div><div class="cfg-desc">Apaga a conta e todos os dados, sem volta</div></div>
+                <button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="openDeleteAccount()">Excluir</button>
+            </div>
             <div class="cfg-item" style="border:none">
                 <div><div class="cfg-label">Conta</div><div class="cfg-desc">${U ? U.email : ''}</div></div>
                 <button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="logout()">Sair</button>
