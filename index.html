@@ -520,7 +520,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.10.6';
+const APP_VERSION = '1.10.7';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1424,7 +1424,6 @@ function tutSlides() {
 }
 function rTutorial() {
     tutIndex = 0;
-    if (D && !D._tutorialDone) { D._tutorialDone = true; save(); }  // some o card do Início
     const slides = tutSlides();
     const slidesHtml = slides.map(s => `
         <div style="min-width:100%;box-sizing:border-box;padding:10px 6px;display:flex;flex-direction:column;justify-content:center">
