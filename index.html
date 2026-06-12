@@ -520,7 +520,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.10.5';
+const APP_VERSION = '1.10.6';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1424,12 +1424,13 @@ function tutSlides() {
 }
 function rTutorial() {
     tutIndex = 0;
+    if (D && !D._tutorialDone) { D._tutorialDone = true; save(); }  // some o card do Início
     const slides = tutSlides();
     const slidesHtml = slides.map(s => `
         <div style="min-width:100%;box-sizing:border-box;padding:10px 6px;display:flex;flex-direction:column;justify-content:center">
             <div style="text-align:center;font-size:56px;line-height:1;margin-bottom:18px">${s.icon}</div>
             <div style="text-align:center;font-size:23px;font-weight:800;color:var(--text);margin-bottom:18px">${s.title}</div>
-            <div style="font-size:17px;color:var(--text);line-height:1.7">${s.body}</div>
+            <div style="font-size:17px;color:var(--text);line-height:1.7;text-align:center">${s.body}</div>
         </div>`).join('');
     const dots = slides.map((_, i) => `<span class="tut-dot" onclick="tutGo(${i})" style="width:9px;height:9px;border-radius:999px;background:var(--border);cursor:pointer;transition:all .2s"></span>`).join('');
     $('tutorial-body').innerHTML = `
@@ -1470,6 +1471,27 @@ function tutNext() {
     tutGo(tutIndex + 1);
 }
 function tutPrev() { tutGo(tutIndex - 1); }
+function homeTutorialCardHtml() {
+    if (!D || D._tutorialDone) return '';
+    return `
+        <div id="home-tut-card" class="card mb-12" style="border:1px solid var(--primary);background:linear-gradient(135deg,rgba(16,185,129,.16),transparent)">
+            <div style="display:flex;align-items:center;gap:10px">
+                <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;cursor:pointer" onclick="showPage('tutorial')">
+                    <span style="font-size:24px">📖</span>
+                    <div style="flex:1;min-width:0">
+                        <div style="font-size:14px;font-weight:700;color:var(--text)">Primeira vez aqui? 👋</div>
+                        <div style="font-size:12px;color:var(--text2)">Veja como usar o app em 6 telinhas rápidas ›</div>
+                    </div>
+                </div>
+                <button class="btn-icon btn-outline" onclick="event.stopPropagation();dismissHomeTutorialCard()" title="Dispensar" style="width:28px;height:28px;font-size:12px;flex-shrink:0">✕</button>
+            </div>
+        </div>`;
+}
+function dismissHomeTutorialCard() {
+    if (D) { D._tutorialDone = true; save(); }
+    const el = document.getElementById('home-tut-card');
+    if (el) el.remove();
+}
 function tutBindSwipe() {
     const vp = document.getElementById('tut-viewport');
     if (!vp) return;
@@ -2010,6 +2032,7 @@ function rDash() {
 
     $('dash-body').innerHTML = `
         ${dateStripHtml()}
+        ${homeTutorialCardHtml()}
         ${installBannerHtml()}
         ${alerts}
         <!-- Progresso -->
