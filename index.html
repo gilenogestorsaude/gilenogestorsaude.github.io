@@ -250,19 +250,7 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
 .modal-body{margin-top:4px}
 .plan-card{border-left:3px solid var(--primary)}
 .added-total{display:flex;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:2px solid var(--primary);font-weight:700;font-size:13px}
-/* ========== EXPORTAR PDF — impressão de uma sessão de treino (Pro) ========== */
-.print-only{display:none}
-@media print{
-  body{background:#fff !important}
-  .bottom-nav,.no-print{display:none !important}
-  .page:not(.active){display:none !important}
-  body *{visibility:hidden}
-  #session-print,#session-print *{visibility:visible}
-  #session-print{position:absolute;left:0;top:0;width:100%;padding:8px 6px;color:#111 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-  #session-print *{color:#111 !important}
-  #session-print .card,#session-print [style*="var(--bg)"]{background:#fff !important;border:1px solid #ccc !important;box-shadow:none !important}
-  #session-print .print-only{display:block !important}
-}
+</style>
 </head>
 <body>
 
@@ -395,18 +383,6 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
         <button class="btn btn-primary btn-sm" onclick="saveTreino()">Salvar</button>
     </div>
     <div class="page-body" id="treino-editor-body"></div>
-</div>
-
-<!-- ========== PAGE: TREINO SESSION (registro selado, só-leitura) ========== -->
-<div id="page-treino-session" class="page">
-    <div class="no-print" style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
-        <button class="btn-icon btn-outline" onclick="showPage('treino-history')" style="width:36px;height:36px">←</button>
-        <div style="flex:1;min-width:0">
-            <div style="font-size:16px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="treino-session-title">Sessão</div>
-            <div style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="treino-session-subtitle">Registro</div>
-        </div>
-    </div>
-    <div class="page-body" id="treino-session-body"></div>
 </div>
 
 <!-- ========== PAGE: SINAIS VITAIS ========== -->
@@ -544,7 +520,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.10.10';
+const APP_VERSION = '1.10.8';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1260,7 +1236,6 @@ function showPage(name) {
     else if (name === 'template-editor') rTemplateEditor();
     else if (name === 'treino-execute') rTreinoExecute();
     else if (name === 'treino-history') rTreinoHistory();
-    else if (name === 'treino-session') rTreinoSession();
     else if (name === 'treino-editor') rTreinoEditor();
     else if (name === 'consultas') rConsultas();
     else if (name === 'vitais') rVitais();
@@ -1832,20 +1807,12 @@ function rDash() {
     const totalWater = getDayWater(dt);
     const vitals = D.vitals[dt] || {};
 
-    // Vitais do DIA EM VISUALIZAÇÃO (curDate), com fallback p/ a medição mais recente
-    // ANTERIOR a esse dia; recência sempre relativa ao dia visto (sugestão da família 28/mai;
-    // day-scope v1.10.9 — antes usava o último valor GLOBAL => mostrava "hoje" em qualquer dia).
-    const pv = vitalAsOf('peso', dt);
-    const pesoVal = pv.value != null ? pv.value : D.peso; // legado sem vitais datados
-    const pesoAgo = pv.value != null ? pv.daysAgo : null;
-    const imcNow = (pesoVal && D.altura && D.altura > 0) ? (pesoVal / (D.altura * D.altura)) : null;
-    const vFc = vitalAsOf('fc', dt);
-    const vPa = vitalAsOf('pa', dt);
-    const staleSub = (daysAgo, unit) => {
-        if (daysAgo == null) return unit;
-        if (daysAgo === 0) return `<span style="color:#15803d;font-weight:700">${viewingToday() ? 'hoje' : 'neste dia'}</span>`;
-        return `<span style="color:#b45309;font-weight:700">há ${daysAgo}d</span>`;
-    };
+    // Vitais com fallback p/ último valor medido (sugestão da família 28/mai)
+    const imcNow = calcIMC();
+    const pesoAgo = getDaysSinceLastWeight();
+    const vFc = lastVital('fc');
+    const vPa = lastVital('pa');
+    const staleSub = (daysAgo, unit) => daysAgo == null ? unit : (daysAgo === 0 ? '<span style="color:#15803d;font-weight:700">hoje</span>' : `<span style="color:#b45309;font-weight:700">há ${daysAgo}d</span>`);
 
     // Header
     const userName = U ? (U.displayName || U.email.split('@')[0]) : 'Usuário';
@@ -1868,8 +1835,8 @@ function rDash() {
         <div class="header-stats">
             <div class="header-stat" onclick="openVitalEditor()">
                 <div class="header-stat-emo">⚖️</div>
-                <div class="header-stat-value">${pesoVal != null ? fmt(pesoVal) : '—'}</div>
-                <div class="header-stat-unit">${pesoVal != null ? staleSub(pesoAgo, 'kg') : 'registrar'}</div>
+                <div class="header-stat-value">${D.peso ? fmt(D.peso) : '—'}</div>
+                <div class="header-stat-unit">${D.peso ? staleSub(pesoAgo, 'kg') : 'registrar'}</div>
             </div>
             <div class="header-stat" onclick="${imcNow == null ? `showPage('goals')` : `openVitalEditor()`}">
                 <div class="header-stat-emo">📊</div>
@@ -2298,40 +2265,27 @@ function rDash() {
                 </div>
             </div>
             ${(() => {
-                // Vitais do dia em visualização (curDate), com fallback p/ medição anterior (v1.10.9)
-                const pv = vitalAsOf('peso', dt), av = vitalAsOf('pa', dt), fv = vitalAsOf('fc', dt);
-                const campos = [pv, av, fv].filter(x => x.value != null);
-                if (campos.length === 0) {
+                const last = getLastVital();
+                const stats = getPesoStats();
+                if (!last) {
                     return `<div style="font-size:12px;color:var(--text3);text-align:center;padding:8px 0">Nenhuma medição registrada.</div>`;
                 }
-                const minAgo = Math.min(...campos.map(x => x.daysAgo));
-                let quando;
-                if (minAgo === 0) {
-                    quando = viewingToday() ? 'MEDIÇÃO DE HOJE' : `MEDIÇÃO DE ${dateLabel(dt).toUpperCase()}`;
-                } else {
-                    const rel = viewingToday()
-                        ? (minAgo === 1 ? 'ONTEM' : `HÁ ${minAgo} DIAS`)
-                        : (minAgo === 1 ? '1 DIA ANTES' : `${minAgo} DIAS ANTES`);
-                    quando = `ÚLTIMA MEDIÇÃO — ${rel}`;
-                }
-                // "Esta semana" é relativa a hoje real (getPesoStats global) → só no dia de hoje
+                const dRel = daysSince(last.data);
+                const dStr = dRel === 0 ? 'hoje' : (dRel === 1 ? 'ontem' : `há ${dRel} dias`);
                 let setaSemHtml = '';
-                if (viewingToday()) {
-                    const stats = getPesoStats();
-                    if (stats && stats.variacaoSemana != null) {
-                        const v = stats.variacaoSemana;
-                        if (v === 0) setaSemHtml = `<span style="color:var(--text2)">= 0,0 kg</span>`;
-                        else if (v > 0) setaSemHtml = `<span style="color:var(--red)">↑ +${fmt(v)} kg</span>`;
-                        else setaSemHtml = `<span style="color:var(--green)">↓ ${fmt(v)} kg</span>`;
-                    }
+                if (stats && stats.variacaoSemana != null) {
+                    const v = stats.variacaoSemana;
+                    if (v === 0) setaSemHtml = `<span style="color:var(--text2)">= 0,0 kg</span>`;
+                    else if (v > 0) setaSemHtml = `<span style="color:var(--red)">↑ +${fmt(v)} kg</span>`;
+                    else setaSemHtml = `<span style="color:var(--green)">↓ ${fmt(v)} kg</span>`;
                 }
                 const partes = [];
-                if (pv.value != null) partes.push(`<strong>${fmt(pv.value)}</strong> kg`);
-                if (av.value != null) partes.push(`PA ${av.value}`);
-                if (fv.value != null) partes.push(`FC ${fv.value}`);
+                if (last.peso) partes.push(`<strong>${fmt(last.peso)}</strong> kg`);
+                if (last.pa) partes.push(`PA ${last.pa}`);
+                if (last.fc) partes.push(`FC ${last.fc}`);
                 return `
                     <div style="padding:10px;background:var(--bg);border-radius:12px">
-                        <div style="font-size:10px;color:var(--text3);font-weight:600;letter-spacing:.5px">${quando}</div>
+                        <div style="font-size:10px;color:var(--text3);font-weight:600;letter-spacing:.5px">ÚLTIMA — ${dStr}</div>
                         <div style="font-size:14px;font-weight:700;color:var(--text);margin-top:2px">${partes.join(' • ') || '—'}</div>
                         ${setaSemHtml ? `<div style="font-size:11px;margin-top:2px">Esta semana: ${setaSemHtml}</div>` : ''}
                     </div>
@@ -3838,14 +3792,7 @@ function rGoals() {
                 <span>❤️ <strong style="color:var(--text)">${(D.vitals[dt] || {}).fc || '—'}</strong> bpm</span>
                 <span>😴 <strong style="color:var(--text)">${(() => { const s = calcSleepDuration((D.vitals[dt] || {}).dormir, (D.vitals[dt] || {}).acordar); return s != null ? formatSleepDuration(s) : '—'; })()}</strong></span>
             </div>
-            ${(() => {
-                // IMC do DIA em visualização: usa o peso mostrado acima (do dia, c/ fallback p/ D.peso),
-                // não o IMC global — antes mostrava o IMC de hoje mesmo navegando dias anteriores (v1.10.9).
-                const dv = D.vitals[dt] || {};
-                const pesoDia = dv.peso != null ? dv.peso : D.peso;
-                const imc = (pesoDia && D.altura && D.altura > 0) ? (pesoDia / (D.altura * D.altura)) : null;
-                return imc == null ? '' : `<div style="font-size:11px;color:var(--text3);margin-bottom:14px">IMC: <strong style="color:${imcColor(imc)}">${imc.toFixed(1)}</strong> — ${imcLabel(imc)}</div>`;
-            })()}
+            ${calcIMC() != null ? `<div style="font-size:11px;color:var(--text3);margin-bottom:14px">IMC: <strong style="color:${imcColor(calcIMC())}">${calcIMC().toFixed(1)}</strong> — ${imcLabel(calcIMC())}</div>` : ''}
             <button class="btn btn-primary" style="width:100%;margin-bottom:12px" onclick="openVitalEditor('${dt}')">✏️ Registrar / editar medição ${viewingToday() ? 'de hoje' : 'deste dia'}</button>
             <div class="form-group" style="margin-bottom:0">
                 <label class="form-label">Altura (m) — usada no cálculo do IMC</label>
@@ -5131,7 +5078,7 @@ function rTreinoHistory() {
         const prChip = pr ? `<span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(251,191,36,.18);color:#f59e0b">🏆 PR</span>` : '';
         const exNomes = t.exercicios.slice(0, 3).map(e => e.nome).filter(Boolean).join(', ') + (t.exercicios.length > 3 ? '…' : '');
         listHtml += `
-            <div class="card mb-8" onclick="openTreinoSession('${t.id}')" style="cursor:pointer${pr ? ';border-left:3px solid #f59e0b' : ''}">
+            <div class="card mb-8" onclick="openTreinoEditor('${t.id}')" style="cursor:pointer${pr ? ';border-left:3px solid #f59e0b' : ''}">
                 <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px">
                     <div style="flex:1;min-width:0">
                         <div style="font-size:14px;font-weight:700;color:var(--text)">${t.nome}</div>
@@ -5148,104 +5095,6 @@ function rTreinoHistory() {
     });
 
     $('treino-history-body').innerHTML = `${resumoHtml}${listHtml}`;
-}
-
-// ========== TREINO — SESSÃO SELADA (só-leitura + reabrir + exportar PDF) ==========
-let viewingSessionId = null;
-
-function openTreinoSession(id) {
-    const t = (D.treinos || []).find(x => x.id === id);
-    if (!t) return;
-    viewingSessionId = id;
-    showPage('treino-session');
-}
-
-function rTreinoSession() {
-    const body = $('treino-session-body');
-    if (!body) return;
-    const t = (D.treinos || []).find(x => x.id === viewingSessionId);
-    if (!t) { showPage('treino-history'); return; }
-
-    const stat = treinoStats(t);
-    const groups = detectMuscleGroups(t);
-    const pr = isTreinoPR(t);
-    const isPro = !!D.proPreview;
-
-    const titleEl = $('treino-session-title');
-    const subEl = $('treino-session-subtitle');
-    if (titleEl) titleEl.textContent = t.nome || 'Sessão';
-    if (subEl) subEl.textContent = `${formatDataTreino(t.data)}${t.duracao ? ' • ' + t.duracao + ' min' : ''}`;
-
-    const chipsHtml = groups.map(g => `<span style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;background:${g.color}22;color:${g.color}">${g.label}</span>`).join(' ');
-    const prChip = pr ? `<span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(251,191,36,.18);color:#f59e0b">🏆 PR</span>` : '';
-
-    let exHtml = '';
-    (t.exercicios || []).forEach((ex, i) => {
-        const linhas = (ex.series || []).map((s, si) => `
-            <div style="display:flex;align-items:center;gap:8px;font-size:13px;padding:3px 0;border-bottom:1px solid var(--border)">
-                <span style="color:var(--text3);width:18px">${si + 1}</span>
-                <span style="flex:1;color:var(--text)"><strong>${s.reps || 0}</strong> <span style="color:var(--text3);font-size:11px">reps</span></span>
-                <span style="color:var(--text)"><strong>${fmtN(s.carga || 0)}</strong> <span style="color:var(--text3);font-size:11px">kg</span></span>
-            </div>`).join('');
-        exHtml += `
-            <div class="card mb-8">
-                <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:6px">${i + 1}. ${ex.nome || '—'}</div>
-                ${linhas || '<div style="font-size:12px;color:var(--text3)">Sem séries</div>'}
-            </div>`;
-    });
-
-    body.innerHTML = `
-        <div id="session-print">
-            <div class="print-only" style="font-size:11px;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #ccc">Gileno Gestão Saúde · Registro de treino</div>
-            <div class="card mb-12">
-                <div style="font-size:18px;font-weight:800;color:var(--text)">${t.nome || 'Sessão'}</div>
-                <div style="font-size:12px;color:var(--text3);margin-top:2px">${formatDataTreino(t.data)}${t.duracao ? ' • ' + t.duracao + ' min' : ''}</div>
-                ${(chipsHtml || prChip) ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px">${chipsHtml}${prChip}</div>` : ''}
-                <div style="display:flex;gap:10px;margin-top:12px">
-                    <div style="flex:1;text-align:center;padding:8px;background:var(--bg);border-radius:8px">
-                        <div style="font-size:20px;font-weight:700">${stat.exercicios}</div>
-                        <div style="font-size:10px;color:var(--text3)">exercícios</div>
-                    </div>
-                    <div style="flex:1;text-align:center;padding:8px;background:var(--bg);border-radius:8px">
-                        <div style="font-size:20px;font-weight:700">${stat.series}</div>
-                        <div style="font-size:10px;color:var(--text3)">séries</div>
-                    </div>
-                    <div style="flex:1;text-align:center;padding:8px;background:var(--bg);border-radius:8px">
-                        <div style="font-size:20px;font-weight:700;color:var(--primary)">${fmtN(stat.volume)}</div>
-                        <div style="font-size:10px;color:var(--text3)">kg volume</div>
-                    </div>
-                </div>
-            </div>
-            ${exHtml}
-            ${t.notas ? `<div class="card mb-12"><div style="font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.5px;margin-bottom:4px">NOTAS</div><div style="font-size:13px;color:var(--text2);white-space:pre-wrap">${t.notas}</div></div>` : ''}
-        </div>
-
-        <div class="card mb-12 no-print" style="background:var(--surface2);text-align:center">
-            <div style="font-size:11px;color:var(--text3)">🔒 Registro selado — sessão concluída não é editável por padrão. Use <strong>Reabrir</strong> p/ corrigir.</div>
-        </div>
-
-        <div class="no-print" style="display:flex;gap:8px;margin-bottom:8px">
-            <button class="btn btn-outline" style="flex:1" onclick="reopenTreino('${t.id}')">🔓 Reabrir treino</button>
-            <button class="btn btn-primary" style="flex:1" onclick="exportTreinoPdf('${t.id}')">📄 Exportar PDF${isPro ? '' : ' 🔒'}</button>
-        </div>
-        <button class="btn btn-outline btn-sm no-print" style="width:100%" onclick="duplicateTreino('${t.id}')">📋 Duplicar pra hoje</button>
-    `;
-}
-
-function reopenTreino(id) {
-    if (!confirm('Reabrir esta sessão para edição? O registro deixa de ficar selado enquanto você edita.')) return;
-    openTreinoEditor(id);
-}
-
-function exportTreinoPdf(id) {
-    if (!D.proPreview) {
-        toast('📄 Exportar PDF é um recurso Pro — em breve');
-        return;
-    }
-    if (viewingSessionId !== id) { viewingSessionId = id; rTreinoSession(); }
-    // iOS PWA: usa o diálogo de impressão do sistema (share-sheet → "Salvar em PDF"/AirPrint).
-    // O CSS @media print isola só o #session-print. ⚠️ exige teste em aparelho real (standalone).
-    setTimeout(() => window.print(), 60);
 }
 
 // ========== TREINO — EDITOR (PÁGINA) ==========
@@ -5492,29 +5341,6 @@ function getDaysSinceLastWeight() {
     const datas = Object.keys(D.vitals).filter(d => D.vitals[d] && D.vitals[d].peso).sort().reverse();
     if (datas.length === 0) return null;
     return daysSince(datas[0]);
-}
-
-// Dias entre duas datas YYYY-MM-DD (toStr - fromStr); positivo se toStr vem depois.
-function daysBetween(fromStr, toStr) {
-    if (!fromStr || !toStr) return null;
-    const [y1, m1, d1] = fromStr.split('-').map(Number);
-    const [y2, m2, d2] = toStr.split('-').map(Number);
-    return Math.floor((new Date(y2, m2 - 1, d2) - new Date(y1, m1 - 1, d1)) / 86400000);
-}
-
-// Sinal vital "no dia dt": valor medido NESSE dia (onDay=true, daysAgo=0); senão a medição
-// mais recente ANTERIOR a dt, com daysAgo relativo a dt. Nunca enxerga medições futuras ao dia visto.
-function vitalAsOf(field, dt) {
-    if (!D.vitals) return { value: null, daysAgo: null, onDay: false };
-    const onDt = D.vitals[dt];
-    if (onDt && onDt[field] != null && onDt[field] !== '') {
-        return { value: onDt[field], daysAgo: 0, onDay: true };
-    }
-    const datas = Object.keys(D.vitals)
-        .filter(d => d < dt && D.vitals[d] && D.vitals[d][field] != null && D.vitals[d][field] !== '')
-        .sort().reverse();
-    if (datas.length === 0) return { value: null, daysAgo: null, onDay: false };
-    return { value: D.vitals[datas[0]][field], daysAgo: daysBetween(datas[0], dt), onDay: false };
 }
 
 function lastVital(field) {
