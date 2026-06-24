@@ -250,7 +250,19 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
 .modal-body{margin-top:4px}
 .plan-card{border-left:3px solid var(--primary)}
 .added-total{display:flex;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:2px solid var(--primary);font-weight:700;font-size:13px}
-</style>
+/* ========== EXPORTAR PDF — impressão de uma sessão de treino (Pro) ========== */
+.print-only{display:none}
+@media print{
+  body{background:#fff !important}
+  .bottom-nav,.no-print{display:none !important}
+  .page:not(.active){display:none !important}
+  body *{visibility:hidden}
+  #session-print,#session-print *{visibility:visible}
+  #session-print{position:absolute;left:0;top:0;width:100%;padding:8px 6px;color:#111 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  #session-print *{color:#111 !important}
+  #session-print .card,#session-print [style*="var(--bg)"]{background:#fff !important;border:1px solid #ccc !important;box-shadow:none !important}
+  #session-print .print-only{display:block !important}
+}
 </head>
 <body>
 
@@ -383,6 +395,18 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
         <button class="btn btn-primary btn-sm" onclick="saveTreino()">Salvar</button>
     </div>
     <div class="page-body" id="treino-editor-body"></div>
+</div>
+
+<!-- ========== PAGE: TREINO SESSION (registro selado, só-leitura) ========== -->
+<div id="page-treino-session" class="page">
+    <div class="no-print" style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+        <button class="btn-icon btn-outline" onclick="showPage('treino-history')" style="width:36px;height:36px">←</button>
+        <div style="flex:1;min-width:0">
+            <div style="font-size:16px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="treino-session-title">Sessão</div>
+            <div style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="treino-session-subtitle">Registro</div>
+        </div>
+    </div>
+    <div class="page-body" id="treino-session-body"></div>
 </div>
 
 <!-- ========== PAGE: SINAIS VITAIS ========== -->
@@ -520,7 +544,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.10.9';
+const APP_VERSION = '1.10.10';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1236,6 +1260,7 @@ function showPage(name) {
     else if (name === 'template-editor') rTemplateEditor();
     else if (name === 'treino-execute') rTreinoExecute();
     else if (name === 'treino-history') rTreinoHistory();
+    else if (name === 'treino-session') rTreinoSession();
     else if (name === 'treino-editor') rTreinoEditor();
     else if (name === 'consultas') rConsultas();
     else if (name === 'vitais') rVitais();
@@ -5106,7 +5131,7 @@ function rTreinoHistory() {
         const prChip = pr ? `<span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(251,191,36,.18);color:#f59e0b">🏆 PR</span>` : '';
         const exNomes = t.exercicios.slice(0, 3).map(e => e.nome).filter(Boolean).join(', ') + (t.exercicios.length > 3 ? '…' : '');
         listHtml += `
-            <div class="card mb-8" onclick="openTreinoEditor('${t.id}')" style="cursor:pointer${pr ? ';border-left:3px solid #f59e0b' : ''}">
+            <div class="card mb-8" onclick="openTreinoSession('${t.id}')" style="cursor:pointer${pr ? ';border-left:3px solid #f59e0b' : ''}">
                 <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px">
                     <div style="flex:1;min-width:0">
                         <div style="font-size:14px;font-weight:700;color:var(--text)">${t.nome}</div>
@@ -5123,6 +5148,104 @@ function rTreinoHistory() {
     });
 
     $('treino-history-body').innerHTML = `${resumoHtml}${listHtml}`;
+}
+
+// ========== TREINO — SESSÃO SELADA (só-leitura + reabrir + exportar PDF) ==========
+let viewingSessionId = null;
+
+function openTreinoSession(id) {
+    const t = (D.treinos || []).find(x => x.id === id);
+    if (!t) return;
+    viewingSessionId = id;
+    showPage('treino-session');
+}
+
+function rTreinoSession() {
+    const body = $('treino-session-body');
+    if (!body) return;
+    const t = (D.treinos || []).find(x => x.id === viewingSessionId);
+    if (!t) { showPage('treino-history'); return; }
+
+    const stat = treinoStats(t);
+    const groups = detectMuscleGroups(t);
+    const pr = isTreinoPR(t);
+    const isPro = !!D.proPreview;
+
+    const titleEl = $('treino-session-title');
+    const subEl = $('treino-session-subtitle');
+    if (titleEl) titleEl.textContent = t.nome || 'Sessão';
+    if (subEl) subEl.textContent = `${formatDataTreino(t.data)}${t.duracao ? ' • ' + t.duracao + ' min' : ''}`;
+
+    const chipsHtml = groups.map(g => `<span style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;background:${g.color}22;color:${g.color}">${g.label}</span>`).join(' ');
+    const prChip = pr ? `<span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(251,191,36,.18);color:#f59e0b">🏆 PR</span>` : '';
+
+    let exHtml = '';
+    (t.exercicios || []).forEach((ex, i) => {
+        const linhas = (ex.series || []).map((s, si) => `
+            <div style="display:flex;align-items:center;gap:8px;font-size:13px;padding:3px 0;border-bottom:1px solid var(--border)">
+                <span style="color:var(--text3);width:18px">${si + 1}</span>
+                <span style="flex:1;color:var(--text)"><strong>${s.reps || 0}</strong> <span style="color:var(--text3);font-size:11px">reps</span></span>
+                <span style="color:var(--text)"><strong>${fmtN(s.carga || 0)}</strong> <span style="color:var(--text3);font-size:11px">kg</span></span>
+            </div>`).join('');
+        exHtml += `
+            <div class="card mb-8">
+                <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:6px">${i + 1}. ${ex.nome || '—'}</div>
+                ${linhas || '<div style="font-size:12px;color:var(--text3)">Sem séries</div>'}
+            </div>`;
+    });
+
+    body.innerHTML = `
+        <div id="session-print">
+            <div class="print-only" style="font-size:11px;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #ccc">Gileno Gestão Saúde · Registro de treino</div>
+            <div class="card mb-12">
+                <div style="font-size:18px;font-weight:800;color:var(--text)">${t.nome || 'Sessão'}</div>
+                <div style="font-size:12px;color:var(--text3);margin-top:2px">${formatDataTreino(t.data)}${t.duracao ? ' • ' + t.duracao + ' min' : ''}</div>
+                ${(chipsHtml || prChip) ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px">${chipsHtml}${prChip}</div>` : ''}
+                <div style="display:flex;gap:10px;margin-top:12px">
+                    <div style="flex:1;text-align:center;padding:8px;background:var(--bg);border-radius:8px">
+                        <div style="font-size:20px;font-weight:700">${stat.exercicios}</div>
+                        <div style="font-size:10px;color:var(--text3)">exercícios</div>
+                    </div>
+                    <div style="flex:1;text-align:center;padding:8px;background:var(--bg);border-radius:8px">
+                        <div style="font-size:20px;font-weight:700">${stat.series}</div>
+                        <div style="font-size:10px;color:var(--text3)">séries</div>
+                    </div>
+                    <div style="flex:1;text-align:center;padding:8px;background:var(--bg);border-radius:8px">
+                        <div style="font-size:20px;font-weight:700;color:var(--primary)">${fmtN(stat.volume)}</div>
+                        <div style="font-size:10px;color:var(--text3)">kg volume</div>
+                    </div>
+                </div>
+            </div>
+            ${exHtml}
+            ${t.notas ? `<div class="card mb-12"><div style="font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.5px;margin-bottom:4px">NOTAS</div><div style="font-size:13px;color:var(--text2);white-space:pre-wrap">${t.notas}</div></div>` : ''}
+        </div>
+
+        <div class="card mb-12 no-print" style="background:var(--surface2);text-align:center">
+            <div style="font-size:11px;color:var(--text3)">🔒 Registro selado — sessão concluída não é editável por padrão. Use <strong>Reabrir</strong> p/ corrigir.</div>
+        </div>
+
+        <div class="no-print" style="display:flex;gap:8px;margin-bottom:8px">
+            <button class="btn btn-outline" style="flex:1" onclick="reopenTreino('${t.id}')">🔓 Reabrir treino</button>
+            <button class="btn btn-primary" style="flex:1" onclick="exportTreinoPdf('${t.id}')">📄 Exportar PDF${isPro ? '' : ' 🔒'}</button>
+        </div>
+        <button class="btn btn-outline btn-sm no-print" style="width:100%" onclick="duplicateTreino('${t.id}')">📋 Duplicar pra hoje</button>
+    `;
+}
+
+function reopenTreino(id) {
+    if (!confirm('Reabrir esta sessão para edição? O registro deixa de ficar selado enquanto você edita.')) return;
+    openTreinoEditor(id);
+}
+
+function exportTreinoPdf(id) {
+    if (!D.proPreview) {
+        toast('📄 Exportar PDF é um recurso Pro — em breve');
+        return;
+    }
+    if (viewingSessionId !== id) { viewingSessionId = id; rTreinoSession(); }
+    // iOS PWA: usa o diálogo de impressão do sistema (share-sheet → "Salvar em PDF"/AirPrint).
+    // O CSS @media print isola só o #session-print. ⚠️ exige teste em aparelho real (standalone).
+    setTimeout(() => window.print(), 60);
 }
 
 // ========== TREINO — EDITOR (PÁGINA) ==========
