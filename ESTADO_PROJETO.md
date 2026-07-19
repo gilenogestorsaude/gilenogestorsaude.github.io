@@ -1,7 +1,7 @@
 # Estado do Projeto — Gestão Saúde
 
 **Última atualização:** 2026-07-19
-**Versão atual em produção:** v1.15.0
+**Versão atual em produção:** v1.15.1
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
@@ -21,6 +21,12 @@ Hidratação aprovada no iPhone ("testado e aprovado, ficou ótimo") → etapa 2
 - Os **6 anéis viram "Progresso de hoje"** logo abaixo (o mockup também tinha essa seção) e **alertas, chips de vitais e cards antigos seguem intactos** — o redesign é aditivo.
 
 **Verificação:** JSC **42/42** (`verify_home.js`: cada prioridade do nextBestAction e seus negativos — dose longe/tomada, refeição futura, água em dia, treino cedo demais, módulo off — + HTML dos 3 blocos + ganchos no rDash). ⚠️ Gotcha que o teste pegou: às 10h já fecharam DOIS blocos de água (1385+435=1820), não um. **Bench visual** `home.html` conferido em **tema escuro E claro**, clique da ação roteando. ⚠️ Validar no iPhone.
+
+**v1.15.1 (4c52c5d) — dois acertos do Gileno no teste da v1.15.0:**
+1. **Bug real de arredondamento:** `fmtLitros` fazia `Math.round(ml/100)/10`, então **250+700 = 950 ml aparecia como "1 L"** — o app mentindo na tela. Agora: abaixo de 1 litro mostra em **ml**; acima, litros com até 2 casas sem zero à toa (950→"950 ml", 1000→"1 L", 1800→"1,8 L", 1850→"1,85 L", 3000→"3 L"). Vale pro anel da Hidratação e pras barras do hero. **Lição:** arredondar pra cima num app de saúde é pior que mostrar o número feio.
+2. **Ações rápidas REMOVIDAS** (decisão dele): duplicavam a barra de navegação do rodapé e só ocupavam espaço. Peso segue no chip ⚖️ do topo e na própria "próxima melhor ação". Função `quickActionsHtml` apagada (sem código morto).
+
+**Regressão completa das 4 suítes da sessão: 128 checks, 0 falhas** (export 19 · treino 36 · hidratação 31 · início 42) + bench visual com o cenário exato do bug ("950 ml / 3 L").
 
 **Backlog do redesign:** Refeições (4 cards de macro + botão grande), e a **navegação nova** (aba "Saúde" juntando corpo+meds+vitais, aba "Mais") — esta fica pra decidir junto com o rename do módulo Consultas.
 
@@ -366,8 +372,8 @@ Marketing:
 
 ```
 Estou retomando o app Gestão Saúde. Lê /Users/gilenopaiva/Documents/Gileno_Gestao/Apps/Gestao_Saude_App/ESTADO_PROJETO.md
-pra contexto. Versão em produção: v1.15.0 (Início redesenhado: hero + próxima melhor ação + atalhos).
-Pendências: validar v1.15.0 no iPhone, próximas etapas do redesign (Refeições + navegação nova),
+pra contexto. Versão em produção: v1.15.1 (Início redesenhado: hero + próxima melhor ação).
+Pendências: validar v1.15.1 no iPhone, próximas etapas do redesign (Refeições + navegação nova),
 Etapa 2 do relatório (IA via VPS) e renomear módulo Consultas.
 
 [Aqui descreve: resultado do teste no iPhone / o que quer atacar primeiro]
