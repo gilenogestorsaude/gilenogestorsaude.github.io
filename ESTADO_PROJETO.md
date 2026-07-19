@@ -1,12 +1,28 @@
 # Estado do Projeto — Gestão Saúde
 
 **Última atualização:** 2026-07-19
-**Versão atual em produção:** v1.14.0
+**Versão atual em produção:** v1.15.0
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
 
 > Este documento é o **handoff vivo** do projeto. Qualquer nova sessão de trabalho começa lendo este arquivo pra entender estado atual, decisões já tomadas, e próximos passos.
+
+---
+
+## Resumo da sessão 2026-07-19 (parte 3) — v1.15.0 (redesign do Início)
+
+Hidratação aprovada no iPhone ("testado e aprovado, ficou ótimo") → etapa 2 do redesign.
+
+**v1.15.0 (d99bef5):**
+- **`heroCardHtml`** — card de destaque no topo: anel SVG grande de calorias (verde ao bater) + barras de Proteína e Água (litros) + rodapé "Faltam X kcal para sua meta de hoje" (ou "Meta atingida (X%)", ou orienta definir meta se `goals.kcal<=0`).
+- **`nextBestAction(ctx)`** — A ÚNICA coisa mais útil agora, por urgência: treino em andamento → medicamento atrasado (mostra hora + quantos) → dose chegando em ≤30 min → refeição cujo previsto já passou → água atrás do plano do dia (`waterExpectedBy(hour, meta)` = soma dos blocos JÁ ENCERRADOS, reusa `getBlockTarget`) → dia de treino sem treino (a partir das 9h) → proteína <60% após 15h → peso do dia. Respeita `isModuleEnabled`; retorna `null` = card verde "TUDO EM DIA". **Recebe contexto pronto (testável, sem recalcular)** e **só roda em `viewingToday()`** (depende do relógio) — em dia passado o card nem aparece (`nba === undefined`).
+- **`quickActionsHtml`** — atalhos Refeição/Água/Peso/Remédio (cada um gated por módulo).
+- Os **6 anéis viram "Progresso de hoje"** logo abaixo (o mockup também tinha essa seção) e **alertas, chips de vitais e cards antigos seguem intactos** — o redesign é aditivo.
+
+**Verificação:** JSC **42/42** (`verify_home.js`: cada prioridade do nextBestAction e seus negativos — dose longe/tomada, refeição futura, água em dia, treino cedo demais, módulo off — + HTML dos 3 blocos + ganchos no rDash). ⚠️ Gotcha que o teste pegou: às 10h já fecharam DOIS blocos de água (1385+435=1820), não um. **Bench visual** `home.html` conferido em **tema escuro E claro**, clique da ação roteando. ⚠️ Validar no iPhone.
+
+**Backlog do redesign:** Refeições (4 cards de macro + botão grande), e a **navegação nova** (aba "Saúde" juntando corpo+meds+vitais, aba "Mais") — esta fica pra decidir junto com o rename do módulo Consultas.
 
 ---
 
@@ -350,8 +366,8 @@ Marketing:
 
 ```
 Estou retomando o app Gestão Saúde. Lê /Users/gilenopaiva/Documents/Gileno_Gestao/Apps/Gestao_Saude_App/ESTADO_PROJETO.md
-pra contexto. Versão em produção: v1.14.0 (Hidratação redesenhada: anel + 1 toque + desfazer).
-Pendências: validar v1.14.0 no iPhone, próximas etapas do redesign (home/refeições/navegação),
+pra contexto. Versão em produção: v1.15.0 (Início redesenhado: hero + próxima melhor ação + atalhos).
+Pendências: validar v1.15.0 no iPhone, próximas etapas do redesign (Refeições + navegação nova),
 Etapa 2 do relatório (IA via VPS) e renomear módulo Consultas.
 
 [Aqui descreve: resultado do teste no iPhone / o que quer atacar primeiro]
