@@ -348,7 +348,7 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
 <!-- ========== PAGE: TREINO EXECUTE (modo execução) ========== -->
 <div id="page-treino-execute" class="page">
     <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
-        <button class="btn-icon btn-outline" onclick="cancelExecution()" style="width:36px;height:36px">←</button>
+        <button class="btn-icon btn-outline" onclick="pauseExecution()" title="Sair sem perder o treino" style="width:36px;height:36px">←</button>
         <div style="flex:1">
             <div style="font-size:16px;font-weight:700" id="treino-exec-title">Treino</div>
             <div style="font-size:11px;color:var(--text3)" id="treino-exec-subtitle">—</div>
@@ -383,6 +383,18 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
         <button class="btn btn-primary btn-sm" onclick="saveTreino()">Salvar</button>
     </div>
     <div class="page-body" id="treino-editor-body"></div>
+</div>
+
+<!-- ========== PAGE: TREINO SESSION (registro selado, só-leitura) ========== -->
+<div id="page-treino-session" class="page">
+    <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+        <button class="btn-icon btn-outline" onclick="showPage('treino-history')" style="width:36px;height:36px">←</button>
+        <div style="flex:1;min-width:0">
+            <div style="font-size:16px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="treino-session-title">Sessão</div>
+            <div style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="treino-session-subtitle">Registro selado</div>
+        </div>
+    </div>
+    <div class="page-body" id="treino-session-body"></div>
 </div>
 
 <!-- ========== PAGE: SINAIS VITAIS ========== -->
@@ -533,7 +545,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.11.0';
+const APP_VERSION = '1.12.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -739,6 +751,8 @@ function defaultD() {
         // Relatório Semanal (Pro) — anotações livres por semana (chave = domingo ISO) + config
         weeklyNotes: {},
         reportCfg: { sessoesMeta: 3 },
+        // Treino em andamento persistido (snapshot de activeExecution) — sobrevive a reload do PWA
+        activeExecution: null,
         // Treino — personalização (ponto de partida; o ajuste fino é no dedo durante o treino)
         restDefault: 90, // descanso padrão (s) que inicia o cronômetro regressivo na execução
         cargaStep: 1,    // passo do +/- da carga (kg) — pesos redondos (1,2,3...)
@@ -976,6 +990,7 @@ async function load() {
             if (!D.weeklyNotes || typeof D.weeklyNotes !== 'object') D.weeklyNotes = {}; // v1.11.0
             if (!D.reportCfg || typeof D.reportCfg !== 'object') D.reportCfg = {};
             if (!(D.reportCfg.sessoesMeta > 0)) D.reportCfg.sessoesMeta = 3;
+            if (typeof D.activeExecution === 'undefined') D.activeExecution = null; // v1.12.0
             reconcileWorkoutOrigem(D); // v1.9.10 — define quem é do personal (autoritativo por ids, ou heurística legada)
             if (typeof D.restDefault !== 'number' || D.restDefault < 15) D.restDefault = 90; // v1.9.11
             if (typeof D.cargaStep !== 'number' || D.cargaStep <= 0) D.cargaStep = 1;
@@ -1176,6 +1191,7 @@ auth.onAuthStateChanged(async user => {
     U = user;
     if (user) {
         await load();
+        restoreExecution(); // treino em andamento sobrevive a reload do PWA (v1.12.0)
         showPage('dash');
         $('bottom-nav').classList.remove('hidden');
         applyBottomNavVisibility();
@@ -1255,6 +1271,7 @@ function showPage(name) {
     else if (name === 'template-editor') rTemplateEditor();
     else if (name === 'treino-execute') rTreinoExecute();
     else if (name === 'treino-history') rTreinoHistory();
+    else if (name === 'treino-session') rTreinoSession();
     else if (name === 'treino-editor') rTreinoEditor();
     else if (name === 'consultas') rConsultas();
     else if (name === 'vitais') rVitais();
@@ -3241,6 +3258,32 @@ function openProFeature(kind) {
     if (D.proPreview && kind === 'nutri') return openDietImport();
     if (D.proPreview && kind === 'personal') return openWorkoutImport();
     if (D.proPreview && kind === 'report') return openWeeklyReport();
+    if (kind === 'sessao') {
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+        overlay.innerHTML = `
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>🚧 Exportar treino em PDF</h3>
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            </div>
+            <div class="modal-body">
+                <div style="text-align:center;padding:8px 0 4px">
+                    <div style="font-size:40px;margin-bottom:8px">🔒</div>
+                    <div style="font-weight:700;color:var(--text);margin-bottom:6px">Recurso da Versão Pro</div>
+                    <div style="font-size:13px;color:var(--text2);line-height:1.6">
+                        Em breve você vai poder exportar qualquer sessão do histórico em <strong>PDF</strong> — pra guardar ou mandar pro seu personal.
+                    </div>
+                </div>
+                <div class="modal-actions" style="margin-top:16px">
+                    <button class="btn btn-primary w-full" onclick="this.closest('.modal-overlay').remove()">Entendi</button>
+                </div>
+            </div>
+        </div>`;
+        document.body.appendChild(overlay);
+        return;
+    }
     if (kind === 'report') {
         const overlay = document.createElement('div');
         overlay.className = 'modal-overlay';
@@ -4218,9 +4261,9 @@ ${rep.notes ? `<h2>📝 Anotações da semana</h2><div style="font-size:12px;whi
 </body></html>`;
 }
 
-function exportWeeklyReport() {
-    const rep = collectWeekReport(reportWeekStart || weekStartOf(today()));
-    const html = buildReportHtml(rep);
+// Abre um documento autocontido FORA do app (usado pelo Relatório Semanal e pelo
+// registro de treino). Cadeia: janela nova → compartilhar arquivo (PWA iOS) → download.
+function openExportedDoc(html, filename) {
     // 1º: janela nova (navegador comum) — o botão de imprimir fica NA página exportada
     let w = null;
     try { w = window.open('', '_blank'); } catch (e) { w = null; }
@@ -4229,9 +4272,9 @@ function exportWeeklyReport() {
     }
     // 2º: PWA instalado (iOS bloqueia window.open) — compartilhar como arquivo
     try {
-        const file = new File([html], 'relatorio-semanal.html', { type: 'text/html' });
+        const file = new File([html], filename, { type: 'text/html' });
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
-            navigator.share({ files: [file], title: 'Relatório Semanal' }).catch(() => {});
+            navigator.share({ files: [file], title: filename.replace('.html', '') }).catch(() => {});
             return;
         }
     } catch (e) {}
@@ -4239,13 +4282,18 @@ function exportWeeklyReport() {
     try {
         const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
         const el = document.createElement('a');
-        el.href = url; el.download = 'relatorio-semanal.html';
+        el.href = url; el.download = filename;
         document.body.appendChild(el); el.click(); el.remove();
         setTimeout(() => URL.revokeObjectURL(url), 5000);
-        toast('Relatório baixado — abra o arquivo pra imprimir/salvar PDF');
+        toast('Arquivo baixado — abra pra imprimir/salvar PDF');
     } catch (e) {
         toast('Não consegui exportar neste aparelho', true);
     }
+}
+
+function exportWeeklyReport() {
+    const rep = collectWeekReport(reportWeekStart || weekStartOf(today()));
+    openExportedDoc(buildReportHtml(rep), 'relatorio-semanal.html');
 }
 
 function rGoals() {
@@ -4889,6 +4937,7 @@ function rTreino() {
 
     if (tpls.length === 0) {
         $('treino-body').innerHTML = `
+            ${execBannerHtml()}
             <div class="card text-center" style="padding:32px 20px;margin-top:20px">
                 <div style="font-size:48px;margin-bottom:12px">🏋️</div>
                 <div style="font-size:16px;font-weight:700;margin-bottom:6px">Nenhum treino criado</div>
@@ -4986,6 +5035,7 @@ function rTreino() {
     }
 
     $('treino-body').innerHTML = `
+        ${execBannerHtml()}
         ${planBannerHtml}
         ${lastSessionHtml}
         ${listHtml}
@@ -5291,6 +5341,12 @@ function expandReps(repsStr, n) {
 function executeTemplate(templateId) {
     const tpl = (D.workoutTemplates || []).find(t => t.id === templateId);
     if (!tpl) return;
+    // Guarda: já existe treino em andamento COM progresso? Começar outro descartaria tudo.
+    if (activeExecution && activeExecution.exercicios.some(e => e.sets.some(s => s.done))) {
+        if (!confirm(`⚠️ Você tem um treino em andamento ("${activeExecution.nome}").\n\nComeçar um novo DESCARTA o progresso do anterior.\n\nOK = começar novo · Cancelar = retomar o que estava fazendo`)) {
+            return resumeExecution();
+        }
+    }
     activeExecution = {
         templateId: tpl.id,
         nome: tpl.nome,
@@ -5313,6 +5369,7 @@ function executeTemplate(templateId) {
         restRemaining: null, // null = não descansando
         startTime: Date.now()
     };
+    persistExecution(); // snapshot no Firestore — sobrevive a reload do PWA
     showPage('treino-execute');
     startExecTimer();
 }
@@ -5373,6 +5430,7 @@ function adjustRest(delta) { // −15s / +15s na hora (varia por exercício); pe
     if (activeExecution.restRemaining != null) activeExecution.restRemaining = Math.max(1, activeExecution.restRemaining + delta);
     const el = $('rest-countdown'); if (el) el.textContent = fmtMMSS(activeExecution.restRemaining || 0);
     const rv = $('rest-value'); if (rv) rv.textContent = activeExecution.restValue + 's';
+    persistExecution();
 }
 function skipRest() {
     if (!activeExecution) return;
@@ -5398,6 +5456,7 @@ function adjustSetCarga(exIdx, setIdx, delta) {
     const cur = (typeof s.carga === 'number') ? s.carga : parseCarga(s.carga);
     s.carga = Math.max(0, Math.round((cur + delta) * 10) / 10);
     const el = $('setcarga_' + exIdx + '_' + setIdx); if (el) el.value = fmtCarga(s.carga);
+    persistExecution();
 }
 // digitação direta: guarda o valor a cada tecla (sem reformatar pra não pular o cursor)
 function setSetCarga(exIdx, setIdx, val) {
@@ -5408,6 +5467,7 @@ function setSetCarga(exIdx, setIdx, val) {
 function commitSetCarga(exIdx, setIdx, el) {
     if (!activeExecution || !el) return;
     el.value = fmtCarga(activeExecution.exercicios[exIdx].sets[setIdx].carga);
+    persistExecution(); // persiste no blur (não a cada tecla — evita write por dígito)
 }
 
 function rTreinoExecute() {
@@ -5498,6 +5558,7 @@ function toggleSet(exIdx, setIdx) {
     const wasDone = s.done;
     s.done = !wasDone;
     ex.feito = ex.sets.every(x => x.done);
+    persistExecution(); // cada série marcada fica salva — nada se perde num reload
     if (!wasDone && s.done) {
         startRest(); // concluiu a série → descanso (já re-renderiza e acende a próxima)
     } else {
@@ -5512,6 +5573,7 @@ function cancelExecution() {
     stopExecTimer();
     stopRestTimer();
     activeExecution = null;
+    clearPersistedExecution();
     showPage('treino');
 }
 
@@ -5544,12 +5606,190 @@ function finishExecution() {
     };
     if (!D.treinos) D.treinos = [];
     D.treinos.push(sessao);
-    save();
     stopExecTimer();
     stopRestTimer();
     activeExecution = null;
+    D.activeExecution = null; // limpa o snapshot no MESMO save do registro
+    save();
     toast('✓ Treino registrado no histórico');
+    openTreinoSession(sessao.id); // abre o registro SELADO (só-leitura; Reabrir se precisar)
+}
+
+// ========== TREINO — EXECUÇÃO PERSISTIDA (pausa/retomada, v1.12.0) ==========
+// Motivo: activeExecution era só memória — reload do PWA (iOS descarrega a página ao
+// trocar de app) ou re-toque em "Treinar" zerava o treino do Gileno no meio da sessão.
+// Snapshot vive em D.activeExecution (Firestore, offline-first); restRemaining é
+// transiente (descanso não sobrevive a reload — só o progresso e as cargas).
+const EXEC_MAX_AGE_MS = 18 * 60 * 60 * 1000; // snapshot mais velho que 18h = sessão morta, descarta
+
+function persistExecution() {
+    if (!D || !activeExecution) return;
+    const snap = JSON.parse(JSON.stringify(activeExecution));
+    snap.restRemaining = null;
+    D.activeExecution = snap;
+    save();
+}
+function clearPersistedExecution() {
+    if (D && D.activeExecution) { D.activeExecution = null; save(); }
+}
+// Chamada no boot (após load): reidrata o treino em andamento, se houver e for recente.
+function restoreExecution() {
+    if (!D || !D.activeExecution) return;
+    const snap = D.activeExecution;
+    const ok = snap && Array.isArray(snap.exercicios) && typeof snap.startTime === 'number'
+        && (Date.now() - snap.startTime) <= EXEC_MAX_AGE_MS;
+    if (!ok) { D.activeExecution = null; save(); return; }
+    activeExecution = JSON.parse(JSON.stringify(snap));
+    activeExecution.restRemaining = null;
+    toast('⏱ Treino em andamento recuperado — retome na aba Treino');
+}
+function resumeExecution() {
+    if (!activeExecution) return;
+    showPage('treino-execute');
+    startExecTimer();
+}
+// ← do header da execução: SAI da tela sem perder nada (cancelar é só pelo botão Cancelar)
+function pauseExecution() {
     showPage('treino');
+    toast('Treino pausado — retome quando quiser');
+}
+function discardActiveExecution() {
+    if (!activeExecution) return;
+    if (!confirm(`Descartar o treino em andamento ("${activeExecution.nome}")?\n\nO progresso desta sessão será perdido.`)) return;
+    stopExecTimer();
+    stopRestTimer();
+    activeExecution = null;
+    clearPersistedExecution();
+    toast('Treino descartado');
+    if (cPage === 'treino') rTreino();
+    if (cPage === 'dash') rDash();
+}
+// Banner "em andamento" no topo da aba Treino — o caminho de volta pra sessão
+function execBannerHtml() {
+    if (!activeExecution) return '';
+    const min = Math.max(0, Math.round((Date.now() - activeExecution.startTime) / 60000));
+    const feitas = activeExecution.exercicios.reduce((s, e) => s + e.sets.filter(x => x.done).length, 0);
+    const total = activeExecution.exercicios.reduce((s, e) => s + e.sets.length, 0);
+    return `
+        <div class="card mb-12" style="border:1px solid var(--primary);border-left:4px solid var(--primary);background:rgba(16,185,129,.07)">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+                <span style="font-size:22px">⏱</span>
+                <div style="flex:1;min-width:0">
+                    <div style="font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--primary)">TREINO EM ANDAMENTO</div>
+                    <div style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${activeExecution.nome}</div>
+                    <div style="font-size:11px;color:var(--text2)">começou há ${min} min · ${feitas}/${total} séries feitas</div>
+                </div>
+            </div>
+            <div style="display:flex;gap:8px">
+                <button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="discardActiveExecution()">Descartar</button>
+                <button class="btn btn-primary" style="flex:1" onclick="resumeExecution()">▶ Retomar treino</button>
+            </div>
+        </div>`;
+}
+
+// ========== TREINO — SESSÃO SELADA (só-leitura + Reabrir + Exportar, v1.12.0) ==========
+// Reconstrução do item da v1.10.10 revertida — desta vez SEM @media print no app:
+// exportação usa o mesmo caminho seguro do Relatório Semanal (doc autocontido fora do app).
+let viewingSessionId = null;
+
+function openTreinoSession(id) {
+    if (!(D.treinos || []).some(t => t.id === id)) return;
+    viewingSessionId = id;
+    showPage('treino-session');
+}
+
+function rTreinoSession() {
+    const t = (D.treinos || []).find(x => x.id === viewingSessionId);
+    if (!t) { showPage('treino-history'); return; }
+    const stat = treinoStats(t);
+    const groups = detectMuscleGroups(t);
+    const pr = isTreinoPR(t);
+    const titleEl = $('treino-session-title');
+    const subEl = $('treino-session-subtitle');
+    if (titleEl) titleEl.textContent = t.nome || 'Sessão';
+    if (subEl) subEl.textContent = `${formatDataTreino(t.data)}${t.duracao ? ' · ' + t.duracao + ' min' : ''} · registro selado`;
+
+    const chipsHtml = groups.map(g => `<span style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;background:${g.color}22;color:${g.color}">${g.label}</span>`).join(' ')
+        + (pr ? ` <span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(251,191,36,.18);color:#f59e0b">🏆 PR</span>` : '');
+
+    const exHtml = (t.exercicios || []).map(ex => `
+        <div class="card mb-8">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:${(ex.series || []).length ? '8px' : '0'}">
+                ${renderExerciseThumb(ex, 44)}
+                <div style="flex:1;min-width:0">
+                    <div style="font-size:14px;font-weight:700;color:var(--text)">${ex.nome || '—'}</div>
+                    <div style="font-size:11px;color:var(--text3)">${(ex.series || []).length} série${(ex.series || []).length === 1 ? '' : 's'}</div>
+                </div>
+            </div>
+            ${(ex.series || []).map((s, i) => `
+            <div style="display:flex;align-items:center;gap:10px;padding:5px 10px;border-radius:8px;background:var(--bg);margin-bottom:4px">
+                <span style="font-size:11px;color:var(--text3);width:44px">Série ${i + 1}</span>
+                <span style="flex:1;font-size:12px;color:var(--text2)">${s.reps || 0} reps</span>
+                <span style="font-size:13px;font-weight:800;color:var(--primary)">${fmtCarga(s.carga)} kg</span>
+            </div>`).join('')}
+        </div>`).join('');
+
+    $('treino-session-body').innerHTML = `
+        <div class="card mb-12">
+            ${chipsHtml ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">${chipsHtml}</div>` : ''}
+            <div style="display:flex;gap:8px;text-align:center">
+                <div style="flex:1;padding:8px;background:var(--bg);border-radius:8px"><div style="font-size:18px;font-weight:800;color:var(--text)">${stat.exercicios}</div><div style="font-size:10px;color:var(--text3)">exercícios</div></div>
+                <div style="flex:1;padding:8px;background:var(--bg);border-radius:8px"><div style="font-size:18px;font-weight:800;color:var(--text)">${stat.series}</div><div style="font-size:10px;color:var(--text3)">séries</div></div>
+                <div style="flex:1;padding:8px;background:var(--bg);border-radius:8px"><div style="font-size:18px;font-weight:800;color:var(--primary)">${fmtN(stat.volume)}</div><div style="font-size:10px;color:var(--text3)">kg volume</div></div>
+            </div>
+            ${t.notas ? `<div style="font-size:12px;color:var(--text2);margin-top:10px;padding-top:8px;border-top:1px solid var(--border);white-space:pre-wrap">📝 ${escHtml(t.notas)}</div>` : ''}
+        </div>
+        ${exHtml}
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:14px;margin-bottom:24px">
+            <button class="btn btn-primary w-full" onclick="reopenTreino()">🔓 Reabrir pra editar</button>
+            <div style="display:flex;gap:8px">
+                <button class="btn btn-outline" style="flex:1" onclick="duplicateTreino('${t.id}')">📋 Duplicar pra hoje</button>
+                <button class="btn btn-outline" style="flex:1;justify-content:space-between" onclick="exportTreinoSession()"><span>📄 Exportar PDF</span><span style="font-size:10px;color:var(--text3)">${D.proPreview ? '✓' : '🔒'}</span></button>
+            </div>
+        </div>`;
+}
+
+function reopenTreino() {
+    const t = (D.treinos || []).find(x => x.id === viewingSessionId);
+    if (!t) return;
+    if (!confirm('Reabrir este registro pra edição?\n\nO treino salvo será destravado — ao salvar, ele volta selado com as alterações.')) return;
+    openTreinoEditor(t.id); // treinoEditorReturnPage = 'treino-session' → salvar/voltar cai na view selada
+}
+
+function buildSessionHtml(t) {
+    const stat = treinoStats(t);
+    const nome = escHtml(D.userName || '');
+    const tbl = 'width:100%;border-collapse:collapse;font-size:12px;margin-top:6px';
+    const th = 'text-align:left;padding:5px 8px;background:#f1f5f9;font-weight:700;border:1px solid #e2e8f0';
+    const td = 'padding:5px 8px;border:1px solid #e2e8f0';
+    return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Treino · ${escHtml(t.nome || 'Sessão')} · ${formatDataTreino(t.data)}</title>
+<style>
+body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#0f172a;margin:0;padding:20px;max-width:760px;margin:0 auto;background:#fff}
+h1{font-size:20px;margin:0 0 2px}h2{font-size:14px;margin:18px 0 4px;border-bottom:2px solid #10b981;padding-bottom:3px}
+.sub{color:#64748b;font-size:12px}.foot{margin-top:24px;padding-top:10px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:10px;text-align:center}
+.printbtn{position:fixed;top:12px;right:12px;background:#10b981;color:#fff;border:none;border-radius:8px;padding:10px 16px;font-size:14px;font-weight:700;cursor:pointer}
+@media print{.printbtn{display:none}}
+</style></head><body>
+<button class="printbtn" onclick="window.print()">🖨 Imprimir / Salvar PDF</button>
+<h1>Gileno Gestão · SAÚDE</h1>
+<div class="sub">Registro de treino${nome ? ' · ' + nome : ''} · ${formatDataTreino(t.data)}</div>
+<h2>🏋️ ${escHtml(t.nome || 'Sessão')}</h2>
+<div class="sub">${stat.exercicios} exercício(s) · ${stat.series} série(s) · ${fmtN(stat.volume)} kg de volume${t.duracao ? ' · ' + t.duracao + ' min' : ''}</div>
+<table style="${tbl}"><tr><th style="${th}">Exercício</th><th style="${th}">Série</th><th style="${th}">Reps</th><th style="${th}">Carga (kg)</th></tr>
+${(t.exercicios || []).map(ex => (ex.series || []).map((s, i) => `<tr>${i === 0 ? `<td style="${td}" rowspan="${ex.series.length}">${escHtml(ex.nome || '—')}</td>` : ''}<td style="${td}">${i + 1}</td><td style="${td}">${s.reps || 0}</td><td style="${td}">${fmtCarga(s.carga)}</td></tr>`).join('')).join('')}
+</table>
+${t.notas ? `<h2>📝 Notas</h2><div style="font-size:12px;white-space:pre-wrap;line-height:1.6">${escHtml(t.notas)}</div>` : ''}
+<div class="foot">Gileno Gestão Saúde · registro gerado pelo app · não substitui orientação profissional</div>
+</body></html>`;
+}
+
+function exportTreinoSession() {
+    if (!D.proPreview) return openProFeature('sessao');
+    const t = (D.treinos || []).find(x => x.id === viewingSessionId);
+    if (!t) return;
+    openExportedDoc(buildSessionHtml(t), 'treino-' + (t.data || 'sessao') + '.html');
 }
 
 // ========== TREINO — HISTÓRICO DE SESSÕES ==========
@@ -5620,7 +5860,7 @@ function rTreinoHistory() {
         const prChip = pr ? `<span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(251,191,36,.18);color:#f59e0b">🏆 PR</span>` : '';
         const exNomes = t.exercicios.slice(0, 3).map(e => e.nome).filter(Boolean).join(', ') + (t.exercicios.length > 3 ? '…' : '');
         listHtml += `
-            <div class="card mb-8" onclick="openTreinoEditor('${t.id}')" style="cursor:pointer${pr ? ';border-left:3px solid #f59e0b' : ''}">
+            <div class="card mb-8" onclick="openTreinoSession('${t.id}')" style="cursor:pointer${pr ? ';border-left:3px solid #f59e0b' : ''}">
                 <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px">
                     <div style="flex:1;min-width:0">
                         <div style="font-size:14px;font-weight:700;color:var(--text)">${t.nome}</div>
