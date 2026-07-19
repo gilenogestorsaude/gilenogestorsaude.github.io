@@ -413,10 +413,10 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
 <!-- ========== PAGE: CONSULTAS MÉDICAS ========== -->
 <div id="page-consultas" class="page">
     <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
-        <button class="btn-icon btn-outline" onclick="showPage('dash')" style="width:36px;height:36px">←</button>
+        <button class="btn-icon btn-outline" onclick="showPage('more')" style="width:36px;height:36px">←</button>
         <div style="flex:1">
-            <div style="font-size:16px;font-weight:700">📅 Consultas</div>
-            <div style="font-size:11px;color:var(--text3)" id="consultas-subtitle">Histórico médico</div>
+            <div style="font-size:16px;font-weight:700">🩺 Saúde Clínica</div>
+            <div style="font-size:11px;color:var(--text3)" id="consultas-subtitle">Consultas, exames e acompanhamento</div>
         </div>
         <button class="btn btn-primary btn-sm" onclick="openConsultaEditor()">+ Nova</button>
     </div>
@@ -439,7 +439,7 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
 <!-- ========== PAGE: ADMIN ========== -->
 <div id="page-admin" class="page">
     <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
-        <button class="btn-icon btn-outline" onclick="showPage('goals')" style="width:36px;height:36px">←</button>
+        <button class="btn-icon btn-outline" onclick="showPage('settings')" style="width:36px;height:36px">←</button>
         <div style="flex:1">
             <div style="font-size:16px;font-weight:700">👥 Painel Admin</div>
             <div style="font-size:11px;color:var(--text3)" id="admin-subtitle">Usuários cadastrados</div>
@@ -452,16 +452,39 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
 <!-- ========== PAGE: GOALS ========== -->
 <div id="page-goals" class="page">
     <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
-        <button class="btn-icon btn-outline" onclick="showPage('dash')" style="width:36px;height:36px">←</button>
-        <div style="font-size:16px;font-weight:700">Metas & Config</div>
+        <button class="btn-icon btn-outline" onclick="showPage('more')" style="width:36px;height:36px">←</button>
+        <div style="font-size:16px;font-weight:700">🎯 Metas do dia</div>
     </div>
     <div class="page-body" id="goals-body"></div>
+</div>
+
+<!-- ========== PAGE: MAIS (hub de navegação, v1.17.0) ========== -->
+<div id="page-more" class="page">
+    <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+        <div style="flex:1;min-width:0">
+            <div style="font-size:16px;font-weight:700">Mais</div>
+            <div style="font-size:11px;color:var(--text3)">Áreas do app e ajustes</div>
+        </div>
+    </div>
+    <div class="page-body" id="more-body"></div>
+</div>
+
+<!-- ========== PAGE: AJUSTES DO APP (seções recolhíveis, v1.17.0) ========== -->
+<div id="page-settings" class="page">
+    <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+        <button class="btn-icon btn-outline" onclick="showPage('more')" style="width:36px;height:36px">←</button>
+        <div style="flex:1;min-width:0">
+            <div style="font-size:16px;font-weight:700">⚙️ Ajustes do app</div>
+            <div style="font-size:11px;color:var(--text3)">Toque numa seção pra abrir</div>
+        </div>
+    </div>
+    <div class="page-body" id="settings-body"></div>
 </div>
 
 <!-- ========== PAGE: RELATÓRIO SEMANAL (PRO) ========== -->
 <div id="page-report" class="page">
     <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
-        <button class="btn-icon btn-outline" onclick="showPage('goals')" style="width:36px;height:36px">←</button>
+        <button class="btn-icon btn-outline" onclick="showPage('more')" style="width:36px;height:36px">←</button>
         <div style="flex:1;min-width:0">
             <div style="font-size:16px;font-weight:700">📊 Relatório Semanal</div>
             <div style="font-size:11px;color:var(--text3)" id="report-subtitle">Resumo da sua semana</div>
@@ -507,9 +530,9 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
         <span class="nav-emo">💊</span>
         <span>Meds</span>
     </button>
-    <button class="nav-item" onclick="showPage('goals')" data-page="goals">
-        <span class="nav-emo">🎯</span>
-        <span>Metas</span>
+    <button class="nav-item" onclick="showPage('more')" data-page="more">
+        <span class="nav-emo">☰</span>
+        <span>Mais</span>
     </button>
 </div>
 
@@ -545,7 +568,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.16.0';
+const APP_VERSION = '1.17.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1258,8 +1281,12 @@ function showPage(name) {
     if (pageEl) pageEl.classList.add('active');
     cPage = name;
 
+    // Páginas que moram DENTRO do hub mantêm o item "Mais" aceso (v1.17.0)
+    const MORE_CHILDREN = ['more','settings','goals','treino','vitais','consultas','report','tutorial','install','admin',
+        'template-editor','treino-execute','treino-history','treino-editor','treino-session'];
+    const navName = MORE_CHILDREN.indexOf(name) !== -1 ? 'more' : name;
     document.querySelectorAll('.nav-item').forEach(n => {
-        n.classList.toggle('active', n.dataset.page === name);
+        n.classList.toggle('active', n.dataset.page === navName);
     });
 
     // Render
@@ -1276,6 +1303,8 @@ function showPage(name) {
     else if (name === 'consultas') rConsultas();
     else if (name === 'vitais') rVitais();
     else if (name === 'goals') rGoals();
+    else if (name === 'more') rMore();
+    else if (name === 'settings') rSettings();
     else if (name === 'report') rReport();
     else if (name === 'admin') rAdmin();
     else if (name === 'install') rInstall();
@@ -2402,7 +2431,7 @@ function rDash() {
         ${!isModuleEnabled('consultas') ? '' : `
         <div class="card mb-12">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-                <span class="card-title" style="margin:0">📅 Consultas</span>
+                <span class="card-title" style="margin:0">🩺 Saúde Clínica</span>
                 <div style="display:flex;gap:6px">
                     <button class="btn btn-outline btn-sm" onclick="showPage('consultas')">Ver tudo</button>
                     <button class="btn btn-primary btn-sm" onclick="openConsultaEditor()">+ Nova</button>
@@ -4659,6 +4688,90 @@ function rGoals() {
             </div>
         </div>
 
+    `;
+}
+
+// ========== PÁGINA "MAIS" — hub de navegação (v1.17.0) ==========
+// Motivo: Treino (5x/semana), Sinais Vitais e Saúde Clínica não tinham porta fixa —
+// só se chegava neles por cards do Início. Metas saiu do rodapé (é config, uso raro).
+function moreRowHtml(emo, label, desc, act, badge) {
+    return `
+    <button onclick="${act}" style="display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin-bottom:8px;cursor:pointer">
+        <span style="width:38px;height:38px;border-radius:50%;background:rgba(16,185,129,.14);display:flex;align-items:center;justify-content:center;font-size:19px;flex-shrink:0">${emo}</span>
+        <span style="flex:1;min-width:0">
+            <span style="display:block;font-size:14px;font-weight:700;color:var(--text)">${label}${badge ? ` <span class="pro-badge" style="font-size:9px">${badge}</span>` : ''}</span>
+            <span style="display:block;font-size:11px;color:var(--text3)">${desc}</span>
+        </span>
+        <span style="font-size:20px;color:var(--text3);flex-shrink:0">›</span>
+    </button>`;
+}
+function moreGroupHtml(title, rows) {
+    if (!rows) return '';
+    return `<div style="font-size:11px;font-weight:800;letter-spacing:.5px;color:var(--text3);margin:14px 2px 8px">${title.toUpperCase()}</div>${rows}`;
+}
+function rMore() {
+    if (!D) return;
+    let rotina = '';
+    if (isModuleEnabled('treino')) rotina += moreRowHtml('🏋️', 'Treino', 'Fichas, execução guiada e histórico', "showPage('treino')");
+    if (isModuleEnabled('vitais')) rotina += moreRowHtml('📊', 'Sinais vitais', 'Peso, pressão, frequência e sono', "showPage('vitais')");
+    if (isModuleEnabled('consultas')) rotina += moreRowHtml('🩺', 'Saúde Clínica', 'Consultas, exames e acompanhamento médico', "showPage('consultas')");
+
+    const acomp = moreRowHtml('📊', 'Relatório Semanal', 'Resumo da semana pronto pra exportar', "openProFeature('report')", 'PRO');
+
+    let ajustes = moreRowHtml('🎯', 'Metas do dia', 'Calorias, proteína, água e tipo de dia', "showPage('goals')");
+    ajustes += moreRowHtml('⚙️', 'Ajustes do app', 'Módulos, refeições, treino, conta e privacidade', "showPage('settings')");
+    ajustes += moreRowHtml('📖', 'Como usar o app', 'Tutorial rápido das áreas', "showPage('tutorial')");
+
+    $('more-body').innerHTML = `
+        ${moreGroupHtml('Rotina', rotina)}
+        ${moreGroupHtml('Acompanhamento', acomp)}
+        ${moreGroupHtml('Ajustes', ajustes)}
+        <div style="text-align:center;font-size:11px;color:var(--text3);margin:18px 0 8px">Gileno Gestão Saúde · v${APP_VERSION}</div>
+    `;
+}
+
+// ========== PÁGINA "AJUSTES" — seções recolhíveis (v1.17.0) ==========
+// Queixa do Gileno: a Metas era uma tela só, rolagem enorme e confusa. Aqui cada
+// seção começa FECHADA; abre uma de cada vez, sem rolar atrás do que interessa.
+function isSettingsOpen(key) {
+    return !!(D._uiCollapsed && D._uiCollapsed['set_' + key] === false);
+}
+function toggleSettingsSection(key) {
+    if (!D._uiCollapsed) D._uiCollapsed = {};
+    D._uiCollapsed['set_' + key] = isSettingsOpen(key); // grava o estado NOVO (fechado?)
+    save();
+    rSettings();
+}
+function settingsSectionHtml(key, emo, title, desc, inner) {
+    const open = isSettingsOpen(key);
+    return `
+    <div class="card mb-8" style="padding:0;overflow:hidden">
+        <button onclick="toggleSettingsSection('${key}')" style="display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:none;border:none;padding:14px;cursor:pointer">
+            <span style="font-size:20px;flex-shrink:0">${emo}</span>
+            <span style="flex:1;min-width:0">
+                <span style="display:block;font-size:14px;font-weight:700;color:var(--text)">${title}</span>
+                <span style="display:block;font-size:11px;color:var(--text3)">${desc}</span>
+            </span>
+            <span style="font-size:14px;color:var(--text3);flex-shrink:0">${open ? '▲' : '▼'}</span>
+        </button>
+        ${open ? `<div style="padding:0 14px 14px">${inner}</div>` : ''}
+    </div>`;
+}
+function rSettings() {
+    if (!D) return;
+    $('settings-body').innerHTML = `
+        ${settingsSectionHtml('modulos', '🧩', 'Módulos do app', 'Ligue ou desligue áreas que você não usa', settingsModulesHtml())}
+        ${isModuleEnabled('refeicao') ? settingsSectionHtml('slots', '🍽', 'Campos de refeição', 'Renomear, horário previsto, ordem e ativar', settingsMealSlotsHtml()) : ''}
+        ${isModuleEnabled('treino') ? settingsSectionHtml('treino', '🏋️', 'Treino', 'Descanso padrão e passo da carga', settingsTreinoHtml()) : ''}
+        ${settingsSectionHtml('planos', '📋', 'Planos do profissional', 'Importar dieta da nutri e treino do personal', settingsImportHtml())}
+        ${settingsSectionHtml('conta', '⚙️', 'Configurações e conta', 'Tema, versão, privacidade, exportar e sair', settingsContaHtml())}
+    `;
+}
+
+// ===== Blocos que saíram da tela Metas na v1.17.0 (ela virou só metas do dia).
+// Ficam em funções próprias pra "Mais" e "Ajustes" usarem sem duplicar código.
+function settingsModulesHtml() {
+    return `
         <div class="card mb-12">
             <div class="card-title">Módulos do app</div>
             <div style="font-size:11px;color:var(--text3);margin-bottom:10px;line-height:1.5">
@@ -4676,8 +4789,11 @@ function rGoals() {
                     <button class="toggle ${isModuleEnabled(m) ? 'on' : ''}" onclick="toggleModule('${m}')"></button>
                 </div>`;
             }).join('')}
-        </div>
+        </div>`;
+}
 
+function settingsImportHtml() {
+    return `
         ${(!isModuleEnabled('refeicao') && !isModuleEnabled('treino')) ? '' : `
         <div class="card mb-12 plan-card">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px">
@@ -4705,21 +4821,12 @@ function rGoals() {
                 ${planProfessionalHtml(D.workoutPlan.meta)}
                 <button class="btn btn-outline btn-sm" style="margin-top:8px;color:var(--red)" onclick="clearWorkoutPlan()">Remover vínculo</button>
             </div>` : ''}
-        </div>`}
+        </div>`}`;
+}
 
-        <div class="card mb-12 plan-card">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px">
-                <span class="card-title" style="margin:0">📊 Relatório Semanal</span>
-                <span class="pro-badge">PRO</span>
-            </div>
-            <div style="font-size:11px;color:var(--text3);line-height:1.5;margin-bottom:10px">
-                O app monta o resumo da sua semana com os dados que você registra todo dia: médias, metas atingidas, gráficos de evolução e alertas — pronto pra <strong style="color:var(--text)">exportar em PDF</strong> e levar pro seu profissional.${D.proPreview ? '' : ' <span style="color:var(--accent);font-weight:700">🚧 Em construção.</span>'}
-            </div>
-            <button class="btn btn-outline w-full" style="justify-content:space-between" onclick="openProFeature('report')">
-                <span>📊 Ver relatório da semana</span><span style="font-size:10px;color:var(--text3);flex-shrink:0">${D.proPreview ? '✓ preview' : '🔒 em breve'}</span>
-            </button>
-        </div>
 
+function settingsTreinoHtml() {
+    return `
         ${!isModuleEnabled('treino') ? '' : `
         <div class="card mb-12">
             <div class="card-title">🏋️ Treino</div>
@@ -4742,8 +4849,11 @@ function rGoals() {
                     <button class="btn btn-outline btn-sm" style="width:34px" onclick="adjustCargaStep(1)">+</button>
                 </div>
             </div>
-        </div>`}
+        </div>`}`;
+}
 
+function settingsMealSlotsHtml() {
+    return `
         ${!isModuleEnabled('refeicao') ? '' : `
         <div class="card mb-12">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -4769,8 +4879,11 @@ function rGoals() {
                         <button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="deleteMealSlot('${s.id}')">Excluir</button>
                     </div>
                 </div>`).join('')}
-        </div>`}
+        </div>`}`;
+}
 
+function settingsContaHtml() {
+    return `
         <div class="card mb-12">
             <div class="card-title">Configurações</div>
             <div class="cfg-item">
@@ -4814,9 +4927,9 @@ function rGoals() {
                 <div><div class="cfg-label">Conta</div><div class="cfg-desc">${U ? U.email : ''}</div></div>
                 <button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="logout()">Sair</button>
             </div>
-        </div>
-    `;
+        </div>`;
 }
+
 
 function editGoal(field, dayType) {
     const labels = { kcal: 'Calorias (kcal)', prot: 'Proteína (g)', water: 'Hidratação (ml)', carbo: 'Carboidrato (g) — 0 = sem meta', gord: 'Gordura total (g) — 0 = sem meta' };
@@ -7396,7 +7509,7 @@ const MODULE_META = {
     medicamentos: { label: 'Medicamentos',    icon: '💊', desc: 'Cadastrar remédios/suplementos e marcar doses' },
     treino:       { label: 'Treino',          icon: '🏋️', desc: 'Templates A/B/C, execução guiada e histórico' },
     vitais:       { label: 'Sinais Vitais',   icon: '📊', desc: 'Peso, PA, FC, sono — base do IMC' },
-    consultas:    { label: 'Consultas',       icon: '📅', desc: 'Histórico médico e próximas consultas' }
+    consultas:    { label: 'Saúde Clínica',   icon: '🩺', desc: 'Consultas, exames e acompanhamento médico' }
 };
 
 function isModuleEnabled(name) {
@@ -7425,7 +7538,7 @@ function applyBottomNavVisibility() {
     nav.querySelectorAll('.nav-item').forEach(btn => {
         const page = btn.dataset.page;
         const mod = map[page];
-        if (!mod) return; // dash e goals sempre ficam
+        if (!mod) return; // dash e mais sempre ficam
         btn.style.display = isModuleEnabled(mod) ? '' : 'none';
     });
 }
