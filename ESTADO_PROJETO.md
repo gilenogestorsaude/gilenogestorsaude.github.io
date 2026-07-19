@@ -30,7 +30,13 @@ Decidido com o Gileno em 19/07/2026, logo depois do deploy. Ele vai **liberar ve
 
 **(c) Mostrar a cota no app.** Furo bobo do desenho atual: o endpoint **já devolve `usoDia` e `tetoDia` em toda resposta**, e o app ignora. Passa a mostrar algo como "análise desta semana já usada" ou "disponível a partir de domingo". Hoje o limite só se manifesta como erro depois de batido.
 
-**Custo por assinante, com a regra de 1 por semana:** R$ 0,24 × 4 a 5 por mês = **cerca de R$ 1,10 por assinante por mês**. Esse é o piso do preço da Pro.
+**(d) Exportar PDF fica ILIMITADO e igual ao do treino** (pedido dele). Exportar não chama a API: só re-renderiza a prosa que já está gravada, então não custa nada e não deve ter trava nenhuma. Hoje já é assim tecnicamente, mas o botão precisa ficar visualmente no mesmo padrão do export da sessão de treino, pra não passar a impressão de que gastar é gastar de novo.
+
+**(e) "Gerar de novo" só aparece se os NÚMEROS mudaram, e no máximo 1 vez** (regra dele, e é boa). Regerar sobre dados idênticos produz um texto diferente sobre a mesma realidade, ou seja, gasta sem informar nada. Só faz sentido depois de retificar alguma métrica da semana.
+   - **Implementação sugerida:** gravar junto da prosa uma impressão digital dos agregados (`hash` do JSON que foi enviado). No render, recalcular e comparar. Iguais: o botão não aparece, e no lugar dele um texto tipo "análise em dia com os seus registros". Diferentes: aparece "↻ Gerar de novo (você corrigiu registros desta semana)".
+   - **Teto rígido de +1.** Contador `regeracoes` no próprio objeto da semana. Chegou em 1, o botão some mesmo que os dados mudem de novo. Total máximo por semana: 2 chamadas, ou R$ 0,48.
+
+**Custo por assinante, com a regra de 1 por semana:** R$ 0,24 × 4 a 5 por mês = **cerca de R$ 1,10 por assinante por mês**, e no pior caso (todo mundo retificando toda semana) R$ 2,20. Esse é o piso do preço da Pro.
 
 ⚠️ **Não liberar para a esposa antes de (a).** Enquanto o token for compartilhado, dar acesso a ela é dar a chave do endpoint pago.
 
