@@ -1,7 +1,7 @@
 # Estado do Projeto — Gestão Saúde
 
 **Última atualização:** 2026-07-19
-**Versão atual em produção:** v1.17.0
+**Versão atual em produção:** v1.17.1
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
@@ -21,6 +21,8 @@ Proposta apresentada em prosa e aprovada ("concordo plenamente"), com uma observ
 **RENAME:** Consultas → **"Saúde Clínica"** (🩺) em 5 pontos visíveis (header da página, subtítulo, card do Início, `MODULE_META`, hub). **A chave `D.consultas` continua igual de propósito** — migrar armazenamento de dado de saúde tem risco real e zero benefício visível. Nome escolhido em prosa: "Histórico Clínico" foi descartado porque o módulo vai guardar exame pendente e medicação em curso (presente/futuro), e "Médico" era ambíguo (parecia cadastro do profissional).
 
 **Verificação:** JSC **53/53** (`verify_nav.js`: rodapé, roteador, Metas encolhida, cada bloco migrado preservando seus handlers — inclusive o **gesto Pro `proTap`** —, estado das seções, render do hub com módulos desligados, rename sem tocar dados) + **regressão das 6 suítes: 209 checks, 0 falhas** + bench visual. ⚠️ Gotcha JSC: `$` é reservado (ponte ObjC), stub precisa de outro nome. ⚠️ Validar no iPhone.
+
+**v1.17.1 (6569c60) — o Gileno me corrigiu e tinha razão.** Ele observou que Meds também deveria sair do rodapé, porque "é só para incluir, excluir ou editar, não é ação contínua como refeição e água". **Conferi no código ANTES de mexer:** `rMeds` tem só `openAddMed` e `deleteMed`; quem marca a dose é o **card do Início** (`toggleMedTaken`, linha ~2346 do rDash). Ou seja, o argumento que usei na v1.17.0 pra manter Meds no rodapé ("hábito de várias vezes ao dia") estava **factualmente errado** — o hábito acontece no Início, não naquela página. Rodapé final = **Início · Refeição · Água · ☰ Mais** (só o que é contínuo, critério dele); Medicamentos entrou no grupo Rotina do hub, com ← pro Mais e `MORE_CHILDREN` mantendo o item aceso. JSC 57/57 + regressão 6 suítes (213 checks, 0 falhas). **Lição:** quando eu defender uma decisão de UX com um argumento sobre a rotina dele, VERIFICAR no código onde a ação realmente acontece antes de cravar.
 
 **➡️ REDESIGN FECHADO.** Próximo: **tipos novos de registro dentro de Saúde Clínica** (doença, medicação temporária tipo corticoide, exame pendente tipo teste ergométrico) e a **Etapa 2 do relatório** (IA via VPS, aguarda OK de custo).
 
@@ -401,9 +403,9 @@ Marketing:
 
 ```
 Estou retomando o app Gestão Saúde. Lê /Users/gilenopaiva/Documents/Gileno_Gestao/Apps/Gestao_Saude_App/ESTADO_PROJETO.md
-pra contexto. Versão em produção: v1.17.0 (redesign FECHADO: Hidratação, Início, Refeições,
+pra contexto. Versão em produção: v1.17.1 (redesign FECHADO: Hidratação, Início, Refeições,
 navegação com hub "Mais", Ajustes recolhível e módulo "Saúde Clínica").
-Pendências: validar v1.17.0 no iPhone, tipos novos de registro em Saúde Clínica (doença,
+Pendências: validar v1.17.1 no iPhone, tipos novos de registro em Saúde Clínica (doença,
 medicação temporária, exame pendente) e a Etapa 2 do relatório (IA via VPS).
 
 [Aqui descreve: resultado do teste no iPhone / o que quer atacar primeiro]
