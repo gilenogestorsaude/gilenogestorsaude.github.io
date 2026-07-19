@@ -1,12 +1,34 @@
 # Estado do Projeto — Gestão Saúde
 
-**Última atualização:** 2026-05-31
-**Versão atual em produção:** v1.9.7
+**Última atualização:** 2026-07-18
+**Versão atual em produção:** v1.11.0
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
 
 > Este documento é o **handoff vivo** do projeto. Qualquer nova sessão de trabalho começa lendo este arquivo pra entender estado atual, decisões já tomadas, e próximos passos.
+
+---
+
+## Resumo da sessão 2026-07-18 — v1.11.0 (RELATÓRIO SEMANAL Pro — Etapa 1)
+
+**Objetivo do Gileno:** o app gerar sozinho o relatório semanal que o "Assistente de Performance" (skill) produz todo sábado em `gileno_gestao_ptc/Performance/Relatorios_Semanais/`, a partir dos dados que ele alimenta diariamente. Plano aprovado em 2 etapas: **Etapa 1 (feita)** = parte de DADOS no app (tabelas, médias, metas, gráficos, alertas por regra); **Etapa 2 (pendente de OK de negócio)** = parte de PROSA por IA (Resumo Executivo, Análise Profissional, Plano de Ação) via endpoint na VPS chamando a Claude API (chave NUNCA no app — repo público; custo ~R$ 0,05-0,15/relatório).
+
+**O que entrou (v1.11.0):**
+- Página nova `page-report` (rota `report`) + card "📊 Relatório Semanal" (PRO) em Metas, gate `openProFeature('report')` → preview abre, público vê cadeado "em breve".
+- Motor: `collectWeekReport(domingoISO)` — semana Dom→Sáb, navegável (‹ ›). Agregados: métricas corporais (peso/PA/FC/sono por dia + variação líquida + sono médio), nutrição (médias 4 macros, metas por tipo de dia, melhor/pior dia de proteína), treinos (sessões vs `D.reportCfg.sessoesMeta`, minutos, volume), hidratação (média, dias na meta, <70%), medicação (adesão % nos dias com registro; dias sem registro fora do cálculo), alertas 🔴🟡🟢 por regra.
+- **Leituras read-only** `dayMealsRO/dayWaterRO/dayMedsRO`: montar relatório NUNCA cria entradas em D (getDayData/getDayWater mutam — por isso não são usadas aqui). `dayMedsRO` tolera formato legado (array) SEM migrar.
+- Gráficos SVG inline (linha de peso; barras % da meta pra proteína e água, linha tracejada nos 100%), cores via CSS vars (seguem tema).
+- "📝 Anotações da semana" → `D.weeklyNotes[domingoISO]` — contexto que os números não mostram (viagem, doença…). Entra no PDF e será insumo da IA na Etapa 2.
+- **Exportar PDF:** decisão deliberada pós-tela-preta da v1.10.10 — ZERO `@media print` no app. `buildReportHtml()` gera documento autocontido (tema claro, tabelas, botão imprimir NA página exportada) → `window.open`+`document.write`; fallback `navigator.share` com File (PWA iOS bloqueia window.open); último recurso download blob. ⚠️ **Falta testar share/print no iPhone real (PWA standalone).**
+- Sanity no load: `D.weeklyNotes`, `D.reportCfg.sessoesMeta` (default 3, editável −/+ no card Treinos do relatório).
+
+**Verificação:** JavaScriptCore **54/54 + sintaxe** (harness em scratchpad `verify_report.js`: semana sintética completa — agregados exatos, alertas, não-mutação, legado meds, escape XSS das anotações, gate, roteamento, export) **+ bench visual no navegador**: cópia do app com Firebase stubado + seed de demo (config `bench_saude` no launch.json da raiz, serve do scratchpad — regenerar se preciso). Página, gráficos, Metas e documento exportado conferidos em viewport mobile, zero erros de console. Detalhe do bench: injetar o seed pelo ÚLTIMO `</body>` (buildReportHtml contém `</body>` na string!).
+
+**Backlog anotado nesta sessão:**
+- **Etapa 2 (IA):** endpoint na VPS (padrão mesa/recepção) recebe JSON de `collectWeekReport` + anotações → Claude API com prompt do assistente-performance ("rigor máximo, sem complacência") → prosa entra no PDF. Degradação graciosa se VPS off. Aguarda OK do Gileno (custo recorrente).
+- **Renomear módulo "Consultas"** pra algo mais amplo (decisão do Gileno 18/07) — virar o lar do CONTEXTO clínico que o relatório/IA consome: consultas + eventos de saúde (doença, medicação temporária tipo corticoide/antibiótico, exames pendentes tipo teste ergométrico). Nome a definir com ele (ex.: "Saúde Clínica", "Médico").
+- Relatório usa FC de REPOUSO (vitais); FC de treino/pico não existe no schema — se quiser o alerta de FC pico do relatório do Assistente, treino precisa ganhar campo FC (avaliar na Etapa 2).
 
 ---
 

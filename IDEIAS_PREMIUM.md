@@ -55,6 +55,8 @@ Concretiza a promessa do site: "Alertas e lembretes personalizados" (hoje só al
 
 ## 4. Exportar PDF semanal/mensal formatado (Premium individual)
 
+**Status: PARCIALMENTE ENTREGUE na v1.11.0 (18/07/2026)** — Relatório Semanal (Pro) no app: tabelas, médias, metas, gráficos SVG, alertas por regra, anotações da semana e exportação em HTML imprimível (salvar como PDF). Falta: versão mensal e a camada de IA (#2, Etapa 2 via VPS).
+
 Botão que gera PDF rico:
 
 - Capa com período
