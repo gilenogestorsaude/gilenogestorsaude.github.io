@@ -1,7 +1,7 @@
 # Estado do Projeto — Gestão Saúde
 
-**Última atualização:** 2026-07-19 (parte 9)
-**Versão atual em produção:** v1.20.0 (cota por usuário; servidor v2 + app publicados em 19/07 ~17:20)
+**Última atualização:** 2026-07-19 (parte 10)
+**Versão atual em produção:** v1.21.0 (chip treino/descanso como atalho + campos de refeição por tipo de dia)
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
@@ -26,7 +26,7 @@ janela root de manhã), o `cc` nem lia; corrigido com `chown cc:cc` na janela ro
 2. **Liberar a esposa** (agora é seguro): pegar o uid dela no console do
    Firebase (Authentication → Users), acrescentar em `REL_UIDS` separado por
    vírgula e `docker compose up -d` (NUNCA `restart`, não relê o env).
-3. **Validar v1.20.0 no iPhone** (inclui a v1.19.0, nunca validada lá): forçar
+3. ~~Validar no iPhone~~ FEITO 19/07 (análise real da v2 + PDF). Falta só conferir a v1.21.0: forçar
    atualização do PWA, conferir v1.20.0 no header, Ajustes sem campo de chave.
 
 Nota do teste real: a prosa da semana 12-18/07 é LEGADA (sem hash), então
@@ -64,6 +64,36 @@ desenho v1 tinha um token só e um teto global.
 **Custo por assinante, com a regra de 1 por semana:** R$ 0,24 × 4 a 5 por mês = **cerca de R$ 1,10 por assinante por mês**, e no pior caso (todo mundo retificando toda semana) R$ 2,20. Esse é o piso do preço da Pro.
 
 ⚠️ **Não liberar para a esposa antes de (a).** Enquanto o token for compartilhado, dar acesso a ela é dar a chave do endpoint pago.
+
+---
+
+## Resumo da sessão 2026-07-19 (parte 10): v1.21.0 (chip de tipo de dia + campos por tipo de dia)
+
+Pedido do Gileno logo após validar a v1.20.0 no iPhone (análise real da semana
+05-11/07 gerada pela v2, R$ 0,24; PDF exportado; senha órfã do Keychain apagada).
+
+- **Chip 🏋️/😴 do topo do Início virou atalho**: toca e alterna o tipo do DIA EM
+  EXIBIÇÃO (reativa o `toggleDayType` órfão da v1.15.1, agora com `curDate()`).
+  Antes o chip abria a página de treino (porta que já existe no ☰ Mais). Ganhou
+  um ⇄ discreto de affordance. As metas do dia viram junto, como sempre.
+- **Campo de refeição ganhou "em que dias aparece"**: todos / 🏋️ só treino /
+  😴 só descanso. `descansoOnly` espelha o `treinoOnly` no `getDaySlots` (um
+  ponto único; Início, Refeição, mover-item e plano herdam). MESMA exceção: dia
+  com registro no campo sempre mostra o campo, histórico nunca some. Editor
+  trocou o checkbox por seletor de 3 opções; selos 😴 na lista de Ajustes e nos
+  chips da Refeição; import de plano preserva o campo novo.
+- **Uso pretendido por ele**: dia de treino = Pré-treino (05:20) + Pós-treino
+  (07:10); dia de descanso = Dejejum (07:00). ⚠️ A CONFIGURAÇÃO é da conta dele,
+  não do código: no app real ele precisa LIGAR Pré/Pós-treino (estavam
+  "desligado") e marcar Dejejum como "só descanso". ⚠️ Nota: o plano da nutri
+  usa o campo "Dejejum" pro whey/creatina; em dia de treino esse card do plano
+  some junto com o campo (o whey do treino vive no Pré/Pós).
+
+**Verificação:** 23 checks novos (`verify_slots.js`: matriz treino/descanso/
+todos/desligado, exceção do histórico, legado sem o campo, toggle no dia em
+exibição, afirmações de fonte, versões, sintaxe) + regressão dos 52 da cota +
+bench visual (chip alternando com slots trocando ao vivo, editor, zero erro de
+console). Push `8cf732d`.
 
 ---
 
