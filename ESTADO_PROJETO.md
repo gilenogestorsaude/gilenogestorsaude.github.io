@@ -1,12 +1,20 @@
 # Estado do Projeto — Gestão Saúde
 
 **Última atualização:** 2026-07-19
-**Versão atual em produção:** v1.13.0
+**Versão atual em produção:** v1.14.0
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
 
 > Este documento é o **handoff vivo** do projeto. Qualquer nova sessão de trabalho começa lendo este arquivo pra entender estado atual, decisões já tomadas, e próximos passos.
+
+---
+
+## Resumo da sessão 2026-07-19 (parte 2) — v1.14.0 (redesign da Hidratação)
+
+Gileno validou a v1.13.0 no iPhone ("ficou perfeito") e trouxe **mockups de um redesign** (telas demo: home com anel de kcal + "próxima melhor ação", abas Saúde/Mais, hidratação com anel grande). **Decisão: atacar em etapas, começando pela Hidratação** (a que ele destacou); a reorganização da navegação (aba Saúde juntando meds+vitais+corpo, aba Mais) fica pra discutir junto com o rename do módulo Consultas.
+
+**v1.14.0 (d9bfe46):** anel SVG grande (litros `fmtLitros`, meta e %, verde ao bater; "Faltam X ml..."), chips de **1 toque** 200/300/500 ml + Outro (`quickAddWater`: hora de agora; **dia passado cai no modal**; **após corte BPH pede confirmação** — o espírito do lock preservado), **↩ Desfazer último** (`undoLastWater`: remove o registro de horário mais tarde do dia), blocos re-rotulados como **"Linha do tempo"** (HYDRO_BLOCKS ganhou `label`: Madrugada/Início da manhã/Manhã/Meio do dia/Tarde/Noite; período+estratégia viram subtítulo). **Estratégia BPH e metas por bloco INTACTAS** (decisão explícita: mockup não tinha blocos, mas os blocos SÃO a função de saúde). Verificação: JSC 26/26 (`verify_hydro.js`) + bench visual `hydro.html` no bench do scratchpad (1 toque somou no anel, desfazer devolveu o estado). ⚠️ Validar no iPhone. **Backlog do redesign (etapas seguintes, aguardando validação da Hidratação):** home no estilo mockup (anel kcal + barras + "próxima melhor ação" + ações rápidas), Refeições com 4 cards de macro + botão grande, e a discussão da navegação nova.
 
 ---
 
