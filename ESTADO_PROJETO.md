@@ -1,12 +1,24 @@
 # Estado do Projeto — Gestão Saúde
 
 **Última atualização:** 2026-07-18
-**Versão atual em produção:** v1.11.0
+**Versão atual em produção:** v1.12.0
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
 
 > Este documento é o **handoff vivo** do projeto. Qualquer nova sessão de trabalho começa lendo este arquivo pra entender estado atual, decisões já tomadas, e próximos passos.
+
+---
+
+## Resumo da sessão 2026-07-18 — v1.12.0 (TREINO: execução persistida + registro selado)
+
+Dois gargalos de uso real reportados pelo Gileno, corrigidos na mesma sessão da v1.11.0:
+
+**1. Treino em andamento NUNCA mais se perde.** `activeExecution` era só memória: o **← da execução chamava `cancelExecution()`** (sair da tela descartava a sessão!), tocar "Treinar" de novo re-semeava do zero, e reload do PWA (iOS descarrega ao trocar de app) apagava tudo. Agora: snapshot em **`D.activeExecution`** (Firestore, offline-first) gravado por `persistExecution()` ao iniciar/marcar série/ajustar carga (blur e botões −/+; NÃO a cada tecla)/ajustar descanso; **← virou `pauseExecution()`** (sai sem perder; cancelar só pelo botão Cancelar); **banner "TREINO EM ANDAMENTO"** no topo da aba Treino (`execBannerHtml`: nome, tempo, séries feitas, ▶ Retomar / Descartar-com-confirmação); **`restoreExecution()` no boot** (chamado no `onAuthStateChanged` após `load()`) reidrata o treino após reload, descartando snapshot com mais de **18h** (`EXEC_MAX_AGE_MS`); `executeTemplate` com progresso ativo pede confirmação — **Cancelar retoma o treino atual** em vez de zerar. `restRemaining` é transiente (descanso não sobrevive a reload; cargas e séries sim).
+
+**2. Registro selado + Reabrir (reconstrução da v1.10.10 revertida, agora SEGURA).** Finalizar treino (`finishExecution`) e tocar numa sessão do histórico abrem a página nova `treino-session` (`rTreinoSession`, viewingSessionId): view SÓ-LEITURA com chips de grupo muscular, selo PR, séries (reps × carga), totais (ex/séries/volume) e notas. Botões: **🔓 Reabrir pra editar** (confirmação → `openTreinoEditor`; `treinoEditorReturnPage` já devolve pra view selada ao salvar/fechar), **📋 Duplicar pra hoje**, **📄 Exportar PDF (Pro)** — `buildSessionHtml()` + **`openExportedDoc()`** (helper compartilhado extraído do Relatório Semanal: janela nova → share de arquivo no PWA iOS → download). ZERO `@media print` no app — a lição da tela preta segue respeitada. Não-Pro vê modal cadeado (`openProFeature('sessao')`).
+
+**Verificação:** JSC **82/82 + sintaxe** (mesmo harness `verify_report.js` do scratchpad, ampliado: persistência/restore/guard/pausa/descarte/staleness 19h, view selada, reabrir com retorno, export Pro/não-Pro, id inexistente → histórico) + **bench visual** (bench v3 com template no seed): execução → pausa pelo ← → banner → "reload" simulado → retomada com série e carga intactas → fim → view selada com totais conferidos (1.440kg). Zero erros de console. ⚠️ Validar no iPhone real (PWA standalone): pausa/retomada entre apps e o share do Exportar.
 
 ---
 
