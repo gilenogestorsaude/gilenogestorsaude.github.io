@@ -350,8 +350,9 @@ Marketing:
 
 ```
 Estou retomando o app Gestão Saúde. Lê /Users/gilenopaiva/Documents/Gileno_Gestao/Apps/Gestao_Saude_App/ESTADO_PROJETO.md
-pra contexto. Versão em produção: v1.13.0 (sessão de treino editável + export com Voltar).
-Pendências: validar v1.13.0 no iPhone, Etapa 2 do relatório (IA via VPS) e renomear módulo Consultas.
+pra contexto. Versão em produção: v1.14.0 (Hidratação redesenhada: anel + 1 toque + desfazer).
+Pendências: validar v1.14.0 no iPhone, próximas etapas do redesign (home/refeições/navegação),
+Etapa 2 do relatório (IA via VPS) e renomear módulo Consultas.
 
 [Aqui descreve: resultado do teste no iPhone / o que quer atacar primeiro]
 ```
