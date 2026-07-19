@@ -564,7 +564,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.20.0';
+const APP_VERSION = '1.21.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -993,6 +993,7 @@ async function load() {
             } else {
                 D.mealSlots.forEach(s => {
                     if (typeof s.treinoOnly !== 'boolean') s.treinoOnly = (s.id === 'pretreino' || s.id === 'postreino');
+                    if (typeof s.descansoOnly !== 'boolean') s.descansoOnly = false; // v1.21.0
                     if (typeof s.ativo !== 'boolean') s.ativo = true;
                 });
             }
@@ -1804,7 +1805,11 @@ function getDaySlots(dt) {
         const slot = day.slots[s.id];
         const hasItems = slot && slot.items && slot.items.length > 0;
         const treinoOk = !s.treinoOnly || isTreino;
-        if ((s.ativo !== false && treinoOk) || hasItems) {
+        // v1.21.0: espelho do treinoOnly — campo "só descanso" (ex.: Dejejum que
+        // em dia de treino dá lugar ao Pré/Pós-treino). Mesma exceção: dia com
+        // registro no campo continua mostrando o campo, histórico nunca some.
+        const descansoOk = !s.descansoOnly || !isTreino;
+        if ((s.ativo !== false && treinoOk && descansoOk) || hasItems) {
             out.push(s);
             seen.add(s.id);
         }
@@ -2056,7 +2061,7 @@ function rDash() {
         </div>
         <div class="header-user">
             <div class="header-date">${dateLabel(dt)}</div>
-            <button class="header-badge" onclick="showPage('treino')" title="Abrir página de treino">${dayType === 'treino' ? '🏋️ Treino' : '😴 Descanso'}</button>
+            <button class="header-badge" onclick="toggleDayType()" title="Toque para alternar treino/descanso">${dayType === 'treino' ? '🏋️ Treino' : '😴 Descanso'} <span style="opacity:.6;font-size:10px">⇄</span></button>
         </div>
         <div class="header-stats">
             <div class="header-stat" onclick="openVitalEditor()">
@@ -2221,7 +2226,7 @@ function rDash() {
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
                 </div>
                 <div class="meal-info">
-                    <div class="meal-name">${s.name}${s.treinoOnly ? ' <span style="font-size:9px" title="Só em dia de treino">🏋️</span>' : ''}</div>
+                    <div class="meal-name">${s.name}${s.treinoOnly ? ' <span style="font-size:9px" title="Só em dia de treino">🏋️</span>' : ''}${s.descansoOnly ? ' <span style="font-size:9px" title="Só em dia de descanso">😴</span>' : ''}</div>
                     <div class="meal-time">${timeHtml}</div>
                 </div>
                 ${done ? `<div class="meal-macros">
@@ -2574,8 +2579,12 @@ function rDash() {
     `;
 }
 
+// Atalho do chip 🏋️/😴 do topo do Início (v1.21.0, pedido do Gileno). Alterna
+// o tipo do DIA EM EXIBIÇÃO (não sempre o de hoje: se ele navegou pra ontem,
+// é ontem que ele quer corrigir). Além das metas, o tipo do dia agora também
+// decide quais campos de refeição aparecem (treinoOnly/descansoOnly).
 function toggleDayType() {
-    const dt = today();
+    const dt = curDate();
     const current = getDayType(dt);
     setDayType(dt, current === 'treino' ? 'descanso' : 'treino');
     rDash();
@@ -3454,7 +3463,7 @@ function processDietImport(parsed) {
         } else {
             const base = normalizeStr(ps.name).replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').substr(0, 16) || 'refeicao';
             slotId = base + '_' + uid().substr(0, 4);
-            const novo = { id: slotId, name: ps.name, time: ps.time || '', treinoOnly: !!ps.treinoOnly, ativo: true };
+            const novo = { id: slotId, name: ps.name, time: ps.time || '', treinoOnly: !!ps.treinoOnly, descansoOnly: !!ps.descansoOnly, ativo: true };
             const at = (cursor >= 0 ? cursor + 1 : D.mealSlots.length);
             D.mealSlots.splice(at, 0, novo);
             cursor = at;
@@ -5189,7 +5198,7 @@ function settingsMealSlotsHtml() {
                 <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;${s.ativo === false ? 'opacity:.55' : ''}">
                     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
                         <div style="min-width:0;flex:1">
-                            <div style="font-size:14px;font-weight:600;color:var(--text)">${s.name}${s.treinoOnly ? ' <span style="font-size:10px;color:#f59e0b;font-weight:700">🏋️ treino</span>' : ''}${s.ativo === false ? ' <span style="font-size:10px;color:var(--red);font-weight:700">desligado</span>' : ''}</div>
+                            <div style="font-size:14px;font-weight:600;color:var(--text)">${s.name}${s.treinoOnly ? ' <span style="font-size:10px;color:#f59e0b;font-weight:700">🏋️ treino</span>' : ''}${s.descansoOnly ? ' <span style="font-size:10px;color:var(--blue, #3b82f6);font-weight:700">😴 descanso</span>' : ''}${s.ativo === false ? ' <span style="font-size:10px;color:var(--red);font-weight:700">desligado</span>' : ''}</div>
                             <div style="font-size:11px;color:var(--text3);margin-top:2px">🕐 previsto ${s.time || '--:--'}</div>
                         </div>
                         <button class="toggle ${s.ativo !== false ? 'on' : ''}" onclick="toggleMealSlotActive('${s.id}')" style="flex-shrink:0" title="Ligar/desligar"></button>
@@ -5322,10 +5331,15 @@ function openMealSlotEditor(id) {
                 <label class="form-label">Horário previsto</label>
                 <input type="time" id="slot-time" class="form-input" value="${s.time || ''}">
             </div>
-            <label style="display:flex;align-items:center;gap:8px;margin-bottom:16px;cursor:pointer">
-                <input type="checkbox" id="slot-treino" ${s.treinoOnly ? 'checked' : ''} style="width:18px;height:18px;flex-shrink:0">
-                <span style="font-size:13px;color:var(--text2)">🏋️ Só em dia de treino (some nos dias de descanso)</span>
-            </label>
+            <div class="form-group">
+                <label class="form-label">Em que dias este campo aparece?</label>
+                <select id="slot-dias" class="form-input">
+                    <option value="todos" ${!s.treinoOnly && !s.descansoOnly ? 'selected' : ''}>Todos os dias</option>
+                    <option value="treino" ${s.treinoOnly ? 'selected' : ''}>🏋️ Só em dia de treino</option>
+                    <option value="descanso" ${s.descansoOnly ? 'selected' : ''}>😴 Só em dia de descanso</option>
+                </select>
+                <div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.4">No outro tipo de dia o campo some sozinho (mas reaparece num dia em que você já registrou algo nele).</div>
+            </div>
             <button class="btn btn-primary w-full" onclick="saveMealSlot(${editing ? `'${id}'` : 'null'})">Salvar</button>
         </div>`;
     document.body.appendChild(overlay);
@@ -5335,13 +5349,15 @@ function openMealSlotEditor(id) {
 function saveMealSlot(id) {
     const name = ($('slot-name').value || '').trim();
     const time = $('slot-time').value || '';
-    const treinoOnly = $('slot-treino').checked;
+    const dias = $('slot-dias').value;                 // 'todos' | 'treino' | 'descanso'
+    const treinoOnly = dias === 'treino';
+    const descansoOnly = dias === 'descanso';
     if (!name) return toast('Informe o nome do campo', true);
     if (id) {
         const s = getMealSlotById(id);
-        if (s) { s.name = name; s.time = time; s.treinoOnly = treinoOnly; }
+        if (s) { s.name = name; s.time = time; s.treinoOnly = treinoOnly; s.descansoOnly = descansoOnly; }
     } else {
-        getMealSlots().push({ id: 'slot_' + uid(), name, time, treinoOnly, ativo: true });
+        getMealSlots().push({ id: 'slot_' + uid(), name, time, treinoOnly, descansoOnly, ativo: true });
     }
     save();
     const modal = document.querySelector('.modal-overlay');
