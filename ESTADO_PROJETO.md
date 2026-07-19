@@ -1,12 +1,28 @@
 # Estado do Projeto — Gestão Saúde
 
 **Última atualização:** 2026-07-19
-**Versão atual em produção:** v1.16.0
+**Versão atual em produção:** v1.17.0
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
 
 > Este documento é o **handoff vivo** do projeto. Qualquer nova sessão de trabalho começa lendo este arquivo pra entender estado atual, decisões já tomadas, e próximos passos.
+
+---
+
+## Resumo da sessão 2026-07-19 (parte 5) — v1.17.0 (navegação + Ajustes + rename) — FECHA o redesign
+
+Proposta apresentada em prosa e aprovada ("concordo plenamente"), com uma observação dele: **a tela Metas era uma rolagem só, confusa, precisava de seções ou cards**.
+
+**NAVEGAÇÃO (deliberadamente diferente do mockup).** O mockup criava uma aba "Saúde" (corpo+meds+vitais) e jogava Metas pra "Mais". Recusei a parte de Meds: **marcar remédio é hábito de várias vezes ao dia e não pode ficar um nível mais fundo**; o mockup é demo genérica, não foi desenhado na rotina dele. Resultado: rodapé mantém as 4 ações diárias (Início · Refeição · Água · Meds) e **Metas sai, entra ☰ Mais** (Metas é config, uso raro). Nova página `more` (`rMore`, linhas compactas via `moreRowHtml`/`moreGroupHtml`) agrupa **Rotina** (Treino, Sinais vitais, Saúde Clínica), **Acompanhamento** (Relatório Pro) e **Ajustes** (Metas do dia, Ajustes do app, Tutorial). **Ganho colateral: o Treino, usado 5×/semana, finalmente tem porta fixa** (antes só card do Início). `MORE_CHILDREN` no `showPage` mantém o item "Mais" aceso nas páginas filhas.
+
+**METAS ENXUTA + AJUSTES RECOLHÍVEL (a queixa dele).** `rGoals` foi de **239 → 85 linhas**: ficou só tipo de dia, metas, regras automáticas e sinais vitais. Os 5 blocos pesados viraram funções próprias (`settingsModulesHtml`, `settingsMealSlotsHtml`, `settingsTreinoHtml`, `settingsImportHtml`, `settingsContaHtml`) — extraídas por script Python, sem reescrever HTML à mão — e foram pra nova página `settings` (`rSettings`), onde cada seção **começa FECHADA** (`isSettingsOpen`/`toggleSettingsSection`/`settingsSectionHtml`, estado em `D._uiCollapsed.set_<key>`). **Medido no bench: 2733px com tudo aberto → 372px no padrão, 7× menos rolagem.**
+
+**RENAME:** Consultas → **"Saúde Clínica"** (🩺) em 5 pontos visíveis (header da página, subtítulo, card do Início, `MODULE_META`, hub). **A chave `D.consultas` continua igual de propósito** — migrar armazenamento de dado de saúde tem risco real e zero benefício visível. Nome escolhido em prosa: "Histórico Clínico" foi descartado porque o módulo vai guardar exame pendente e medicação em curso (presente/futuro), e "Médico" era ambíguo (parecia cadastro do profissional).
+
+**Verificação:** JSC **53/53** (`verify_nav.js`: rodapé, roteador, Metas encolhida, cada bloco migrado preservando seus handlers — inclusive o **gesto Pro `proTap`** —, estado das seções, render do hub com módulos desligados, rename sem tocar dados) + **regressão das 6 suítes: 209 checks, 0 falhas** + bench visual. ⚠️ Gotcha JSC: `$` é reservado (ponte ObjC), stub precisa de outro nome. ⚠️ Validar no iPhone.
+
+**➡️ REDESIGN FECHADO.** Próximo: **tipos novos de registro dentro de Saúde Clínica** (doença, medicação temporária tipo corticoide, exame pendente tipo teste ergométrico) e a **Etapa 2 do relatório** (IA via VPS, aguarda OK de custo).
 
 ---
 
@@ -385,9 +401,10 @@ Marketing:
 
 ```
 Estou retomando o app Gestão Saúde. Lê /Users/gilenopaiva/Documents/Gileno_Gestao/Apps/Gestao_Saude_App/ESTADO_PROJETO.md
-pra contexto. Versão em produção: v1.16.0 (redesign visual fechado: Hidratação, Início e Refeições).
-Pendências: validar v1.16.0 no iPhone, decidir a navegação nova (aba Saúde/Mais) JUNTO com o
-rename do módulo Consultas, e a Etapa 2 do relatório (IA via VPS).
+pra contexto. Versão em produção: v1.17.0 (redesign FECHADO: Hidratação, Início, Refeições,
+navegação com hub "Mais", Ajustes recolhível e módulo "Saúde Clínica").
+Pendências: validar v1.17.0 no iPhone, tipos novos de registro em Saúde Clínica (doença,
+medicação temporária, exame pendente) e a Etapa 2 do relatório (IA via VPS).
 
 [Aqui descreve: resultado do teste no iPhone / o que quer atacar primeiro]
 ```
