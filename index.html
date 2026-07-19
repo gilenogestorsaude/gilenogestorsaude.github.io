@@ -545,7 +545,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.12.1';
+const APP_VERSION = '1.13.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -5352,6 +5352,23 @@ function expandReps(repsStr, n) {
     return Array.from({ length: n }, () => s);
 }
 
+// Semeia UM exercício do template pro formato da execução — usado ao iniciar o treino
+// e também ao trocar/adicionar exercício no meio da sessão (v1.13.0).
+function seedExecExercise(ex) {
+    const prescrita = (typeof ex.carga === 'number') ? ex.carga : parseFloat(String(ex.carga == null ? '' : ex.carga).replace(',', '.'));
+    const ultima = lastCargaFor(ex.nome); // progressão: começa da última vez; senão, da ficha
+    const seed = (ultima != null ? ultima : (isNaN(prescrita) ? 0 : prescrita));
+    const n = parseInt(ex.series) || 3;
+    return {
+        ...ex,
+        id: uid(),
+        feito: false,
+        cargaRef: ultima, // "última vez" (referência, ou null)
+        // cada série tem reps-alvo + carga PRÓPRIA (essencial p/ pirâmide) + feito
+        sets: expandReps(ex.reps, n).map(r => ({ reps: r, carga: seed, done: false }))
+    };
+}
+
 function executeTemplate(templateId) {
     const tpl = (D.workoutTemplates || []).find(t => t.id === templateId);
     if (!tpl) return;
@@ -5365,20 +5382,7 @@ function executeTemplate(templateId) {
         templateId: tpl.id,
         nome: tpl.nome,
         notas: tpl.notas,
-        exercicios: tpl.exercicios.map(ex => {
-            const prescrita = (typeof ex.carga === 'number') ? ex.carga : parseFloat(String(ex.carga == null ? '' : ex.carga).replace(',', '.'));
-            const ultima = lastCargaFor(ex.nome); // progressão: começa da última vez; senão, da ficha
-            const seed = (ultima != null ? ultima : (isNaN(prescrita) ? 0 : prescrita));
-            const n = parseInt(ex.series) || 3;
-            return {
-                ...ex,
-                id: uid(),
-                feito: false,
-                cargaRef: ultima, // "última vez" (referência, ou null)
-                // cada série tem reps-alvo + carga PRÓPRIA (essencial p/ pirâmide) + feito
-                sets: expandReps(ex.reps, n).map(r => ({ reps: r, carga: seed, done: false }))
-            };
-        }),
+        exercicios: tpl.exercicios.map(seedExecExercise),
         restValue: (typeof D.restDefault === 'number' ? D.restDefault : 90), // ponto de partida do cronômetro
         restRemaining: null, // null = não descansando
         startTime: Date.now()
@@ -5539,8 +5543,14 @@ function rTreinoExecute() {
                         ${ex.cargaRef != null ? `<div style="font-size:11px;color:#f59e0b;font-weight:700;margin-top:2px">📈 última vez: ${fmtCarga(ex.cargaRef)} kg</div>` : ''}
                     </div>
                     <span style="font-size:12px;font-weight:800;color:${doneCount === total ? 'var(--primary)' : 'var(--text3)'};flex-shrink:0">${doneCount}/${total}</span>
+                    <button onclick="openExecExercisePicker(${exIdx})" title="Trocar ou remover exercício" style="width:34px;height:34px;border-radius:10px;background:var(--bg);border:1px solid var(--border);color:var(--text2);font-size:15px;cursor:pointer;flex-shrink:0">⇄</button>
                 </div>
                 ${setsHtml}
+                <div style="display:flex;align-items:center;gap:8px;margin-top:2px">
+                    <span style="font-size:11px;color:var(--text3);font-weight:700">séries</span>
+                    <button onclick="removeExecSet(${exIdx})" style="width:32px;height:28px;border-radius:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);font-size:15px;font-weight:800;cursor:pointer">−</button>
+                    <button onclick="addExecSet(${exIdx})" style="width:32px;height:28px;border-radius:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);font-size:15px;font-weight:800;cursor:pointer">+</button>
+                </div>
             </div>`;
     });
 
@@ -5556,7 +5566,8 @@ function rTreinoExecute() {
 
     body.innerHTML = `
         ${exHtml}
-        <div style="display:flex;gap:8px;margin-top:16px;margin-bottom:84px">
+        <button class="btn btn-outline w-full" style="margin-top:4px" onclick="openExecExercisePicker(null)">➕ Adicionar exercício a esta sessão</button>
+        <div style="display:flex;gap:8px;margin-top:12px;margin-bottom:84px">
             <button class="btn btn-outline" style="flex:1" onclick="cancelExecution()">Cancelar</button>
             <button class="btn btn-primary" style="flex:2" onclick="finishExecution()">🏁 FIM — Registrar</button>
         </div>
@@ -5578,6 +5589,107 @@ function toggleSet(exIdx, setIdx) {
     } else {
         rTreinoExecute();
     }
+}
+
+// ===== Ajustes NO MEIO da sessão (v1.13.0) — mudam SÓ a sessão do dia, nunca o template =====
+// Motivo (Gileno 19/07): o personal troca exercício na hora (um da terça no treino de segunda)
+// e a quantidade de séries também muda durante o exercício.
+function addExecSet(exIdx) {
+    if (!activeExecution) return;
+    const ex = activeExecution.exercicios[exIdx];
+    if (!ex) return;
+    const last = ex.sets[ex.sets.length - 1];
+    ex.sets.push({ reps: last ? last.reps : '8-12', carga: last ? last.carga : 0, done: false });
+    ex.feito = false;
+    persistExecution();
+    rTreinoExecute();
+}
+function removeExecSet(exIdx) {
+    if (!activeExecution) return;
+    const ex = activeExecution.exercicios[exIdx];
+    if (!ex) return;
+    if (ex.sets.length <= 1) { toast('O exercício precisa de ao menos 1 série', true); return; }
+    // remove a última série NÃO feita; se todas já foram feitas, confirma antes de apagar registro
+    let idx = -1;
+    for (let i = ex.sets.length - 1; i >= 0; i--) { if (!ex.sets[i].done) { idx = i; break; } }
+    if (idx === -1) {
+        if (!confirm('Todas as séries deste exercício já foram feitas.\nRemover a última apaga o registro dela. Continuar?')) return;
+        idx = ex.sets.length - 1;
+    }
+    ex.sets.splice(idx, 1);
+    ex.feito = ex.sets.every(s => s.done);
+    persistExecution();
+    rTreinoExecute();
+}
+// Seletor de exercício: troca o de índice exIdx (ou adiciona no fim, se exIdx == null),
+// escolhendo de QUALQUER template (o treino atual aparece primeiro).
+function openExecExercisePicker(exIdx) {
+    if (!activeExecution) return;
+    const replacing = (exIdx != null) ? activeExecution.exercicios[exIdx] : null;
+    const tpls = (D.workoutTemplates || []).slice()
+        .sort((a, b) => (a.id === activeExecution.templateId ? -1 : 0) - (b.id === activeExecution.templateId ? -1 : 0));
+    const groupsHtml = tpls.map(tpl => {
+        const rows = (tpl.exercicios || []).map((ex, i) => {
+            const g = getMuscleGroup(ex.grupo);
+            return `
+            <button onclick="applyExecExercise(${exIdx == null ? 'null' : exIdx},'${tpl.id}',${i})" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin-bottom:6px;cursor:pointer">
+                <div style="flex:1;min-width:0">
+                    <div style="font-size:13px;font-weight:700;color:var(--text)">${escHtml(ex.nome || '—')}</div>
+                    <div style="font-size:11px;color:${g.color};font-weight:600">${g.label} · ${parseInt(ex.series) || 3}× ${escHtml(String(ex.reps || '8-12'))}</div>
+                </div>
+                <span style="font-size:16px;color:var(--text3)">›</span>
+            </button>`;
+        }).join('');
+        if (!rows) return '';
+        return `<div style="font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--text3);margin:12px 0 6px">${escHtml(tpl.nome)}${tpl.id === activeExecution.templateId ? ' · treino atual' : ''}</div>${rows}`;
+    }).join('');
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = `
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>${replacing ? '⇄ Trocar exercício' : '➕ Adicionar exercício'}</h3>
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            </div>
+            ${replacing ? `<div style="font-size:12px;color:var(--text2);margin-bottom:4px">No lugar de <strong>${escHtml(replacing.nome)}</strong> (só nesta sessão: o template não muda):</div>` : '<div style="font-size:12px;color:var(--text2);margin-bottom:4px">Entra só nesta sessão (o template não muda):</div>'}
+            ${groupsHtml || '<div style="font-size:12px;color:var(--text3)">Nenhum template com exercícios.</div>'}
+            ${replacing ? `<button class="btn btn-outline w-full" style="color:var(--red);margin-top:10px" onclick="removeExecExercise(${exIdx})">🗑 Remover este exercício da sessão</button>` : ''}
+        </div>`;
+    document.body.appendChild(overlay);
+}
+function applyExecExercise(exIdx, tplId, i) {
+    if (!activeExecution) return;
+    const tpl = (D.workoutTemplates || []).find(t => t.id === tplId);
+    const src = tpl && tpl.exercicios ? tpl.exercicios[i] : null;
+    if (!src) return;
+    if (exIdx != null) {
+        const old = activeExecution.exercicios[exIdx];
+        if (!old) return;
+        if (old.sets.some(s => s.done) && !confirm(`"${old.nome}" já tem série feita.\nTrocar descarta essas séries. Continuar?`)) return;
+        activeExecution.exercicios[exIdx] = seedExecExercise(src);
+    } else {
+        activeExecution.exercicios.push(seedExecExercise(src));
+    }
+    document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
+    persistExecution();
+    rTreinoExecute();
+    toast(exIdx != null ? '⇄ Exercício trocado nesta sessão' : '➕ Exercício adicionado à sessão');
+}
+function removeExecExercise(exIdx) {
+    if (!activeExecution) return;
+    const ex = activeExecution.exercicios[exIdx];
+    if (!ex) return;
+    if (activeExecution.exercicios.length <= 1) { toast('A sessão precisa de ao menos 1 exercício', true); return; }
+    const temFeita = ex.sets.some(s => s.done);
+    if (!confirm(temFeita
+        ? `"${ex.nome}" já tem série feita.\nRemover apaga essas séries desta sessão. Continuar?`
+        : `Remover "${ex.nome}" desta sessão?`)) return;
+    activeExecution.exercicios.splice(exIdx, 1);
+    document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
+    persistExecution();
+    rTreinoExecute();
+    toast('🗑 Exercício removido da sessão');
 }
 
 function cancelExecution() {
