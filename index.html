@@ -812,7 +812,7 @@ function defaultD() {
         // Consultas medicas
         // consultas: [{ id, data, medico, especialidade, local?, queixa, conduta, prescricao?, proximaConsulta?, notas?, createdAt }]
         consultas: [],
-        // Eventos clinicos (v1.18.0) — LISTA SEPARADA de consultas de proposito:
+        // Eventos clinicos (v1.18.0). LISTA SEPARADA de consultas de proposito:
         // consulta e um encontro pontual (data unica); estes tem PERIODO e SITUACAO
         // (doenca ativa, remedio em curso, exame nao realizado). Misturar os dois
         // schemas quebraria o historico ja gravado sem ganho nenhum.
@@ -2458,7 +2458,7 @@ function rDash() {
             ${(() => {
                 const consultas = D.consultas || [];
                 const next = getNextConsulta();
-                // v1.18.0 — o que está em aberto aparece ANTES da próxima consulta:
+                // v1.18.0: o que está em aberto aparece ANTES da próxima consulta:
                 // exame não feito e remédio em curso cobram ação hoje; a consulta já tem data.
                 const abertos = sortClinicosAbertos(getClinicos('aberto'));
                 let abertoHtml = '';
@@ -5598,7 +5598,7 @@ function rTemplateEditor() {
 
         <div class="card mb-12">
             <div class="form-group" style="margin-bottom:0">
-                <label class="form-label">Notas — opcional</label>
+                <label class="form-label">Notas (opcional)</label>
                 <textarea class="form-input" rows="2" placeholder="Observações sobre o treino, descanso, foco..."
                           oninput="editingTemplate.notas = this.value">${editingTemplate.notas || ''}</textarea>
             </div>
@@ -6524,7 +6524,7 @@ function rTreinoEditor() {
 
         <div class="card mb-12">
             <div class="form-group" style="margin-bottom:0">
-                <label class="form-label">Notas — opcional</label>
+                <label class="form-label">Notas (opcional)</label>
                 <textarea id="treino-notas" class="form-input" rows="2" placeholder="Como se sentiu, observações…"
                           oninput="editingTreino.notas = this.value">${editingTreino.notas || ''}</textarea>
             </div>
@@ -7028,7 +7028,7 @@ function rConsultas() {
     const abertos = sortClinicosAbertos(getClinicos('aberto'));   // v1.18.0
     const fechados = getClinicos('fechado').slice().sort((a, b) => String(b.fim || b.inicio || '').localeCompare(String(a.fim || a.inicio || '')));
 
-    // Subtítulo — o que está EM ABERTO manda, porque é o que exige ação.
+    // Subtítulo: o que está EM ABERTO manda, porque é o que exige ação.
     const subEl = $('consultas-subtitle');
     if (subEl) {
         if (consultas.length === 0 && abertos.length === 0 && fechados.length === 0) {
@@ -7199,7 +7199,7 @@ function openConsultaEditor(consultaId) {
                            oninput="editingConsulta.proximaConsulta = this.value">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Notas — opcional</label>
+                    <label class="form-label">Notas (opcional)</label>
                     <textarea id="cons-notas" class="form-input" rows="2" placeholder="Observações pessoais"
                               oninput="editingConsulta.notas = this.value">${editingConsulta.notas || ''}</textarea>
                 </div>
@@ -7258,7 +7258,7 @@ function deleteConsulta(id) {
     if (cPage === 'dash') rDash();
 }
 
-// ========== SAÚDE CLÍNICA — EVENTOS (doença / medicação temporária / exame) ==========
+// ========== SAÚDE CLÍNICA: EVENTOS (doença / medicação temporária / exame) ==========
 // v1.18.0. Vive em D.clinicos, SEPARADO de D.consultas (ver comentário do schema).
 // Diferença de natureza: consulta = encontro pontual; evento clínico = período + situação.
 
@@ -7266,24 +7266,24 @@ const CLINICO_TIPOS = {
     doenca: {
         icon: '🤒', nome: 'Doença ou evento de saúde', curto: 'Doença',
         labelTitulo: 'O que foi', phTitulo: 'Ex: Gripe, lombalgia, dengue',
-        labelDetalhe: 'Sintomas / diagnóstico — opcional', phDetalhe: 'O que sentiu, como o médico chamou',
-        labelInicio: 'Começou em', labelFim: 'Resolveu em — deixe vazio se ainda está ativa',
+        labelDetalhe: 'Sintomas / diagnóstico (opcional)', phDetalhe: 'O que sentiu, como o médico chamou',
+        labelInicio: 'Começou em', labelFim: 'Resolveu em (deixe vazio se ainda está ativa)',
         aberto: 'Ativa', fechado: 'Resolvida', acaoFechar: '✓ Resolvida',
         vazio: 'Ex: uma gripe, uma crise de lombalgia, uma virose'
     },
     medtemp: {
         icon: '💊', nome: 'Medicação temporária', curto: 'Medicação',
         labelTitulo: 'Medicamento', phTitulo: 'Ex: Prednisona 20mg, Amoxicilina 500mg',
-        labelDetalhe: 'Posologia — opcional', phDetalhe: 'Ex: 1 comprimido de manhã, por 5 dias',
-        labelInicio: 'Começou em', labelFim: 'Vai até — opcional',
+        labelDetalhe: 'Posologia (opcional)', phDetalhe: 'Ex: 1 comprimido de manhã, por 5 dias',
+        labelInicio: 'Começou em', labelFim: 'Vai até (opcional)',
         aberto: 'Em curso', fechado: 'Encerrada', acaoFechar: '✓ Encerrada',
-        vazio: 'Corticoide, antibiótico — remédio com data pra acabar'
+        vazio: 'Corticoide ou antibiótico, remédio com data pra acabar'
     },
     exame: {
         icon: '🔬', nome: 'Exame pendente', curto: 'Exame',
         labelTitulo: 'Exame', phTitulo: 'Ex: Teste ergométrico, hemograma',
-        labelDetalhe: 'Quem pediu / onde fazer — opcional', phDetalhe: 'Ex: Dr. Carlos — Clínica Cardio',
-        labelInicio: 'Pedido em', labelFim: 'Agendado / realizado em — opcional',
+        labelDetalhe: 'Quem pediu / onde fazer (opcional)', phDetalhe: 'Ex: Dr. Carlos, Clínica Cardio',
+        labelInicio: 'Pedido em', labelFim: 'Agendado / realizado em (opcional)',
         aberto: 'Não realizado', fechado: 'Realizado', acaoFechar: '✓ Realizado',
         vazio: 'Exame que o médico pediu e você ainda não fez'
     }
@@ -7304,7 +7304,7 @@ function clinicoAtrasado(c) {
     return c.fim < today();
 }
 
-// Linha de status legível por tipo — é o que o Gileno lê antes de qualquer outra coisa.
+// Linha de status legível por tipo. É o que o Gileno lê antes de qualquer outra coisa.
 function clinicoStatusLine(c) {
     const m = clinicoMeta(c.tipo);
     const fechado = (c.situacao || 'aberto') === 'fechado';
@@ -7321,7 +7321,7 @@ function clinicoStatusLine(c) {
 
     if (clinicoAtrasado(c)) {
         return c.tipo === 'exame'
-            ? `⏰ Era ${formatDataTreino(c.fim)} — já fez?`
+            ? `⏰ Era ${formatDataTreino(c.fim)}, já fez?`
             : `⏰ Prazo terminou em ${formatDataTreino(c.fim)}`;
     }
     if (c.fim) {
@@ -7389,7 +7389,7 @@ function openClinicoPicker() {
             <div class="modal-body">
                 <div class="card mb-8" style="cursor:pointer" onclick="closeClinicoPicker(); openConsultaEditor()">
                     <div style="font-size:14px;font-weight:700;color:var(--text)">🩺 Consulta médica</div>
-                    <div style="font-size:11px;color:var(--text3);margin-top:2px">Encontro com o médico — queixa, conduta, retorno</div>
+                    <div style="font-size:11px;color:var(--text3);margin-top:2px">Encontro com o médico: queixa, conduta, retorno</div>
                 </div>
                 ${opcoes}
             </div>
@@ -7428,7 +7428,7 @@ function openClinicoEditor(tipo, id) {
     overlay.innerHTML = `
         <div class="modal-box" style="max-height:92vh;display:flex;flex-direction:column">
             <div class="modal-header" style="flex-shrink:0">
-                <h3>${isEditing ? 'Editar' : 'Novo'} — ${m.icon} ${m.curto}</h3>
+                <h3>${isEditing ? 'Editar' : 'Novo'}: ${m.icon} ${m.curto}</h3>
                 <button class="modal-close" onclick="closeClinicoEditor()">×</button>
             </div>
             <div style="overflow-y:auto;flex:1">
@@ -7460,7 +7460,7 @@ function openClinicoEditor(tipo, id) {
                     </div>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Notas — opcional</label>
+                    <label class="form-label">Notas (opcional)</label>
                     <textarea id="clin-notas" class="form-input" rows="2" placeholder="Observações pessoais"
                               oninput="editingClinico.notas = this.value">${escHtml(editingClinico.notas || '')}</textarea>
                 </div>
@@ -7509,7 +7509,7 @@ function saveClinico() {
     if (cPage === 'dash') rDash();
 }
 
-// 1 toque pra fechar o que está em aberto — o gesto mais comum do módulo.
+// 1 toque pra fechar o que está em aberto, o gesto mais comum do módulo.
 function fecharClinico(id) {
     const c = (D.clinicos || []).find(x => x.id === id);
     if (!c) return;
@@ -7518,8 +7518,8 @@ function fecharClinico(id) {
     // Sem data final registrada, assume hoje (foi hoje que ele marcou).
     if (!c.fim) c.fim = today();
     save();
-    // toast() usa textContent — escapar aqui mostraria "&amp;" literal na tela.
-    toast(`${c.titulo} — ${m.fechado.toLowerCase()}`);
+    // toast() usa textContent, escapar aqui mostraria "&amp;" literal na tela.
+    toast(`${c.titulo}: ${m.fechado.toLowerCase()}`);
     if (cPage === 'consultas') rConsultas();
     if (cPage === 'dash') rDash();
 }
@@ -7752,7 +7752,7 @@ function openAddMed(medId) {
                 <div style="font-size:11px;color:var(--text3);margin-top:4px">Se preenchido, decrementa ao marcar "tomei"; alerta se ≤ 7</div>
             </div>
             <div class="form-group">
-                <label class="form-label">Notas — opcional</label>
+                <label class="form-label">Notas (opcional)</label>
                 <textarea id="med-notas" class="form-input" rows="2" placeholder="Ex: tomar com gordura">${m.notas || ''}</textarea>
             </div>
             <div class="cfg-item" style="border:none;padding:8px 0">
