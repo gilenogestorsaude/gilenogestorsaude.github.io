@@ -446,6 +446,19 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
     <div class="page-body" id="goals-body"></div>
 </div>
 
+<!-- ========== PAGE: RELATÓRIO SEMANAL (PRO) ========== -->
+<div id="page-report" class="page">
+    <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+        <button class="btn-icon btn-outline" onclick="showPage('goals')" style="width:36px;height:36px">←</button>
+        <div style="flex:1;min-width:0">
+            <div style="font-size:16px;font-weight:700">📊 Relatório Semanal</div>
+            <div style="font-size:11px;color:var(--text3)" id="report-subtitle">Resumo da sua semana</div>
+        </div>
+        <span class="pro-badge">PRO</span>
+    </div>
+    <div class="page-body" id="report-body"></div>
+</div>
+
 <!-- ========== PAGE: COMO USAR (TUTORIAL) ========== -->
 <div id="page-tutorial" class="page">
     <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
@@ -520,7 +533,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.10.9';
+const APP_VERSION = '1.11.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -723,6 +736,9 @@ function defaultD() {
         workoutPlan: null,
         // Modo Pro (preview) — destrava import de PDF (em construção) só pro tester via gesto secreto.
         proPreview: false,
+        // Relatório Semanal (Pro) — anotações livres por semana (chave = domingo ISO) + config
+        weeklyNotes: {},
+        reportCfg: { sessoesMeta: 3 },
         // Treino — personalização (ponto de partida; o ajuste fino é no dedo durante o treino)
         restDefault: 90, // descanso padrão (s) que inicia o cronômetro regressivo na execução
         cargaStep: 1,    // passo do +/- da carga (kg) — pesos redondos (1,2,3...)
@@ -957,6 +973,9 @@ async function load() {
             if (typeof D.dietPlan === 'undefined') D.dietPlan = null;
             if (typeof D.workoutPlan === 'undefined') D.workoutPlan = null; // reservado: plano do personal (espelha dietPlan)
             if (typeof D.proPreview !== 'boolean') D.proPreview = false;
+            if (!D.weeklyNotes || typeof D.weeklyNotes !== 'object') D.weeklyNotes = {}; // v1.11.0
+            if (!D.reportCfg || typeof D.reportCfg !== 'object') D.reportCfg = {};
+            if (!(D.reportCfg.sessoesMeta > 0)) D.reportCfg.sessoesMeta = 3;
             reconcileWorkoutOrigem(D); // v1.9.10 — define quem é do personal (autoritativo por ids, ou heurística legada)
             if (typeof D.restDefault !== 'number' || D.restDefault < 15) D.restDefault = 90; // v1.9.11
             if (typeof D.cargaStep !== 'number' || D.cargaStep <= 0) D.cargaStep = 1;
@@ -1240,6 +1259,7 @@ function showPage(name) {
     else if (name === 'consultas') rConsultas();
     else if (name === 'vitais') rVitais();
     else if (name === 'goals') rGoals();
+    else if (name === 'report') rReport();
     else if (name === 'admin') rAdmin();
     else if (name === 'install') rInstall();
     else if (name === 'tutorial') rTutorial();
@@ -3220,6 +3240,34 @@ function openProFeature(kind) {
     // Sem o preview, cai no cadeado "em breve" abaixo — import é recurso Pro.
     if (D.proPreview && kind === 'nutri') return openDietImport();
     if (D.proPreview && kind === 'personal') return openWorkoutImport();
+    if (D.proPreview && kind === 'report') return openWeeklyReport();
+    if (kind === 'report') {
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+        overlay.innerHTML = `
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>🚧 Relatório Semanal</h3>
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            </div>
+            <div class="modal-body">
+                <div style="text-align:center;padding:8px 0 4px">
+                    <div style="font-size:40px;margin-bottom:8px">🔒</div>
+                    <div style="font-weight:700;color:var(--text);margin-bottom:6px">Recurso da Versão Pro</div>
+                    <div style="font-size:13px;color:var(--text2);line-height:1.6">
+                        Em breve o app vai montar o <strong>relatório da sua semana</strong> automaticamente: médias, metas atingidas, gráficos de evolução e alertas — pronto pra exportar em PDF e levar pro seu médico, nutri ou personal.
+                    </div>
+                    <div style="font-size:11px;color:var(--text3);margin-top:12px">Estamos construindo isso com cuidado. 💪</div>
+                </div>
+                <div class="modal-actions" style="margin-top:16px">
+                    <button class="btn btn-primary w-full" onclick="this.closest('.modal-overlay').remove()">Entendi</button>
+                </div>
+            </div>
+        </div>`;
+        document.body.appendChild(overlay);
+        return;
+    }
     const titulo = kind === 'personal' ? 'Treino do personal (PDF)' : 'Plano da nutricionista (PDF)';
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
@@ -3747,6 +3795,459 @@ function deleteWaterEntry(idx) {
 }
 
 // ========== RENDER: GOALS ==========
+// ========== RELATÓRIO SEMANAL (PRO) ==========
+// Motor do relatório: coleta SEM MUTAÇÃO (leituras puras — montar o relatório nunca
+// cria entradas vazias em D), agregados da semana Dom→Sáb e alertas por regra.
+// A parte de prosa/análise por IA (Resumo Executivo etc.) é a Etapa 2 (via backend).
+let reportWeekStart = null; // domingo ISO da semana em exibição (null = semana atual)
+
+function weekStartOf(dt) { return addDaysStr(dt, -getDayOfWeek(dt)); } // domingo da semana de dt
+
+function reportCfgSafe() {
+    if (!D.reportCfg || typeof D.reportCfg !== 'object') D.reportCfg = {};
+    if (!(D.reportCfg.sessoesMeta > 0)) D.reportCfg.sessoesMeta = 3;
+    return D.reportCfg;
+}
+
+// Leituras read-only (espelham getDayMeals/getDayWater sem criar D.days/D.water do dia)
+function dayMealsRO(dt) {
+    const day = (D.days && D.days[dt]) || null;
+    const t = { kcal: 0, prot: 0, carbo: 0, gord: 0, itens: 0 };
+    if (!day || !day.slots) return t;
+    Object.keys(day.slots).forEach(id => {
+        const slot = day.slots[id];
+        ((slot && slot.items) || []).forEach(it => {
+            t.kcal += it.kcal || 0; t.prot += it.prot || 0;
+            t.carbo += it.carbo || 0; t.gord += it.gord || 0; t.itens++;
+        });
+    });
+    return t;
+}
+function dayWaterRO(dt) {
+    return ((D.water && D.water[dt]) || []).reduce((s, e) => s + (e.vol || 0), 0);
+}
+// Doses previstas × tomadas no dia (meds ativos com horários). Tolerante ao formato
+// legado (array) SEM migrar — migração continua sendo papel de getMedTakenMap.
+function dayMedsRO(dt) {
+    let prev = 0, tom = 0;
+    (D.meds || []).forEach(m => {
+        if (m.ativo === false || !Array.isArray(m.horarios) || !m.horarios.length) return;
+        prev += m.horarios.length;
+        const reg = (D.medsTaken && D.medsTaken[dt] && D.medsTaken[dt][m.id]) || null;
+        if (Array.isArray(reg)) tom += Math.min(reg.length, m.horarios.length);
+        else if (reg && typeof reg === 'object') tom += Math.min(Object.keys(reg).length, m.horarios.length);
+    });
+    return { prev, tom };
+}
+
+function fmtDM(dt) { const [y, m, d] = dt.split('-'); return d + '/' + m; }
+const DOW_ABBR = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+// Coleta e agrega a semana inteira. Função pura sobre D — testável isolada.
+function collectWeekReport(startIso) {
+    const cfg = reportCfgSafe();
+    const hoje = today();
+    const endIso = addDaysStr(startIso, 6);
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+        const dt = addDaysStr(startIso, i);
+        const future = dt > hoje;
+        const v = (D.vitals && D.vitals[dt]) || {};
+        const meals = dayMealsRO(dt);
+        const water = dayWaterRO(dt);
+        const meds = dayMedsRO(dt);
+        const goals = D.goals[getDayType(dt)] || D.goals.treino;
+        const sono = calcSleepDuration(v.dormir, v.acordar);
+        days.push({
+            dt, i, future, v, meals, water, meds, goals, sono,
+            hasMeals: meals.itens > 0, hasWater: water > 0,
+            hasMeds: meds.tom > 0,
+            hasVitals: !!(v.peso != null || v.pa || v.fc || sono != null)
+        });
+    }
+    const past = days.filter(d => !d.future);
+
+    // Peso — série e variação líquida (primeiro→último dia com medição)
+    const pesoSerie = past.filter(d => d.v.peso != null).map(d => ({ dt: d.dt, i: d.i, peso: d.v.peso }));
+    const pesoVar = pesoSerie.length >= 2 ? (pesoSerie[pesoSerie.length - 1].peso - pesoSerie[0].peso) : null;
+
+    // Nutrição — só dias com registro de refeição
+    const nutriDays = past.filter(d => d.hasMeals);
+    const avg = (arr, f) => arr.length ? arr.reduce((s, d) => s + f(d), 0) / arr.length : 0;
+    const nutri = {
+        dias: nutriDays.length,
+        avgKcal: avg(nutriDays, d => d.meals.kcal),
+        avgProt: avg(nutriDays, d => d.meals.prot),
+        avgCarbo: avg(nutriDays, d => d.meals.carbo),
+        avgGord: avg(nutriDays, d => d.meals.gord),
+        diasProtOk: nutriDays.filter(d => d.meals.prot >= d.goals.prot).length,
+        diasKcalOk: nutriDays.filter(d => Math.abs(d.meals.kcal - d.goals.kcal) <= d.goals.kcal * 0.10).length,
+        diasGordOk: nutriDays.filter(d => !(d.goals.gord > 0) || d.meals.gord <= d.goals.gord).length,
+        temMetaGord: nutriDays.some(d => d.goals.gord > 0),
+        melhorProt: null, piorProt: null
+    };
+    if (nutriDays.length) {
+        const byPct = nutriDays.slice().sort((a, b) => (a.meals.prot / a.goals.prot) - (b.meals.prot / b.goals.prot));
+        nutri.piorProt = byPct[0]; nutri.melhorProt = byPct[byPct.length - 1];
+    }
+
+    // Hidratação — só dias com registro
+    const aguaDays = past.filter(d => d.hasWater);
+    const agua = {
+        dias: aguaDays.length,
+        avg: avg(aguaDays, d => d.water),
+        diasMeta: aguaDays.filter(d => d.water >= d.goals.water).length,
+        diasAbaixo70: aguaDays.filter(d => d.water < d.goals.water * 0.7).length,
+        pior: aguaDays.length ? aguaDays.slice().sort((a, b) => (a.water / a.goals.water) - (b.water / b.goals.water))[0] : null
+    };
+
+    // Treinos da semana
+    const treinos = (D.treinos || []).filter(t => t.data >= startIso && t.data <= endIso)
+        .slice().sort((a, b) => a.data < b.data ? -1 : 1);
+    const treinoAgg = {
+        sessoes: treinos.length, meta: cfg.sessoesMeta,
+        minutos: treinos.reduce((s, t) => s + (t.duracao || 0), 0),
+        volume: treinos.reduce((s, t) => s + treinoVolume(t), 0)
+    };
+
+    // Medicação — só dias com pelo menos 1 dose marcada (dias sem registro contados à parte)
+    const medDays = past.filter(d => d.meds.prev > 0);
+    const medReg = medDays.filter(d => d.hasMeds);
+    const medPrev = medReg.reduce((s, d) => s + d.meds.prev, 0);
+    const medTom = medReg.reduce((s, d) => s + d.meds.tom, 0);
+    const medAgg = {
+        temMeds: (D.meds || []).some(m => m.ativo !== false && (m.horarios || []).length),
+        diasReg: medReg.length, diasSemReg: medDays.length - medReg.length,
+        prev: medPrev, tom: medTom,
+        pct: medPrev > 0 ? Math.round(medTom / medPrev * 100) : null
+    };
+
+    // Sono — média dos dias com registro
+    const sonoDays = past.filter(d => d.sono != null);
+    const sonoAvg = sonoDays.length ? avg(sonoDays, d => d.sono) : null;
+
+    // Alertas por regra (semáforo). Só alerta sobre o que TEM dado — módulo sem uso fica de fora.
+    const alerts = [];
+    const add = (level, icon, text) => alerts.push({ level, icon, text });
+    if (nutri.dias >= 2) {
+        if (nutri.diasProtOk === 0) add('red', '🎯', `Proteína abaixo da meta em TODOS os ${nutri.dias} dias registrados.`);
+        else if (nutri.diasProtOk < nutri.dias) add('yellow', '🎯', `Proteína na meta em ${nutri.diasProtOk} de ${nutri.dias} dias registrados.`);
+        else add('green', '🎯', `Proteína na meta em todos os ${nutri.dias} dias registrados. 👏`);
+    }
+    if (agua.dias >= 2) {
+        if (agua.diasAbaixo70 >= 3) add('red', '💧', `Hidratação abaixo de 70% da meta em ${agua.diasAbaixo70} dias — ponto de correção prioritário.`);
+        else if (agua.diasMeta < agua.dias) add('yellow', '💧', `Hidratação na meta em ${agua.diasMeta} de ${agua.dias} dias registrados.`);
+        else add('green', '💧', `Hidratação na meta em todos os ${agua.dias} dias registrados. 👏`);
+    }
+    if (isModuleEnabled('treino')) {
+        if (treinoAgg.sessoes === 0 && past.length >= 4) add('red', '🏋️', `Nenhuma sessão de treino registrada na semana (meta: ${treinoAgg.meta}).`);
+        else if (treinoAgg.sessoes < treinoAgg.meta) add('yellow', '🏋️', `${treinoAgg.sessoes} de ${treinoAgg.meta} sessões de treino na semana.`);
+        else if (treinoAgg.sessoes > 0) add('green', '🏋️', `${treinoAgg.sessoes} sessões de treino — meta semanal atingida. 👏`);
+    }
+    if (medAgg.temMeds && medAgg.pct != null) {
+        if (medAgg.pct < 80) add('red', '💊', `Adesão à medicação em ${medAgg.pct}% nos dias com registro.`);
+        else if (medAgg.pct < 100) add('yellow', '💊', `Adesão à medicação em ${medAgg.pct}% (${medAgg.tom}/${medAgg.prev} doses nos dias com registro).`);
+        else add('green', '💊', `Adesão à medicação em 100% nos dias com registro. 👏`);
+    }
+    if (pesoVar != null) {
+        const s = (pesoVar > 0 ? '+' : '') + pesoVar.toFixed(1).replace('.', ',');
+        add('info', '⚖️', `Variação de peso na semana: ${s} kg (${fmtDM(pesoSerie[0].dt)} → ${fmtDM(pesoSerie[pesoSerie.length - 1].dt)}).`);
+    }
+
+    return { startIso, endIso, days, past, pesoSerie, pesoVar, nutri, agua, treinos, treinoAgg, medAgg, sonoAvg, alerts,
+             notes: (D.weeklyNotes && D.weeklyNotes[startIso]) || '' };
+}
+
+// ---- Gráficos SVG (inline, cores via CSS vars — seguem o tema) ----
+function svgLineChart(points, unit) {
+    // points: [{i(0-6), val}] — linha com marcadores, rótulos min/max
+    if (!points || points.length < 2) return '';
+    const W = 320, H = 110, PX = 26, PY = 16;
+    const vals = points.map(p => p.val);
+    let min = Math.min(...vals), max = Math.max(...vals);
+    if (max - min < 0.8) { const mid = (max + min) / 2; min = mid - 0.4; max = mid + 0.4; } // achata demais? abre a escala
+    const x = i => PX + (W - 2 * PX) * (i / 6);
+    const y = v => H - PY - (H - 2 * PY) * ((v - min) / (max - min));
+    const path = points.map((p, k) => (k ? 'L' : 'M') + x(p.i).toFixed(1) + ' ' + y(p.val).toFixed(1)).join(' ');
+    const dots = points.map(p => `<circle cx="${x(p.i).toFixed(1)}" cy="${y(p.val).toFixed(1)}" r="3" fill="var(--green)"/>`).join('');
+    const labels = DOW_ABBR.map((n, i) => `<text x="${x(i).toFixed(1)}" y="${H - 2}" font-size="8" fill="var(--text3)" text-anchor="middle">${n}</text>`).join('');
+    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img">
+        <text x="2" y="${(y(max) + 3).toFixed(1)}" font-size="8" fill="var(--text3)">${fmt(max)}</text>
+        <text x="2" y="${(y(min) + 3).toFixed(1)}" font-size="8" fill="var(--text3)">${fmt(min)}</text>
+        <line x1="${PX}" y1="${y(min)}" x2="${W - PX}" y2="${y(min)}" stroke="var(--border)" stroke-width="1"/>
+        <path d="${path}" fill="none" stroke="var(--green)" stroke-width="2"/>${dots}${labels}
+        <text x="${W - 2}" y="10" font-size="8" fill="var(--text3)" text-anchor="end">${unit}</text>
+    </svg>`;
+}
+function svgPctBars(items, color) {
+    // items: [{i(0-6), pct|null}] — barras % da meta, linha tracejada nos 100%
+    if (!items || !items.some(it => it.pct != null)) return '';
+    const W = 320, H = 110, PX = 26, PY = 16;
+    const maxPct = Math.max(120, ...items.filter(it => it.pct != null).map(it => it.pct));
+    const x = i => PX + (W - 2 * PX) * (i / 7) + 4;
+    const bw = (W - 2 * PX) / 7 - 8;
+    const y = p => H - PY - (H - 2 * PY) * (p / maxPct);
+    const bars = items.map(it => it.pct == null ? '' :
+        `<rect x="${x(it.i).toFixed(1)}" y="${y(it.pct).toFixed(1)}" width="${bw.toFixed(1)}" height="${(H - PY - y(it.pct)).toFixed(1)}" rx="2" fill="${it.pct >= 100 ? 'var(--green)' : color}" opacity="${it.pct >= 100 ? 1 : 0.75}"/>`).join('');
+    const labels = DOW_ABBR.map((n, i) => `<text x="${(x(i) + bw / 2).toFixed(1)}" y="${H - 2}" font-size="8" fill="var(--text3)" text-anchor="middle">${n}</text>`).join('');
+    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img">
+        <line x1="${PX}" y1="${y(100).toFixed(1)}" x2="${W - PX}" y2="${y(100).toFixed(1)}" stroke="var(--text3)" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="2" y="${(y(100) + 3).toFixed(1)}" font-size="8" fill="var(--text3)">100%</text>
+        ${bars}${labels}
+    </svg>`;
+}
+
+const escHtml = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function openWeeklyReport() {
+    reportWeekStart = weekStartOf(today());
+    showPage('report');
+}
+function shiftReportWeek(delta) {
+    const cur = reportWeekStart || weekStartOf(today());
+    let ns = addDaysStr(cur, delta * 7);
+    if (ns > weekStartOf(today())) ns = weekStartOf(today());
+    reportWeekStart = ns;
+    rReport();
+}
+function saveWeeklyNotes(startIso, val) {
+    if (!D.weeklyNotes) D.weeklyNotes = {};
+    const v = (val || '').trim();
+    if (v) D.weeklyNotes[startIso] = v; else delete D.weeklyNotes[startIso];
+    save();
+}
+function editSessoesMeta(delta) {
+    const cfg = reportCfgSafe();
+    cfg.sessoesMeta = Math.min(14, Math.max(1, cfg.sessoesMeta + delta));
+    save();
+    rReport();
+}
+
+function alertRowHtml(a) {
+    const cor = a.level === 'red' ? 'var(--red)' : a.level === 'yellow' ? 'var(--yellow)' : a.level === 'green' ? 'var(--green)' : 'var(--text2)';
+    const dot = a.level === 'red' ? '🔴' : a.level === 'yellow' ? '🟡' : a.level === 'green' ? '🟢' : 'ℹ️';
+    return `<div style="display:flex;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);align-items:flex-start">
+        <span style="flex-shrink:0;font-size:12px">${dot}</span>
+        <span style="font-size:12px;color:${cor};line-height:1.5">${a.icon} ${a.text}</span>
+    </div>`;
+}
+
+function rReport() {
+    if (!D) return;
+    if (!D.proPreview) { showPage('goals'); return openProFeature('report'); } // cadeado (cosmético; o real virá no backend)
+    if (!reportWeekStart) reportWeekStart = weekStartOf(today());
+    const rep = collectWeekReport(reportWeekStart);
+    const isCur = rep.startIso === weekStartOf(today());
+    $('report-subtitle').textContent = `Dom ${fmtDM(rep.startIso)} a Sáb ${fmtDM(rep.endIso)}${isCur ? ' · semana atual' : ''}`;
+
+    // Tabela de métricas corporais (só se módulo vitais ligado e há algo registrado)
+    const temVitais = rep.past.some(d => d.hasVitals);
+    const vitaisHtml = (!isModuleEnabled('vitais') || !temVitais) ? '' : `
+        <div class="card mb-12">
+            <div class="card-title">⚖️ Métricas corporais</div>
+            <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px;min-width:300px">
+                <tr style="color:var(--text3);text-align:left">
+                    <th style="padding:4px 6px;font-weight:600">Dia</th><th style="padding:4px 6px;font-weight:600">Peso</th>
+                    <th style="padding:4px 6px;font-weight:600">PA</th><th style="padding:4px 6px;font-weight:600">FC</th>
+                    <th style="padding:4px 6px;font-weight:600">Sono</th></tr>
+                ${rep.days.map(d => `
+                <tr style="border-top:1px solid var(--border);color:${d.future ? 'var(--text3)' : 'var(--text)'}">
+                    <td style="padding:5px 6px;white-space:nowrap">${DOW_ABBR[d.i]} ${fmtDM(d.dt)}</td>
+                    <td style="padding:5px 6px">${d.v.peso != null ? fmt(d.v.peso) + 'kg' : '—'}</td>
+                    <td style="padding:5px 6px">${d.v.pa || '—'}</td>
+                    <td style="padding:5px 6px">${d.v.fc || '—'}</td>
+                    <td style="padding:5px 6px">${d.sono != null ? formatSleepDuration(d.sono) : '—'}</td>
+                </tr>`).join('')}
+            </table></div>
+            ${rep.pesoVar != null ? `<div style="font-size:11px;color:var(--text2);margin-top:8px">Variação líquida: <strong style="color:${rep.pesoVar <= 0 ? 'var(--green)' : 'var(--yellow)'}">${(rep.pesoVar > 0 ? '+' : '') + rep.pesoVar.toFixed(1).replace('.', ',')} kg</strong> na semana${rep.sonoAvg != null ? ` · Sono médio: <strong style="color:var(--text)">${formatSleepDuration(Math.round(rep.sonoAvg))}</strong>` : ''}</div>` : ''}
+            ${rep.pesoSerie.length >= 2 ? `<div style="margin-top:10px">${svgLineChart(rep.pesoSerie.map(p => ({ i: p.i, val: p.peso })), 'kg')}</div>` : ''}
+        </div>`;
+
+    // Nutrição
+    const n = rep.nutri;
+    const nutriHtml = (!isModuleEnabled('refeicao') || n.dias === 0) ? '' : `
+        <div class="card mb-12">
+            <div class="card-title">🍽 Nutrição <span style="font-weight:400;color:var(--text3);font-size:11px">· ${n.dias} dia(s) com registro</span></div>
+            <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px;min-width:300px">
+                <tr style="color:var(--text3);text-align:left">
+                    <th style="padding:4px 6px;font-weight:600">Métrica</th><th style="padding:4px 6px;font-weight:600">Média/dia</th><th style="padding:4px 6px;font-weight:600">Meta atingida</th></tr>
+                <tr style="border-top:1px solid var(--border)"><td style="padding:5px 6px">🔥 Calorias</td><td style="padding:5px 6px"><strong>${fmtN(n.avgKcal)}</strong> kcal</td><td style="padding:5px 6px">${n.diasKcalOk} / ${n.dias} dias (±10%)</td></tr>
+                <tr style="border-top:1px solid var(--border)"><td style="padding:5px 6px">🎯 Proteína</td><td style="padding:5px 6px"><strong>${fmt(n.avgProt)}</strong> g</td><td style="padding:5px 6px;color:${n.diasProtOk === 0 ? 'var(--red)' : n.diasProtOk === n.dias ? 'var(--green)' : 'var(--yellow)'}"><strong>${n.diasProtOk} / ${n.dias} dias</strong></td></tr>
+                <tr style="border-top:1px solid var(--border)"><td style="padding:5px 6px">🌾 Carboidrato</td><td style="padding:5px 6px"><strong>${fmt(n.avgCarbo)}</strong> g</td><td style="padding:5px 6px">—</td></tr>
+                <tr style="border-top:1px solid var(--border)"><td style="padding:5px 6px">🥑 Gordura</td><td style="padding:5px 6px"><strong>${fmt(n.avgGord)}</strong> g</td><td style="padding:5px 6px">${n.temMetaGord ? n.diasGordOk + ' / ' + n.dias + ' dentro do teto' : '—'}</td></tr>
+            </table></div>
+            ${n.melhorProt ? `<div style="font-size:11px;color:var(--text2);margin-top:8px">Melhor dia de proteína: <strong style="color:var(--green)">${DOW_ABBR[n.melhorProt.i]} (${fmt(n.melhorProt.meals.prot)}g · ${Math.round(n.melhorProt.meals.prot / n.melhorProt.goals.prot * 100)}%)</strong> · Pior: <strong style="color:var(--red)">${DOW_ABBR[n.piorProt.i]} (${fmt(n.piorProt.meals.prot)}g · ${Math.round(n.piorProt.meals.prot / n.piorProt.goals.prot * 100)}%)</strong></div>` : ''}
+            <div style="margin-top:10px;font-size:10px;color:var(--text3)">Proteína — % da meta por dia:</div>
+            ${svgPctBars(rep.days.map(d => ({ i: d.i, pct: (!d.future && d.hasMeals) ? Math.round(d.meals.prot / d.goals.prot * 100) : null })), 'var(--yellow)')}
+        </div>`;
+
+    // Treinos
+    const t = rep.treinoAgg;
+    const treinoHtml = !isModuleEnabled('treino') ? '' : `
+        <div class="card mb-12">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <span class="card-title" style="margin:0">🏋️ Treinos</span>
+                <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text3)">
+                    meta/semana
+                    <button class="btn btn-outline btn-sm" style="width:26px;padding:2px" onclick="editSessoesMeta(-1)">−</button>
+                    <strong style="color:var(--text)">${t.meta}</strong>
+                    <button class="btn btn-outline btn-sm" style="width:26px;padding:2px" onclick="editSessoesMeta(1)">+</button>
+                </div>
+            </div>
+            <div style="font-size:12px;color:var(--text2);margin-bottom:${rep.treinos.length ? '10px' : '0'}">
+                <strong style="color:${t.sessoes >= t.meta ? 'var(--green)' : t.sessoes === 0 ? 'var(--red)' : 'var(--yellow)'}">${t.sessoes} de ${t.meta}</strong> sessões na semana${t.minutos ? ` · ${fmtN(t.minutos)} min` : ''}${t.volume ? ` · ${fmtN(t.volume)}kg de volume total` : ''}
+            </div>
+            ${rep.treinos.map(tr => { const st = treinoStats(tr); return `
+            <div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-top:1px solid var(--border);font-size:11px">
+                <span style="color:var(--text)">${DOW_ABBR[Math.max(0, Math.min(6, rep.days.findIndex(d => d.dt === tr.data)))]} · <strong>${escHtml(tr.nome || 'Treino')}</strong></span>
+                <span style="color:var(--text3);flex-shrink:0;text-align:right">${tr.duracao ? tr.duracao + 'min · ' : ''}${st.series} séries · ${fmtN(st.volume)}kg</span>
+            </div>`; }).join('')}
+        </div>`;
+
+    // Hidratação
+    const a = rep.agua;
+    const aguaHtml = (!isModuleEnabled('hidratacao') || a.dias === 0) ? '' : `
+        <div class="card mb-12">
+            <div class="card-title">💧 Hidratação <span style="font-weight:400;color:var(--text3);font-size:11px">· ${a.dias} dia(s) com registro</span></div>
+            <div style="font-size:12px;color:var(--text2)">
+                Média: <strong style="color:var(--text)">${fmtN(a.avg)} ml/dia</strong> · Meta atingida em <strong style="color:${a.diasMeta === a.dias ? 'var(--green)' : 'var(--yellow)'}">${a.diasMeta} de ${a.dias}</strong> dias${a.pior ? ` · Pior dia: ${DOW_ABBR[a.pior.i]} (${fmtN(a.pior.water)}ml · ${Math.round(a.pior.water / a.pior.goals.water * 100)}%)` : ''}
+            </div>
+            ${svgPctBars(rep.days.map(d => ({ i: d.i, pct: (!d.future && d.hasWater) ? Math.round(d.water / d.goals.water * 100) : null })), 'var(--blue, #3b82f6)')}
+        </div>`;
+
+    // Medicação
+    const m = rep.medAgg;
+    const medHtml = (!isModuleEnabled('medicamentos') || !m.temMeds) ? '' : `
+        <div class="card mb-12">
+            <div class="card-title">💊 Medicação e suplementos</div>
+            <div style="font-size:12px;color:var(--text2)">
+                ${m.pct != null ? `Adesão: <strong style="color:${m.pct >= 100 ? 'var(--green)' : m.pct >= 80 ? 'var(--yellow)' : 'var(--red)'}">${m.pct}%</strong> (${m.tom} de ${m.prev} doses nos ${m.diasReg} dia(s) com registro)` : 'Sem doses marcadas nesta semana.'}
+                ${m.diasSemReg > 0 ? `<div style="font-size:11px;color:var(--text3);margin-top:4px">${m.diasSemReg} dia(s) sem nenhum registro de medicação (fora do cálculo).</div>` : ''}
+            </div>
+        </div>`;
+
+    // Alertas
+    const alertsHtml = !rep.alerts.length ? '' : `
+        <div class="card mb-12">
+            <div class="card-title">🚦 Alertas da semana</div>
+            ${rep.alerts.map(alertRowHtml).join('')}
+        </div>`;
+
+    const semDados = !temVitais && n.dias === 0 && a.dias === 0 && !rep.treinos.length;
+
+    $('report-body').innerHTML = `
+        <div class="date-strip">
+            <button class="date-nav" onclick="shiftReportWeek(-1)" aria-label="Semana anterior">‹</button>
+            <button class="date-mid" style="pointer-events:none">
+                <span class="date-mid-lbl">Dom ${fmtDM(rep.startIso)} – Sáb ${fmtDM(rep.endIso)}</span>
+                <span class="date-mid-tag">${isCur ? 'semana atual' : 'semana anterior'}</span>
+            </button>
+            <button class="date-nav" onclick="shiftReportWeek(1)" ${isCur ? 'disabled' : ''} aria-label="Próxima semana">›</button>
+        </div>
+        ${semDados ? `<div class="card mb-12" style="text-align:center;padding:24px 16px">
+            <div style="font-size:34px;margin-bottom:8px">📭</div>
+            <div style="font-weight:700;color:var(--text);margin-bottom:6px">Sem dados nesta semana</div>
+            <div style="font-size:12px;color:var(--text3);line-height:1.5">O relatório é montado com o que você registra no dia a dia: refeições, água, medicamentos, treinos e sinais vitais.</div>
+        </div>` : alertsHtml + vitaisHtml + nutriHtml + treinoHtml + aguaHtml + medHtml}
+
+        <div class="card mb-12">
+            <div class="card-title">📝 Anotações da semana</div>
+            <div style="font-size:11px;color:var(--text3);margin-bottom:8px;line-height:1.5">Contexto que os números não mostram (viagem, doença, remédio novo, orientação do médico…). Entra no PDF e, no futuro, na análise por IA.</div>
+            <textarea class="form-input" rows="3" placeholder="Ex.: terça e quarta em viagem de trabalho, sem balança…"
+                onchange="saveWeeklyNotes('${rep.startIso}', this.value)">${escHtml(rep.notes)}</textarea>
+        </div>
+
+        <button class="btn btn-primary w-full" style="margin-bottom:24px" onclick="exportWeeklyReport()">📄 Exportar / imprimir PDF</button>`;
+}
+
+// ---- Exportação: HTML autocontido aberto fora do app (imprimir/salvar PDF lá).
+// Decisão deliberada pós-v1.10.10: NADA de @media print/visibility dentro do app
+// (suspeito da tela preta no PWA iOS). Fallback no PWA instalado: compartilhar arquivo.
+function buildReportHtml(rep) {
+    const nome = escHtml(D.userName || '');
+    const n = rep.nutri, a = rep.agua, t = rep.treinoAgg, m = rep.medAgg;
+    const alertColor = { red: '#dc2626', yellow: '#b45309', green: '#059669', info: '#475569' };
+    const tbl = 'width:100%;border-collapse:collapse;font-size:12px;margin-top:6px';
+    const th = 'text-align:left;padding:5px 8px;background:#f1f5f9;font-weight:700;border:1px solid #e2e8f0';
+    const td = 'padding:5px 8px;border:1px solid #e2e8f0';
+    return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Relatório Semanal · ${fmtDM(rep.startIso)} a ${fmtDM(rep.endIso)}</title>
+<style>
+body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#0f172a;margin:0;padding:20px;max-width:760px;margin:0 auto;background:#fff}
+h1{font-size:20px;margin:0 0 2px}h2{font-size:14px;margin:18px 0 4px;border-bottom:2px solid #10b981;padding-bottom:3px}
+.sub{color:#64748b;font-size:12px}.foot{margin-top:24px;padding-top:10px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:10px;text-align:center}
+.alert{padding:6px 10px;border-radius:6px;margin:4px 0;font-size:12px;background:#f8fafc;border-left:3px solid #cbd5e1}
+.printbtn{position:fixed;top:12px;right:12px;background:#10b981;color:#fff;border:none;border-radius:8px;padding:10px 16px;font-size:14px;font-weight:700;cursor:pointer}
+@media print{.printbtn{display:none}}
+</style></head><body>
+<button class="printbtn" onclick="window.print()">🖨 Imprimir / Salvar PDF</button>
+<h1>Gileno Gestão · SAÚDE</h1>
+<div class="sub">Relatório Semanal${nome ? ' · ' + nome : ''} · Domingo ${fmtDM(rep.startIso)} a Sábado ${fmtDM(rep.endIso)}</div>
+
+${rep.alerts.length ? `<h2>🚦 Alertas da semana</h2>${rep.alerts.map(al =>
+    `<div class="alert" style="border-left-color:${alertColor[al.level]};color:${alertColor[al.level]}">${al.icon} ${al.text}</div>`).join('')}` : ''}
+
+${rep.past.some(d => d.hasVitals) ? `<h2>⚖️ Métricas corporais</h2>
+<table style="${tbl}"><tr><th style="${th}">Dia</th><th style="${th}">Peso (kg)</th><th style="${th}">PA</th><th style="${th}">FC (bpm)</th><th style="${th}">Sono</th></tr>
+${rep.days.filter(d => !d.future).map(d => `<tr><td style="${td}">${DOW_ABBR[d.i]} ${fmtDM(d.dt)}</td><td style="${td}">${d.v.peso != null ? fmt(d.v.peso) : '—'}</td><td style="${td}">${escHtml(d.v.pa || '—')}</td><td style="${td}">${d.v.fc || '—'}</td><td style="${td}">${d.sono != null ? formatSleepDuration(d.sono) : '—'}</td></tr>`).join('')}</table>
+${rep.pesoVar != null ? `<div class="sub" style="margin-top:4px">Variação líquida na semana: <strong>${(rep.pesoVar > 0 ? '+' : '') + rep.pesoVar.toFixed(1).replace('.', ',')} kg</strong></div>` : ''}` : ''}
+
+${n.dias ? `<h2>🍽 Resumo nutricional <span class="sub">(${n.dias} dia(s) com registro)</span></h2>
+<table style="${tbl}"><tr><th style="${th}">Métrica</th><th style="${th}">Média/dia</th><th style="${th}">Meta atingida</th></tr>
+<tr><td style="${td}">Calorias</td><td style="${td}">${fmtN(n.avgKcal)} kcal</td><td style="${td}">${n.diasKcalOk} / ${n.dias} dias (±10%)</td></tr>
+<tr><td style="${td}">Proteína</td><td style="${td}">${fmt(n.avgProt)} g</td><td style="${td}">${n.diasProtOk} / ${n.dias} dias</td></tr>
+<tr><td style="${td}">Carboidrato</td><td style="${td}">${fmt(n.avgCarbo)} g</td><td style="${td}">—</td></tr>
+<tr><td style="${td}">Gordura</td><td style="${td}">${fmt(n.avgGord)} g</td><td style="${td}">${n.temMetaGord ? n.diasGordOk + ' / ' + n.dias + ' dentro do teto' : '—'}</td></tr></table>
+${n.melhorProt ? `<div class="sub" style="margin-top:4px">Melhor dia de proteína: ${DOW_ABBR[n.melhorProt.i]} (${fmt(n.melhorProt.meals.prot)}g) · Pior: ${DOW_ABBR[n.piorProt.i]} (${fmt(n.piorProt.meals.prot)}g)</div>` : ''}` : ''}
+
+${isModuleEnabled('treino') && (t.sessoes || rep.past.length >= 4) ? `<h2>🏋️ Treinos</h2>
+<div class="sub" style="margin-top:4px"><strong>${t.sessoes} de ${t.meta}</strong> sessões na semana${t.minutos ? ` · ${fmtN(t.minutos)} min` : ''}${t.volume ? ` · ${fmtN(t.volume)}kg de volume total` : ''}</div>
+${rep.treinos.length ? `<table style="${tbl}"><tr><th style="${th}">Dia</th><th style="${th}">Sessão</th><th style="${th}">Duração</th><th style="${th}">Séries</th><th style="${th}">Volume</th></tr>
+${rep.treinos.map(tr => { const st = treinoStats(tr); const di = rep.days.findIndex(d => d.dt === tr.data); return `<tr><td style="${td}">${DOW_ABBR[Math.max(0, di)]} ${fmtDM(tr.data)}</td><td style="${td}">${escHtml(tr.nome || 'Treino')}</td><td style="${td}">${tr.duracao ? tr.duracao + ' min' : '—'}</td><td style="${td}">${st.series}</td><td style="${td}">${fmtN(st.volume)} kg</td></tr>`; }).join('')}</table>` : ''}` : ''}
+
+${a.dias ? `<h2>💧 Hidratação</h2>
+<div class="sub" style="margin-top:4px">Média: <strong>${fmtN(a.avg)} ml/dia</strong> · Meta atingida em ${a.diasMeta} de ${a.dias} dias com registro${a.pior ? ` · Pior dia: ${DOW_ABBR[a.pior.i]} (${fmtN(a.pior.water)}ml)` : ''}</div>` : ''}
+
+${m.temMeds && m.pct != null ? `<h2>💊 Medicação e suplementos</h2>
+<div class="sub" style="margin-top:4px">Adesão: <strong>${m.pct}%</strong> (${m.tom} de ${m.prev} doses nos ${m.diasReg} dia(s) com registro)${m.diasSemReg ? ` · ${m.diasSemReg} dia(s) sem registro` : ''}</div>` : ''}
+
+${rep.notes ? `<h2>📝 Anotações da semana</h2><div style="font-size:12px;white-space:pre-wrap;line-height:1.6">${escHtml(rep.notes)}</div>` : ''}
+
+<div class="foot">Gileno Gestão Saúde · relatório gerado pelo app a partir dos registros diários · não substitui avaliação profissional</div>
+</body></html>`;
+}
+
+function exportWeeklyReport() {
+    const rep = collectWeekReport(reportWeekStart || weekStartOf(today()));
+    const html = buildReportHtml(rep);
+    // 1º: janela nova (navegador comum) — o botão de imprimir fica NA página exportada
+    let w = null;
+    try { w = window.open('', '_blank'); } catch (e) { w = null; }
+    if (w && w.document) {
+        try { w.document.open(); w.document.write(html); w.document.close(); return; } catch (e) {}
+    }
+    // 2º: PWA instalado (iOS bloqueia window.open) — compartilhar como arquivo
+    try {
+        const file = new File([html], 'relatorio-semanal.html', { type: 'text/html' });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            navigator.share({ files: [file], title: 'Relatório Semanal' }).catch(() => {});
+            return;
+        }
+    } catch (e) {}
+    // 3º: download direto
+    try {
+        const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+        const el = document.createElement('a');
+        el.href = url; el.download = 'relatorio-semanal.html';
+        document.body.appendChild(el); el.click(); el.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+        toast('Relatório baixado — abra o arquivo pra imprimir/salvar PDF');
+    } catch (e) {
+        toast('Não consegui exportar neste aparelho', true);
+    }
+}
+
 function rGoals() {
     if (!D) return;
     const dt = curDate();
@@ -3875,6 +4376,19 @@ function rGoals() {
                 <button class="btn btn-outline btn-sm" style="margin-top:8px;color:var(--red)" onclick="clearWorkoutPlan()">Remover vínculo</button>
             </div>` : ''}
         </div>`}
+
+        <div class="card mb-12 plan-card">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px">
+                <span class="card-title" style="margin:0">📊 Relatório Semanal</span>
+                <span class="pro-badge">PRO</span>
+            </div>
+            <div style="font-size:11px;color:var(--text3);line-height:1.5;margin-bottom:10px">
+                O app monta o resumo da sua semana com os dados que você registra todo dia: médias, metas atingidas, gráficos de evolução e alertas — pronto pra <strong style="color:var(--text)">exportar em PDF</strong> e levar pro seu profissional.${D.proPreview ? '' : ' <span style="color:var(--accent);font-weight:700">🚧 Em construção.</span>'}
+            </div>
+            <button class="btn btn-outline w-full" style="justify-content:space-between" onclick="openProFeature('report')">
+                <span>📊 Ver relatório da semana</span><span style="font-size:10px;color:var(--text3);flex-shrink:0">${D.proPreview ? '✓ preview' : '🔒 em breve'}</span>
+            </button>
+        </div>
 
         ${!isModuleEnabled('treino') ? '' : `
         <div class="card mb-12">
