@@ -10,6 +10,32 @@
 
 ---
 
+## 🔴 PRIORIDADE DA PRÓXIMA SESSÃO: cota por usuário no Relatório por IA
+
+Decidido com o Gileno em 19/07/2026, logo depois do deploy. Ele vai **liberar versões Pro para outras pessoas, começando pela esposa**, e isso transforma um item de backlog em bloqueante.
+
+**O problema, em uma frase: hoje existe UM token e UM teto global.** Funciona porque o usuário é um só. No instante em que a esposa entrar:
+
+1. **Ela recebe o mesmo token.** Ou seja, ganha acesso irrestrito ao endpoint pago dele. O campo em Ajustes é do tipo senha, mas o valor está no Firestore da conta dela e é recuperável. Não é hipótese de invasor: é o desenho atual entregando a credencial para o segundo usuário.
+2. **Os dois dividem o teto de 10 por dia**, sem ninguém saber quem gastou.
+3. **Não há como medir custo por pessoa**, que é justamente o número necessário para precificar a Pro.
+
+**O que fazer (nesta ordem):**
+
+**(a) Identidade por usuário, no lugar do token compartilhado.** O app manda o ID token do Firebase; a VPS valida contra as chaves públicas do Google. Some o token compartilhado, some o campo de chave em Ajustes, e a VPS passa a saber QUEM pediu. Exige verificar JWT RS256 no endpoint, o que quebra o "stdlib puro": o serviço já tem imagem própria, então entra uma dependência a mais no `requirements.txt`.
+
+**(b) Cota por usuário: 1 relatório por semana, e só de semana FECHADA** (regra do Gileno). Duas partes:
+   - **Bloquear a semana corrente.** Analisar semana incompleta dá veredito enganoso, e a regra ainda alinha o uso com a cadência natural do relatório. O botão fica desabilitado enquanto a semana não fechou.
+   - **Uma geração por semana por usuário.** Decisão pendente: o "↻ Gerar de novo" consome a cota da semana ou tem franquia própria? Recomendação: consome, com confirmação explícita antes ("isto vai usar a sua análise desta semana"), para o custo ficar previsível por assinante.
+
+**(c) Mostrar a cota no app.** Furo bobo do desenho atual: o endpoint **já devolve `usoDia` e `tetoDia` em toda resposta**, e o app ignora. Passa a mostrar algo como "análise desta semana já usada" ou "disponível a partir de domingo". Hoje o limite só se manifesta como erro depois de batido.
+
+**Custo por assinante, com a regra de 1 por semana:** R$ 0,24 × 4 a 5 por mês = **cerca de R$ 1,10 por assinante por mês**. Esse é o piso do preço da Pro.
+
+⚠️ **Não liberar para a esposa antes de (a).** Enquanto o token for compartilhado, dar acesso a ela é dar a chave do endpoint pago.
+
+---
+
 ## Resumo da sessão 2026-07-19 (parte 8): v1.19.0 (Etapa 2 do relatório, prosa por IA)
 
 Ele confirmou a Etapa 2 com as duas travas que propus: **agregados em vez de série crua** e **teto diário desde o dia 1** ("melhor já construir antes de começar a vender").
@@ -491,8 +517,10 @@ Marketing:
 ```
 Estou retomando o app Gestão Saúde. Lê /Users/gilenopaiva/Documents/Gileno_Gestao/Apps/Gestao_Saude_App/ESTADO_PROJETO.md
 pra contexto. Versão em produção: v1.19.0 (Etapa 2 do relatório: prosa por IA via serviço
-na VPS, com agregados em vez de série crua e teto diário). O serviço de IA já está NO AR e o primeiro relatório
-real foi gerado (custo medido: R$ 0,24). Pendência: validar no iPhone.
+na VPS, com agregados em vez de série crua e teto diário). O serviço de IA já está NO AR (custo medido: R$ 0,24 por
+relatório). PRIORIDADE da próxima sessão: cota por usuário (identidade via Firebase,
+1 relatório por semana de semana fechada), que é pré-requisito para liberar Pro pra
+outras pessoas. Ver o bloco no topo do ESTADO_PROJETO. Pendência menor: validar no iPhone.
 
 [Aqui descreve: resultado do teste no iPhone / o que quer atacar primeiro]
 ```
