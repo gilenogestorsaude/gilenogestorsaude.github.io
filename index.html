@@ -564,7 +564,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.17.1';
+const APP_VERSION = '1.17.2';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1870,7 +1870,7 @@ function nextBestAction(ctx) {
     }
     const late = (ctx.medsDoses || []).filter(d => d.status === 'late');
     if (late.length) {
-        return { icon: '💊', title: `Confirme seu medicamento das ${late[0].horario}`, sub: late[0].nome + (late.length > 1 ? ` · +${late.length - 1} atrasado(s)` : ''), act: "showPage('meds')" };
+        return { icon: '💊', title: `Confirme seu medicamento das ${late[0].horario}`, sub: late[0].nome + (late.length > 1 ? ` · +${late.length - 1} atrasado(s)` : ''), act: 'openMedsToday()' };
     }
     // Dose que já chegou a hora (ou chega em até 30 min) e ainda não foi marcada
     const soon = (ctx.medsDoses || []).filter(d => d.status === 'pending').find(d => {
@@ -1880,7 +1880,7 @@ function nextBestAction(ctx) {
         return diff <= 30 && diff > -31;
     });
     if (soon) {
-        return { icon: '💊', title: `Medicamento das ${soon.horario}`, sub: soon.nome, act: "showPage('meds')" };
+        return { icon: '💊', title: `Medicamento das ${soon.horario}`, sub: soon.nome, act: 'openMedsToday()' };
     }
     // Refeição cujo horário previsto já passou e continua sem item
     if (isModuleEnabled('refeicao')) {
@@ -1909,6 +1909,21 @@ function nextBestAction(ctx) {
         return { icon: '⚖️', title: 'Registrar peso de hoje', sub: 'leva 10 segundos', act: 'openVitalEditor()' };
     }
     return null;
+}
+
+// A ação de remédio leva pro REGISTRO da dose (card do Início), NÃO pro cadastro em
+// Medicamentos — achado do Gileno 19/07: showPage('meds') caía na tela de incluir/editar.
+function openMedsToday() {
+    if (!D._uiCollapsed) D._uiCollapsed = {};
+    D._uiCollapsed.meds = false; // card começa recolhido por padrão; abre pra marcar
+    save();
+    if (cPage !== 'dash') showPage('dash'); else rDash();
+    setTimeout(() => {
+        const el = $('card-meds');
+        // SEM behavior:'smooth' de propósito: em teste no bench a rolagem suave foi
+        // ignorada em silêncio (ficou parada). Chegar na dose vale mais que a animação.
+        if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center' });
+    }, 60);
 }
 
 function nextActionHtml(a) {
@@ -2350,7 +2365,7 @@ function rDash() {
                             ${d.status === 'taken' ? `<button onclick="event.stopPropagation();editMedTakenTime('${d.medId}','${d.horario}')" style="flex-shrink:0;width:32px;height:32px;border-radius:8px;background:transparent;border:1px solid var(--border);color:var(--text3);cursor:pointer;font-size:14px" title="Ajustar hora tomada">🕐</button>` : ''}
                         </div>`).join(''));
             return `
-            <div class="card mb-12">
+            <div class="card mb-12" id="card-meds">
                 <div onclick="toggleCollapse('meds')" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;${collapsed ? '' : 'margin-bottom:10px'}">
                     <div style="display:flex;align-items:center;gap:8px;min-width:0">
                         <span style="font-size:14px;transition:transform .2s;display:inline-block;${collapsed ? '' : 'transform:rotate(90deg)'}">▶</span>
