@@ -1,7 +1,7 @@
 # Estado do Projeto — Gestão Saúde
 
 **Última atualização:** 2026-07-19 (parte 11)
-**Versão atual em produção:** v1.21.0 · **v1.22.0 pronta e commitada** (prints do Apple Watch na análise por IA), push AGUARDA o restart do serviço na VPS (ordem importa, ver parte 11)
+**Versão atual em produção:** v1.22.0 (prints do Apple Watch na análise por IA; serviço v2.1 reiniciado na VPS ANTES do push, na ordem certa, em 19/07 ~19:55)
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
@@ -116,10 +116,11 @@ via compressPrint real na semana ABERTA, thumbs, contador 2/14, remover, virada
 pro Gerar de novo, e **persistência provada: reload da página restaurou os 2
 prints do IndexedDB**) — zero erro de console.
 
-**⚠️ DEPLOY PENDENTE (ordem importa):** `app.py` novo já foi por `scp`; falta
-`docker compose restart relatorio-ia` na **janela root** (bind-mount: restart
-basta, env não mudou). **Só depois** push do app (senão anexar print → 413 no
-servidor antigo). Sem print anexado, app novo + servidor velho funciona normal.
+**DEPLOY CONCLUÍDO 19/07 ~19:55, na ordem certa:** `scp` do `app.py` (md5
+conferido) → `docker compose restart relatorio-ia` na janela root pelo Gileno
+(log `[rel] no ar ... teto/semana=2 uids=1`) → checagem externa (health `ok`,
+POST sem auth 401) → `git push` do app (`216931e`). Falta validar no iPhone:
+forçar atualização do PWA, ver v1.22.0 no header e anexar os primeiros prints.
 
 ---
 
