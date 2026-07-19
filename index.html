@@ -564,7 +564,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.21.0';
+const APP_VERSION = '1.22.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -4415,6 +4415,8 @@ const escHtml = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':
 
 function openWeeklyReport() {
     reportWeekStart = weekStartOf(today());
+    hydrateProseImgs(reportWeekStart);
+    printsIdbSweep();
     showPage('report');
 }
 function shiftReportWeek(delta) {
@@ -4422,6 +4424,7 @@ function shiftReportWeek(delta) {
     let ns = addDaysStr(cur, delta * 7);
     if (ns > weekStartOf(today())) ns = weekStartOf(today());
     reportWeekStart = ns;
+    hydrateProseImgs(ns);
     rReport();
 }
 function saveWeeklyNotes(startIso, val) {
@@ -4489,6 +4492,125 @@ function reportProseFor(startIso) {
     return (D.weeklyProse && D.weeklyProse[startIso]) || null;
 }
 
+// ===== Prints do Apple Watch (v1.22.0) =====
+// Capturas do app Fitness que acompanham a análise por IA. O Gileno anexa
+// 2+ por DIA de treino, ao longo da semana; então elas persistem no
+// IndexedDB DESTE aparelho até a análise de domingo. Firestore não serve:
+// 10+ prints estouram o limite de 1 MB do documento (e viraria dado sensível
+// sincronizado sem necessidade). Consequência honesta: anexo e análise têm
+// que acontecer no mesmo aparelho (na prática, o iPhone).
+let proseImgs = {};              // cache em memória; a verdade é o IndexedDB
+const PROSE_MAX_PRINTS = 14;    // ~2/dia de treino com folga pra dias de 3+
+
+function proseImgsFor(startIso) {
+    return proseImgs[startIso] || [];
+}
+
+let printsDbP = null;
+function printsDb() {
+    if (!printsDbP) printsDbP = new Promise((res, rej) => {
+        const r = indexedDB.open('gs_prints', 1);
+        r.onupgradeneeded = () => r.result.createObjectStore('semanas');
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => rej(r.error);
+    });
+    return printsDbP;
+}
+function printsIdbGet(startIso) {
+    return printsDb().then(db => new Promise((res, rej) => {
+        const t = db.transaction('semanas').objectStore('semanas').get(startIso);
+        t.onsuccess = () => res(t.result || []);
+        t.onerror = () => rej(t.error);
+    })).catch(() => []);
+}
+function printsIdbSet(startIso, arr) {
+    return printsDb().then(db => new Promise((res, rej) => {
+        const st = db.transaction('semanas', 'readwrite').objectStore('semanas');
+        const t = (arr && arr.length) ? st.put(arr, startIso) : st.delete(startIso);
+        t.onsuccess = () => res();
+        t.onerror = () => rej(t.error);
+    })).catch(() => {});
+}
+// Faxina: semana com mais de 45 dias já não tem análise possível (cota fecha
+// no domingo seguinte); print esquecido não pode acumular pra sempre.
+function printsIdbSweep() {
+    const corte = addDaysStr(today(), -45);
+    printsDb().then(db => {
+        const st = db.transaction('semanas', 'readwrite').objectStore('semanas');
+        const req = st.getAllKeys();
+        req.onsuccess = () => (req.result || []).forEach(k => { if (k < corte) st.delete(k); });
+    }).catch(() => {});
+}
+// Hidrata o cache da semana a partir do IndexedDB e re-renderiza se preciso.
+function hydrateProseImgs(startIso) {
+    printsIdbGet(startIso).then(arr => {
+        const antes = proseImgsFor(startIso).length;
+        proseImgs[startIso] = arr;
+        if (cPage === 'report' && arr.length !== antes) rReport();
+    });
+}
+
+// Agregados + prints anexados. Os prints entram no payload E na impressão
+// digital: anexar um print conta como "os dados mudaram" (o servidor faz o
+// mesmo com o sha256), então dá direito à regeração.
+function reportPayloadForAI(rep) {
+    const agg = reportAggregatesForAI(rep);
+    const imgs = proseImgsFor(rep.startIso);
+    if (imgs.length) agg.printsWatch = imgs.map(x => ({ tipo: x.tipo, b64: x.b64 }));
+    return agg;
+}
+
+// Comprime o print no aparelho: máx 1400px no lado maior, JPEG. Um screenshot
+// do iPhone (~1200×2600 PNG) vira ~150-250 KB; 4 assim cabem com folga no teto
+// de 6 MB do serviço, e cada um custa ~1,1-1,6 mil tokens de imagem.
+function compressPrint(file) {
+    return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+            URL.revokeObjectURL(url);
+            const esc = Math.min(1, 1400 / Math.max(img.width, img.height));
+            const c = document.createElement('canvas');
+            c.width = Math.round(img.width * esc);
+            c.height = Math.round(img.height * esc);
+            c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+            const durl = c.toDataURL('image/jpeg', 0.72);
+            const b64 = durl.slice(durl.indexOf(',') + 1);
+            if (b64.length > 1400000) return reject(new Error('imagem grande demais'));
+            resolve({ tipo: 'image/jpeg', b64, em: today() });
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('formato não suportado')); };
+        img.src = url;
+    });
+}
+
+async function addProseImgs(input) {
+    const startIso = reportWeekStart;
+    const atual = proseImgsFor(startIso).slice();
+    const files = Array.from(input.files || []);
+    input.value = '';
+    if (!files.length) return;
+    if (atual.length + files.length > PROSE_MAX_PRINTS)
+        return toast(`No máximo ${PROSE_MAX_PRINTS} prints por semana`, true);
+    for (const f of files) {
+        try {
+            atual.push(await compressPrint(f));
+        } catch (e) {
+            toast(`Não consegui ler uma das imagens (use um print PNG/JPG)`, true);
+        }
+    }
+    proseImgs[startIso] = atual;
+    printsIdbSet(startIso, atual);
+    if (cPage === 'report') rReport();
+}
+
+function rmProseImg(i) {
+    const arr = proseImgsFor(reportWeekStart);
+    arr.splice(i, 1);
+    printsIdbSet(reportWeekStart, arr);
+    if (cPage === 'report') rReport();
+}
+
 // Semana FECHADA = o sábado dela já passou. Análise só de semana fechada
 // (regra do Gileno): comentar semana incompleta dá veredito enganoso.
 function weekIsClosed(startIso) {
@@ -4537,7 +4659,7 @@ const PROSE_GATE_MSG = {
 // Resposta do serviço -> objeto gravado em D.weeklyProse[startIso]. Pura
 // (testável sem rede): guarda a prosa, a impressão digital dos agregados
 // enviados (baseline do "os números mudaram?") e o contador de regerações.
-function proseFromResponse(data, fp, force, prev) {
+function proseFromResponse(data, fp, force, prev, nPrints) {
     return {
         resumo: String(data.prosa.resumo || ''),
         analise: String(data.prosa.analise || ''),
@@ -4546,7 +4668,8 @@ function proseFromResponse(data, fp, force, prev) {
         hash: fp,
         regeracoes: force ? ((prev && prev.regeracoes) || 0) + 1 : 0,
         usoSemana: data.usoSemana || null,
-        tetoSemana: data.tetoSemana || null
+        tetoSemana: data.tetoSemana || null,
+        prints: nPrints || 0
     };
 }
 
@@ -4560,14 +4683,17 @@ async function gerarProsaIA(force) {
     if (!url) return toast('Configure o endereço em Ajustes, seção Relatório por IA', true);
     const rep = collectWeekReport(reportWeekStart);
     const p = reportProseFor(rep.startIso);
-    const agg = reportAggregatesForAI(rep);
+    const agg = reportPayloadForAI(rep);
+    const nPrints = (agg.printsWatch || []).length;
     const fp = aggregatesFingerprint(agg);
     const gate = proseGate(rep, p, force, fp);
     if (!gate.ok) {
         const msg = PROSE_GATE_MSG[gate.motivo];
         return msg ? toast(msg, true) : undefined;
     }
-    if (force && !confirm('Gerar nova análise com os números corrigidos? Esta é a última desta semana.')) return;
+    if (force && !confirm('Gerar nova análise com os dados novos? Esta é a última desta semana.')) return;
+    const body = JSON.stringify(agg);
+    if (body.length > 5500000) return toast('Prints grandes demais no total: remova algum', true);
 
     proseBusy = true;
     if (cPage === 'report') rReport();
@@ -4578,12 +4704,14 @@ async function gerarProsaIA(force) {
         const resp = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + idToken },
-            body: JSON.stringify(agg)
+            body
         });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok || !data.ok) throw new Error(data.erro || `HTTP ${resp.status}`);
         if (!D.weeklyProse) D.weeklyProse = {};
-        D.weeklyProse[rep.startIso] = proseFromResponse(data, fp, force, p);
+        D.weeklyProse[rep.startIso] = proseFromResponse(data, fp, force, p, nPrints);
+        delete proseImgs[rep.startIso];
+        printsIdbSet(rep.startIso, null);   // prints consumidos: libera o espaço
         save();
         toast('✓ Análise gerada');
     } catch (e) {
@@ -4597,6 +4725,26 @@ async function gerarProsaIA(force) {
 
 let proseBusy = false;
 
+// Seção "anexar prints do Apple Watch". Aparece na semana ABERTA (ele anexa
+// 2+ no dia de cada treino; ficam no IndexedDB deste aparelho até domingo) e
+// na fechada enquanto existir chamada possível (gerar, ou regerar 1 vez):
+// anexar muda a impressão digital, então habilita o Gerar de novo.
+function proseAttachHtml(rep) {
+    const imgs = proseImgsFor(rep.startIso);
+    const thumbs = imgs.map((x, i) => `
+        <div style="position:relative;flex-shrink:0">
+            <img src="data:${x.tipo};base64,${x.b64}" alt="print ${i + 1}" style="width:44px;height:78px;object-fit:cover;border-radius:8px;border:1px solid var(--border)">
+            <button onclick="rmProseImg(${i})" aria-label="Remover print" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;border:none;background:var(--red);color:#fff;font-size:11px;line-height:1;padding:0">✕</button>
+        </div>`).join('');
+    return `
+        <div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--border)">
+            ${imgs.length ? `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">${thumbs}</div>` : ''}
+            <input type="file" id="prose-imgs" accept="image/*" multiple style="display:none" onchange="addProseImgs(this)">
+            <button class="btn btn-outline btn-sm" onclick="document.getElementById('prose-imgs').click()">⌚️ Anexar prints do Apple Watch${imgs.length ? ` (${imgs.length}/${PROSE_MAX_PRINTS})` : ''}</button>
+            <div style="font-size:10px;color:var(--text3);margin-top:6px;line-height:1.5">Opcional: telas do app Fitness. Anexe no dia de cada treino (2, 3, quantas precisar; até ${PROSE_MAX_PRINTS} na semana): ficam guardadas <strong>neste aparelho</strong> e entram todas na análise de domingo. A IA lê FC, calorias, ritmo e esforço e cruza com os seus registros.</div>
+        </div>`;
+}
+
 function proseCardHtml(rep) {
     const cfg = reportCfgSafe();
     const configurado = !!(cfg.aiUrl || '').trim();
@@ -4606,30 +4754,36 @@ function proseCardHtml(rep) {
     if (proseBusy) {
         corpo = `<div style="font-size:12px;color:var(--text3);text-align:center;padding:14px 0">Analisando a semana…</div>`;
     } else if (p) {
-        // Estado da cota (v1.20.0): regerar SÓ se os números mudaram desde a
+        // Estado da cota (v1.20.0): regerar SÓ se os dados mudaram desde a
         // análise, e no máximo 1 vez. Regerar sobre dados idênticos produziria
         // um texto diferente sobre a mesma realidade: gasto sem informação.
-        const fp = aggregatesFingerprint(reportAggregatesForAI(rep));
+        // v1.22.0: a impressão digital inclui os prints anexados.
+        const fp = aggregatesFingerprint(reportPayloadForAI(rep));
         const mudou = !!p.hash && p.hash !== fp;
         const regenOk = proseGate(rep, p, true, fp).ok;
         const status = regenOk
-            ? `<button class="btn btn-outline btn-sm" style="margin-top:12px" onclick="gerarProsaIA(true)">↻ Gerar de novo (você corrigiu registros desta semana)</button>`
+            ? `<button class="btn btn-outline btn-sm" style="margin-top:12px" onclick="gerarProsaIA(true)">↻ Gerar de novo (com os dados novos desta semana)</button>`
             : mudou
-                ? `<div style="font-size:11px;color:var(--text3);margin-top:12px">Os números mudaram, mas a análise desta semana já foi refeita. Nova cota no próximo domingo.</div>`
+                ? `<div style="font-size:11px;color:var(--text3);margin-top:12px">Os dados mudaram, mas a análise desta semana já foi refeita. Nova cota no próximo domingo.</div>`
                 : `<div style="font-size:11px;color:var(--text3);margin-top:12px">✓ Análise em dia com os seus registros · a desta semana já foi usada</div>`;
+        const podeRegen = (p.regeracoes || 0) < 1;
         corpo = `
             <div style="font-size:13px;color:var(--text);line-height:1.55">${escHtml(p.resumo)}</div>
             <div style="font-size:12px;color:var(--text2);line-height:1.55;margin-top:10px">${escHtml(p.analise).replace(/\n+/g, '<br><br>')}</div>
             ${p.plano.length ? `<div style="font-size:11px;font-weight:700;color:var(--text3);letter-spacing:.4px;margin:12px 0 6px">PLANO DA PRÓXIMA SEMANA</div>
             <ol style="margin:0;padding-left:18px;font-size:12px;color:var(--text2);line-height:1.6">${p.plano.map(x => `<li>${escHtml(x)}</li>`).join('')}</ol>` : ''}
-            ${status}`;
+            ${p.prints ? `<div style="font-size:10px;color:var(--text3);margin-top:8px">⌚️ ${p.prints} print(s) do Apple Watch lidos nesta análise</div>` : ''}
+            ${status}
+            ${podeRegen ? proseAttachHtml(rep) : ''}`;
     } else if (!fechada) {
-        corpo = `<div style="font-size:12px;color:var(--text3);line-height:1.5">Esta semana ainda está em andamento. A análise abre <strong style="color:var(--text2)">no domingo</strong>, com a semana completa: analisar pela metade daria um veredito enganoso.</div>`;
+        corpo = `<div style="font-size:12px;color:var(--text3);line-height:1.5">Esta semana ainda está em andamento. A análise abre <strong style="color:var(--text2)">no domingo</strong>, com a semana completa: analisar pela metade daria um veredito enganoso.</div>
+            ${configurado ? proseAttachHtml(rep) : ''}`;
     } else if (!configurado) {
         corpo = `<div style="font-size:12px;color:var(--text3);line-height:1.5">Ligue em Ajustes, seção <strong style="color:var(--text2)">Relatório por IA</strong>, para o app comentar a semana além dos números.</div>`;
     } else {
         corpo = `<button class="btn btn-primary" style="width:100%" onclick="gerarProsaIA()">✨ Analisar esta semana</button>
-            <div style="font-size:10px;color:var(--text3);text-align:center;margin-top:8px">1 análise por semana fechada · reabrir depois não gasta nada</div>`;
+            <div style="font-size:10px;color:var(--text3);text-align:center;margin-top:8px">1 análise por semana fechada · reabrir depois não gasta nada</div>
+            ${proseAttachHtml(rep)}`;
     }
     return `
         <div class="card mb-12">
@@ -5105,7 +5259,8 @@ function settingsIAHtml() {
             <div class="card-title">🧠 Relatório por IA</div>
             <div style="font-size:11px;color:var(--text3);margin-bottom:10px;line-height:1.5">
                 Com isto ligado, o Relatório Semanal ganha resumo, análise e plano de ação escritos por IA a partir dos seus números.
-                Saem do aparelho apenas os <strong style="color:var(--text2)">totais e médias da semana</strong>, nunca o registro dia a dia.
+                Saem do aparelho apenas os <strong style="color:var(--text2)">totais e médias da semana</strong>, nunca o registro dia a dia,
+                mais os <strong style="color:var(--text2)">prints do Apple Watch</strong> que você mesmo anexar (opcional).
                 O acesso é reconhecido pelo seu <strong style="color:var(--text2)">login</strong>: não existe chave pra colar.
                 Cota: 1 análise por semana fechada (e 1 refeita, se você corrigir registros).
             </div>

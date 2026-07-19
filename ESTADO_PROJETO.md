@@ -1,7 +1,7 @@
 # Estado do Projeto — Gestão Saúde
 
-**Última atualização:** 2026-07-19 (parte 10)
-**Versão atual em produção:** v1.21.0 (chip treino/descanso como atalho + campos de refeição por tipo de dia)
+**Última atualização:** 2026-07-19 (parte 11)
+**Versão atual em produção:** v1.21.0 · **v1.22.0 pronta e commitada** (prints do Apple Watch na análise por IA), push AGUARDA o restart do serviço na VPS (ordem importa, ver parte 11)
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
@@ -64,6 +64,62 @@ desenho v1 tinha um token só e um teto global.
 **Custo por assinante, com a regra de 1 por semana:** R$ 0,24 × 4 a 5 por mês = **cerca de R$ 1,10 por assinante por mês**, e no pior caso (todo mundo retificando toda semana) R$ 2,20. Esse é o piso do preço da Pro.
 
 ⚠️ **Não liberar para a esposa antes de (a).** Enquanto o token for compartilhado, dar acesso a ela é dar a chave do endpoint pago.
+
+---
+
+## Resumo da sessão 2026-07-19 (parte 11): v1.22.0 — prints do Apple Watch na análise por IA
+
+Pedido do Gileno antes de liberar a Pro pra esposa: anexar ao Relatório Semanal
+os dados do Apple Watch, como ele mandava prints ao antigo chat de performance.
+Decisão (em prosa, confirmada): **caminho da imagem** (a Claude API lê imagem
+nativamente), deixando HealthKit nativo (exige app na App Store) e Atalhos do
+iOS (endpoint + automação) como evoluções futuras.
+
+**Rotina dele (obs. que mudou o desenho):** 2+ prints POR DIA de treino, até
+5 dias/semana, anexados NO DIA. Logo: teto de **14 prints/semana**, anexo
+liberado com a **semana ainda aberta**, e persistência no **IndexedDB do
+aparelho** (Firestore não serve: 10+ prints estouram o doc de 1 MB). Anexo e
+análise têm que acontecer no MESMO aparelho (na prática, o iPhone).
+
+**Serviço (v2.1, `Operacoes_VPS/relatorio_ia_service/app.py`):** payload aceita
+`printsWatch: [{tipo, b64}]` (máx. 14, JPEG/PNG, ≤1,5 M chars cada). Viram
+**blocos de imagem** na chamada da API e **nunca entram no texto do prompt**
+(base64 no texto = cobrado como token de texto). `MAX_BODY` 128 KB → 6 MB, mas
+`MAX_AGREGADOS` mantém os agregados-sem-prints em 128 KB (série crua barrada).
+**Hash de cota cobre o payload COM prints**: anexar print = "dados mudaram" =
+regeração legítima. SYSTEM ganhou o parágrafo dos prints (ler FC/calorias/ritmo
+/esforço, cruzar com registros do app, citar a origem "no Watch", nunca chutar
+print ilegível). Erro novo: 400 `prints_invalidos`. Custo: ~1,1-1,6k tokens por
+print; 4 prints ≈ R$ 0,35-0,45, semana cheia (10-14) ≈ R$ 0,60-0,90 (era 0,24).
+
+**App (v1.22.0):** seção "⌚️ Anexar prints do Apple Watch" no card 🧠 Análise
+da semana em TRÊS estados: semana aberta (anexa no dia do treino, análise
+continua trancada até domingo), fechada sem prosa, e fechada com regeração
+disponível. `compressPrint` reduz no aparelho pra máx. 1400px JPEG 0.72 via
+canvas (screenshot de iPhone ~150-250 KB; bench com sintético deu 15 KB).
+Persistência: **IndexedDB `gs_prints`** (store `semanas`, chave = domingo ISO,
+valor = array {tipo, b64, em}), cache em memória `proseImgs`, hidratação em
+`openWeeklyReport`/`shiftReportWeek`, faxina de semanas >45 dias, limpeza da
+semana após análise gerada. `reportPayloadForAI` = agregados + prints (só
+{tipo, b64}; o `em` local não sai); o **fingerprint FNV inclui os prints**
+(espelho do sha256 do servidor) então anexar habilita o "↻ Gerar de novo".
+Prosa gravada guarda `prints: N` e exibe "⌚️ N print(s) lidos nesta análise".
+Ajustes atualizou o texto de privacidade (prints só se o usuário anexar).
+Guarda de 5,5 MB no corpo antes do fetch. Labels de regen: "números" → "dados".
+
+**Verificação:** endpoint Python **42 checks** (12 novos: bloco de imagem na
+API, base64 fora do texto, limites, hash com prints, 413 dos agregados) + JSC
+**14/14** (`verify_prints.js` no scratchpad: payload sem/com prints, `em` não
+vaza, fingerprint muda ao anexar, gate regen com print, retrocompat) + sintaxe
+do bundle inteiro no JSC + **bench visual** (claro E escuro, anexar 2 sintéticos
+via compressPrint real na semana ABERTA, thumbs, contador 2/14, remover, virada
+pro Gerar de novo, e **persistência provada: reload da página restaurou os 2
+prints do IndexedDB**) — zero erro de console.
+
+**⚠️ DEPLOY PENDENTE (ordem importa):** `app.py` novo já foi por `scp`; falta
+`docker compose restart relatorio-ia` na **janela root** (bind-mount: restart
+basta, env não mudou). **Só depois** push do app (senão anexar print → 413 no
+servidor antigo). Sem print anexado, app novo + servidor velho funciona normal.
 
 ---
 
