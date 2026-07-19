@@ -564,7 +564,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.18.0';
+const APP_VERSION = '1.18.1';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -3317,6 +3317,17 @@ function addMealItemToSlot(slotId, foodId, grams) {
     return true;
 }
 
+// Quais alimentos do plano JÁ foram registrados neste slot do dia (v1.18.1).
+// É o que decide o estado da caixinha: vazia = a fazer, marcada = confirmado.
+// Casa por foodId; gramas podem diferir do plano (o modal deixa ajustar) e isso
+// não muda o fato de que o item foi comido.
+function slotLoggedFoodIds(slotId) {
+    const slot = getDayData(curDate()).slots[slotId];
+    const set = {};
+    if (slot && slot.items) slot.items.forEach(it => { if (it.foodId) set[it.foodId] = true; });
+    return set;
+}
+
 // Totais REAIS já registrados num slot do dia atual (execução)
 function slotRealTotals(slotId) {
     const slot = getDayData(curDate()).slots[slotId];
@@ -3349,7 +3360,20 @@ function logWholePlanMeal(slotId) {
 function planCardHtml(slotId) {
     const ps = getPlanSlot(slotId);
     if (!ps) return '';
-    const btn = (foodId, grams) => `<button onclick="openAddFood('${foodId}',${grams})" title="Registrar — ajuste a quantidade antes de confirmar" style="flex-shrink:0;width:26px;height:26px;border-radius:7px;background:var(--green-bg);color:var(--green);border:none;cursor:pointer;font-size:14px;font-weight:700">✓</button>`;
+    // v1.18.1: a caixinha nasce VAZIA (é o que você tem a fazer) e só vira ✓ verde
+    // depois que o item foi mesmo registrado. Antes ela já vinha com o check cheio,
+    // que lia como "confirmado" quando ainda era só o botão de confirmar.
+    const logged = slotLoggedFoodIds(slotId);
+    const btn = (foodId, grams) => {
+        const feito = !!logged[foodId];
+        return `<button onclick="openAddFood('${foodId}',${grams})"
+            title="${feito ? 'Já registrado nesta refeição. Toque pra registrar outra porção.' : 'Registrar (você ajusta a quantidade antes de confirmar)'}"
+            aria-pressed="${feito}"
+            style="flex-shrink:0;width:26px;height:26px;border-radius:7px;cursor:pointer;font-size:14px;font-weight:700;line-height:1;
+                   background:${feito ? 'var(--green-bg)' : 'transparent'};
+                   color:${feito ? 'var(--green)' : 'transparent'};
+                   border:${feito ? '1px solid var(--green)' : '1.5px solid var(--border)'}">${feito ? '✓' : ''}</button>`;
+    };
     let linesHtml = '';
     (ps.lines || []).forEach(ln => {
         if (ln.options) {

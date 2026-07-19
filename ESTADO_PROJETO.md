@@ -1,12 +1,28 @@
 # Estado do Projeto — Gestão Saúde
 
 **Última atualização:** 2026-07-19
-**Versão atual em produção:** v1.18.0
+**Versão atual em produção:** v1.18.1
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
 
 > Este documento é o **handoff vivo** do projeto. Qualquer nova sessão de trabalho começa lendo este arquivo pra entender estado atual, decisões já tomadas, e próximos passos.
+
+---
+
+## Resumo da sessão 2026-07-19 (parte 7): v1.18.1 (caixinha do plano da nutri)
+
+Achado do Gileno testando a v1.18.0, olhando o "Plano da nutri" do Almoço: **cada linha tinha um ✓ verde cheio ao lado, que lia como "já consumido", quando na verdade era o botão que você aperta PRA consumir**. Affordance invertida: o controle mostrava o estado final em vez do estado atual.
+
+**Fix:** a caixinha nasce **vazia** (contorno, fundo transparente, sem glifo) e só vira ✓ verde depois que o item foi mesmo registrado. Helper novo `slotLoggedFoodIds(slotId)` devolve os foodIds já lançados naquele slot do dia; o botão consulta esse conjunto. Casamento por **foodId, não por grama**: o modal deixa ajustar a quantidade (v1.9.7), e comer 150g de arroz em vez de 80g não deixa de ser "comi o arroz".
+
+**Ganho que não estava no pedido:** nas substituições ("Proteína, escolha uma"), marcar o frango deixa bife e camarão **vazios**. A caixinha virou registro de qual opção foi escolhida, coisa que antes não aparecia em lugar nenhum. O "Comi tudo" marca as linhas que registrou e deixa a 2ª opção da substituição vazia, que é o correto.
+
+O botão **continua clicável quando marcado** (dá pra comer outra porção), e o `title` explica o estado. Como `openAddFood` é um modal com confirmação, toque acidental não duplica nada em silêncio.
+
+**Verificação:** JSC **21/21** (`verify_plancheck.js`: nada registrado = 4 vazias, um item marca só ele, substituição marca só a opção comida, Comi tudo marca 3 e deixa 1, grama ajustada ainda marca, alimento repetido conta uma vez, slot inexistente não quebra, **o dia visualizado manda** e não vaza de outro dia, botão segue chamando openAddFood com a grama do plano) mais a regressão: **333 checks no total, 0 falhas**. Bench visual no cenário do print dele, **escuro e claro**, zero erro de console: caixinhas vazias, toque abre o modal com 90g pré-preenchidos, confirmar preencheu só o frango e a aderência foi pra "143 kcal (45% das kcal)".
+
+**⚠️ Gotcha do teste:** a data visualizada é `gDate` (`curDate() = gDate || today()`), não `viewDate`. Chutei o nome, o teste passou a bater no lugar errado e acusou falha falsa.
 
 ---
 
@@ -434,9 +450,10 @@ Marketing:
 
 ```
 Estou retomando o app Gestão Saúde. Lê /Users/gilenopaiva/Documents/Gileno_Gestao/Apps/Gestao_Saude_App/ESTADO_PROJETO.md
-pra contexto. Versão em produção: v1.18.0 (redesign fechado + Saúde Clínica agora registra
-doença, medicação temporária e exame pendente, com seção "Em aberto" e fechar em 1 toque).
-Pendências: validar v1.18.0 no iPhone e a Etapa 2 do relatório (IA via VPS, aguarda OK de custo).
+pra contexto. Versão em produção: v1.18.1 (Saúde Clínica registra doença, medicação temporária
+e exame pendente, com seção "Em aberto" e fechar em 1 toque; caixinha do plano da nutri só
+marca depois de registrado). Pendências: validar v1.18.1 no iPhone e a Etapa 2 do relatório
+(IA via VPS, aguarda OK de custo).
 
 [Aqui descreve: resultado do teste no iPhone / o que quer atacar primeiro]
 ```
