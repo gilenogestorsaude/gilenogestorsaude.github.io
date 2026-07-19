@@ -1,4 +1,4 @@
-const CACHE_VERSION = '1.14.0';
+const CACHE_VERSION = '1.15.0';
 const CACHE_NAME = 'gestao-saude-' + CACHE_VERSION;
 const URLS_TO_CACHE = [
     './',

@@ -545,7 +545,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.14.0';
+const APP_VERSION = '1.15.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1828,6 +1828,145 @@ function toggleCollapse(section) {
     if (cPage === 'dash') rDash();
 }
 
+// ========== INÍCIO — HERO + PRÓXIMA AÇÃO + ATALHOS (redesign v1.15.0) ==========
+// Quanto da meta de água já era esperado a esta hora (soma dos blocos já encerrados).
+function waterExpectedBy(hour, dailyGoal) {
+    let sum = 0;
+    HYDRO_BLOCKS.forEach(b => { if (b.endH <= hour) sum += getBlockTarget(b, dailyGoal); });
+    return sum;
+}
+
+// Escolhe A ÚNICA coisa mais útil pra fazer agora (ordem = urgência clínica → rotina).
+// Recebe contexto pronto (testável, sem recalcular): null = nada pendente.
+function nextBestAction(ctx) {
+    const g = ctx.goals;
+    if (activeExecution) {
+        return { icon: '⏱', title: 'Retomar treino em andamento', sub: activeExecution.nome, act: 'resumeExecution()' };
+    }
+    const late = (ctx.medsDoses || []).filter(d => d.status === 'late');
+    if (late.length) {
+        return { icon: '💊', title: `Confirme seu medicamento das ${late[0].horario}`, sub: late[0].nome + (late.length > 1 ? ` · +${late.length - 1} atrasado(s)` : ''), act: "showPage('meds')" };
+    }
+    // Dose que já chegou a hora (ou chega em até 30 min) e ainda não foi marcada
+    const soon = (ctx.medsDoses || []).filter(d => d.status === 'pending').find(d => {
+        const [hh, mm] = String(d.horario).split(':').map(Number);
+        if (isNaN(hh)) return false;
+        const diff = (hh * 60 + mm) - ctx.nowMin;
+        return diff <= 30 && diff > -31;
+    });
+    if (soon) {
+        return { icon: '💊', title: `Medicamento das ${soon.horario}`, sub: soon.nome, act: "showPage('meds')" };
+    }
+    // Refeição cujo horário previsto já passou e continua sem item
+    if (isModuleEnabled('refeicao')) {
+        const pend = (ctx.pendingMeals || []).find(s => {
+            const [hh, mm] = String(s.time || '').split(':').map(Number);
+            return !isNaN(hh) && (hh * 60 + mm) <= ctx.nowMin;
+        });
+        if (pend) return { icon: '🍽', title: `Registre: ${pend.name}`, sub: `previsto ${pend.time}`, act: `openMealSlot('${pend.id}')` };
+    }
+    // Água atrás do plano do dia
+    if (isModuleEnabled('hidratacao') && g.water > 0) {
+        const esperado = waterExpectedBy(ctx.hour, g.water);
+        if (ctx.totalWater < esperado) {
+            return { icon: '💧', title: 'Você está atrás na água', sub: `${fmtN(esperado - ctx.totalWater)} ml abaixo do esperado a esta hora`, act: "showPage('hydro')" };
+        }
+    }
+    // Dia de treino já avançado e nenhum treino registrado
+    if (isModuleEnabled('treino') && ctx.dayType === 'treino' && ctx.hour >= 9 && !ctx.treinoHoje) {
+        return { icon: '🏋️', title: 'Treino do dia ainda não registrado', sub: 'Hoje é dia de treino', act: "showPage('treino')" };
+    }
+    // Proteína travada à tarde
+    if (isModuleEnabled('refeicao') && ctx.hour >= 15 && g.prot > 0 && ctx.totalProt < g.prot * 0.6) {
+        return { icon: '🥩', title: 'Proteína abaixo do ritmo', sub: `faltam ${fmtN(g.prot - ctx.totalProt)} g pra meta de hoje`, act: "showPage('meal')" };
+    }
+    if (isModuleEnabled('vitais') && !ctx.pesouHoje && ctx.hour >= 6) {
+        return { icon: '⚖️', title: 'Registrar peso de hoje', sub: 'leva 10 segundos', act: 'openVitalEditor()' };
+    }
+    return null;
+}
+
+function nextActionHtml(a) {
+    if (!a) {
+        return `<div class="card mb-12" style="border:1px solid var(--primary);background:rgba(16,185,129,.07)">
+            <div style="display:flex;align-items:center;gap:12px">
+                <span style="font-size:22px">✅</span>
+                <div style="flex:1;min-width:0">
+                    <div style="font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--primary)">TUDO EM DIA</div>
+                    <div style="font-size:14px;font-weight:700;color:var(--text)">Nada pendente por aqui 🎉</div>
+                </div>
+            </div>
+        </div>`;
+    }
+    return `<div class="card mb-12" style="border:1px solid var(--primary);background:rgba(16,185,129,.07);cursor:pointer" onclick="${a.act}">
+        <div style="display:flex;align-items:center;gap:12px">
+            <span style="width:38px;height:38px;border-radius:50%;background:var(--primary);display:flex;align-items:center;justify-content:center;font-size:19px;flex-shrink:0">${a.icon}</span>
+            <div style="flex:1;min-width:0">
+                <div style="font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--primary)">PRÓXIMA MELHOR AÇÃO</div>
+                <div style="font-size:15px;font-weight:800;color:var(--text)">${a.title}</div>
+                <div style="font-size:12px;color:var(--text2)">${a.sub}</div>
+            </div>
+            <span style="font-size:20px;color:var(--text3);flex-shrink:0">›</span>
+        </div>
+    </div>`;
+}
+
+function quickActionsHtml() {
+    const btn = (emo, label, act) => `
+        <button onclick="${act}" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:12px 4px;cursor:pointer">
+            <span style="width:38px;height:38px;border-radius:50%;background:rgba(16,185,129,.14);display:flex;align-items:center;justify-content:center;font-size:19px">${emo}</span>
+            <span style="font-size:12px;font-weight:700;color:var(--text)">${label}</span>
+        </button>`;
+    let out = '';
+    if (isModuleEnabled('refeicao')) out += btn('🍽', 'Refeição', "showPage('meal')");
+    if (isModuleEnabled('hidratacao')) out += btn('💧', 'Água', "showPage('hydro')");
+    if (isModuleEnabled('vitais')) out += btn('⚖️', 'Peso', 'openVitalEditor()');
+    if (isModuleEnabled('medicamentos')) out += btn('💊', 'Remédio', "showPage('meds')");
+    if (!out) return '';
+    return `<div style="font-size:15px;font-weight:800;color:var(--text);margin:14px 0 8px">Ações rápidas</div>
+        <div style="display:flex;gap:8px;margin-bottom:14px">${out}</div>`;
+}
+
+// Card de destaque: anel de calorias + barras de proteína e água (molde do mockup 19/07)
+function heroCardHtml(o) {
+    const circ = 2 * Math.PI * 52;
+    const off = circ * (1 - Math.min(o.kcalPct, 100) / 100);
+    const ringColor = o.kcalPctRaw >= 100 ? 'var(--green)' : 'var(--primary)';
+    const bar = (label, val, meta, unit, color, pctRaw) => `
+        <div style="margin-bottom:10px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
+                <span style="font-size:13px;font-weight:700;color:var(--text)">${label}</span>
+                <span style="font-size:13px;color:var(--text2)"><strong style="color:var(--text)">${val}</strong> / ${meta} ${unit}</span>
+            </div>
+            <div class="progress-bar" style="height:8px"><div class="progress-fill" style="width:${Math.min(pctRaw, 100)}%;background:${color}"></div></div>
+        </div>`;
+    const faltamKcal = Math.max(0, o.goals.kcal - o.totalKcal);
+    const msg = o.goals.kcal <= 0 ? 'Defina sua meta de calorias em Metas.'
+        : (faltamKcal > 0 ? `Faltam ${fmtN(faltamKcal)} kcal para sua meta ${o.isToday ? 'de hoje' : 'do dia'}.`
+                          : `Meta de calorias atingida (${Math.round(o.kcalPctRaw)}%).`);
+    return `
+    <div class="card mb-12">
+        <div style="display:flex;align-items:center;gap:14px">
+            <div style="position:relative;width:124px;height:124px;flex-shrink:0">
+                <svg width="124" height="124" viewBox="0 0 124 124">
+                    <circle cx="62" cy="62" r="52" fill="none" stroke="var(--surface2)" stroke-width="11"/>
+                    <circle cx="62" cy="62" r="52" fill="none" stroke="${ringColor}" stroke-width="11" stroke-linecap="round"
+                        stroke-dasharray="${circ.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}" transform="rotate(-90 62 62)"/>
+                </svg>
+                <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center">
+                    <div style="font-size:24px;font-weight:800;color:var(--text);line-height:1.1">${fmtN(o.totalKcal)}</div>
+                    <div style="font-size:11px;color:var(--text3)">/ ${fmtN(o.goals.kcal)} kcal</div>
+                </div>
+            </div>
+            <div style="flex:1;min-width:0">
+                ${bar('Proteína', fmt(o.totalProt), o.goals.prot, 'g', 'var(--accent)', o.protPctRaw)}
+                ${bar('Água', fmtLitros(o.totalWater), fmtLitros(o.goals.water), '', 'var(--blue)', o.waterPctRaw)}
+            </div>
+        </div>
+        <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;font-size:13px;color:var(--text2)">${msg}</div>
+    </div>`;
+}
+
 function rDash() {
     if (!D) return;
     // Toast de migration (v1.1.5)
@@ -2015,10 +2154,12 @@ function rDash() {
 
     // Meals HTML
     let mealsHtml = '';
+    const pendingMeals = []; // alimenta a "próxima melhor ação"
     getDaySlots(dt).forEach(s => {
         const day = getDayData(dt);
         const slot = day.slots[s.id];
         const done = slot && slot.items && slot.items.length > 0;
+        if (!done) pendingMeals.push(s);
         let slotKcal = 0, slotProt = 0, slotCarbo = 0, slotGord = 0;
         if (done) {
             slot.items.forEach(i => {
@@ -2074,16 +2215,28 @@ function rDash() {
             </div>`;
     });
 
+    // Contexto da "próxima melhor ação" — só no dia de hoje (depende do relógio)
+    const nowDate = new Date();
+    const nba = viewingToday() ? nextBestAction({
+        goals, hour, nowMin: nowDate.getHours() * 60 + nowDate.getMinutes(),
+        medsDoses, pendingMeals, totalWater, totalProt, dayType,
+        treinoHoje: (D.treinos || []).some(t => t.data === dt),
+        pesouHoje: !!(vitals && vitals.peso)
+    }) : undefined;
+
     $('dash-body').innerHTML = `
         ${dateStripHtml()}
         ${homeTutorialCardHtml()}
         ${installBannerHtml()}
+        ${heroCardHtml({ totalKcal, totalProt, totalWater, goals, kcalPct, kcalPctRaw, protPctRaw, waterPctRaw, isToday: viewingToday() })}
+        ${nba === undefined ? '' : nextActionHtml(nba)}
+        ${quickActionsHtml()}
         ${alerts}
         <!-- Progresso -->
         ${!isModuleEnabled('refeicao') ? '' : `
         <div class="card mb-12">
             <div style="display:flex;justify-content:space-between;margin-bottom:12px">
-                <span class="card-title" style="margin:0">Progresso Diário</span>
+                <span class="card-title" style="margin:0">Progresso ${viewingToday() ? 'de hoje' : 'do dia'}</span>
                 <span style="font-size:11px;color:var(--text3)">${fmtN(goals.kcal)} kcal • ${goals.prot}g prot</span>
             </div>
             <div class="pring-grid">
