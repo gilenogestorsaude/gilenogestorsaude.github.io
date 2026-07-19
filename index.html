@@ -545,7 +545,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.15.0';
+const APP_VERSION = '1.15.1';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1911,21 +1911,8 @@ function nextActionHtml(a) {
     </div>`;
 }
 
-function quickActionsHtml() {
-    const btn = (emo, label, act) => `
-        <button onclick="${act}" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:12px 4px;cursor:pointer">
-            <span style="width:38px;height:38px;border-radius:50%;background:rgba(16,185,129,.14);display:flex;align-items:center;justify-content:center;font-size:19px">${emo}</span>
-            <span style="font-size:12px;font-weight:700;color:var(--text)">${label}</span>
-        </button>`;
-    let out = '';
-    if (isModuleEnabled('refeicao')) out += btn('🍽', 'Refeição', "showPage('meal')");
-    if (isModuleEnabled('hidratacao')) out += btn('💧', 'Água', "showPage('hydro')");
-    if (isModuleEnabled('vitais')) out += btn('⚖️', 'Peso', 'openVitalEditor()');
-    if (isModuleEnabled('medicamentos')) out += btn('💊', 'Remédio', "showPage('meds')");
-    if (!out) return '';
-    return `<div style="font-size:15px;font-weight:800;color:var(--text);margin:14px 0 8px">Ações rápidas</div>
-        <div style="display:flex;gap:8px;margin-bottom:14px">${out}</div>`;
-}
+// (Ações rápidas removidas na v1.15.1 — decisão do Gileno: duplicavam a barra de
+// navegação do rodapé e só ocupavam espaço. Peso segue no chip ⚖️ do topo.)
 
 // Card de destaque: anel de calorias + barras de proteína e água (molde do mockup 19/07)
 function heroCardHtml(o) {
@@ -2230,7 +2217,6 @@ function rDash() {
         ${installBannerHtml()}
         ${heroCardHtml({ totalKcal, totalProt, totalWater, goals, kcalPct, kcalPctRaw, protPctRaw, waterPctRaw, isToday: viewingToday() })}
         ${nba === undefined ? '' : nextActionHtml(nba)}
-        ${quickActionsHtml()}
         ${alerts}
         <!-- Progresso -->
         ${!isModuleEnabled('refeicao') ? '' : `
@@ -3881,9 +3867,13 @@ function rHydro() {
     `;
 }
 
-// Litros com 1 casa e vírgula brasileira: 1800 → "1,8 L"; 3000 → "3 L"
+// Volume legível SEM mentir no arredondamento (achado do Gileno 19/07: 250+700=950ml
+// aparecia como "1 L"). Abaixo de 1 litro mostra em ml; acima, litros com até 2 casas
+// e sem zero à toa: 950→"950 ml", 1800→"1,8 L", 1850→"1,85 L", 3000→"3 L".
 function fmtLitros(ml) {
-    const l = Math.round((ml || 0) / 100) / 10;
+    const v = Math.round(ml || 0);
+    if (v < 1000) return v + ' ml';
+    const l = Math.round(v / 10) / 100;
     return String(l).replace('.', ',') + ' L';
 }
 
