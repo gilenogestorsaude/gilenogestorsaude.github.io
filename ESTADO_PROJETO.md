@@ -1,7 +1,7 @@
 # Estado do Projeto — Gestão Saúde
 
 **Última atualização:** 2026-07-19 (parte 9)
-**Versão atual em produção:** v1.19.0 · **v1.20.0 PRONTA e commitada, aguardando o deploy da VPS pra ser publicada** (ordem importa, ver PRIORIDADE)
+**Versão atual em produção:** v1.20.0 (cota por usuário; servidor v2 + app publicados em 19/07 ~17:20)
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
@@ -10,27 +10,29 @@
 
 ---
 
-## 🔴 PRIORIDADE: publicar a v1.20.0 (cota por usuário) — CÓDIGO PRONTO, FALTA O DEPLOY
+## 🔴 PRIORIDADE: v1.20.0 NO AR (servidor v2 + app publicados 19/07 ~17:20) — pendências curtas
 
-A sessão de 19/07 (parte 9) implementou os itens (a)-(e) abaixo, com 82 checks
-passando (30 no endpoint + 52 no app) e bench visual completo. **Sequência que
-falta, NESTA ordem (o app novo manda Bearer; servidor v1 responderia 401):**
+Deploy guiado passo a passo com o Gileno em 19/07 à tarde: `scp` dos 4 arquivos,
+`REL_UIDS` com o uid dele (gilenopaivalima@gmail.com = `DfW2eOP3jKed78wsrSJVlNXrICh2`),
+`up -d --build` na janela root, e checagem externa OK (health, 401 `nao_autenticado`,
+CORS com `authorization`). Push do app em seguida (commit `1ba2b55`).
+**⚠️ Achado do deploy: o `relatorio.env` estava com dono root** (criado pela
+janela root de manhã), o `cc` nem lia; corrigido com `chown cc:cc` na janela root.
 
-1. **Deploy do serviço v2 na VPS** (passo a passo no README do serviço:
-   `scp` dos 4 arquivos → `REL_UIDS` no relatorio.env → `up -d --build` na
-   janela root → health + 401 de fora).
-2. **Push do repo do app** (v1.20.0 já commitada localmente, gate verde).
-3. **Apagar a senha órfã do iCloud Keychain** (Ajustes → Senhas →
-   relatorio.srv1534583.hstgr.cloud): o print de 19/07 mostrou o token v1 salvo
-   lá como "senha de site" — com a v2 no ar ele vira lixo e deve morrer.
-4. **Liberar a esposa**: uid dela no `REL_UIDS` (console do Firebase →
-   Authentication) + `up -d`. Só DEPOIS do passo 1+2, nunca antes.
-5. Validar v1.20.0 no iPhone (junto com a v1.19.0, que ainda não foi validada lá).
+**Falta:**
+1. **Apagar a senha órfã do iCloud Keychain** (iPhone: Ajustes → Senhas →
+   relatorio.srv1534583.hstgr.cloud): era o token v1 salvo como "senha de site";
+   com a v2 no ar virou lixo.
+2. **Liberar a esposa** (agora é seguro): pegar o uid dela no console do
+   Firebase (Authentication → Users), acrescentar em `REL_UIDS` separado por
+   vírgula e `docker compose up -d` (NUNCA `restart`, não relê o env).
+3. **Validar v1.20.0 no iPhone** (inclui a v1.19.0, nunca validada lá): forçar
+   atualização do PWA, conferir v1.20.0 no header, Ajustes sem campo de chave.
 
-Nota do teste real dele: a prosa da semana 12-18/07 é LEGADA (sem hash), então
+Nota do teste real: a prosa da semana 12-18/07 é LEGADA (sem hash), então
 "Gerar de novo" não aparece pra ela de propósito; o primeiro teste vivo da v2 é
-analisar uma semana fechada sem prosa (ex.: 05-11/07, se tiver dados) ou esperar
-o domingo 26/07 liberar a semana 19-25.
+analisar uma semana fechada sem prosa (ex.: 05-11/07, se tiver dados; custa
+R$ 0,24) ou esperar o domingo 26/07 liberar a semana 19-25.
 
 ### O problema que a v1.20.0 resolve (decidido com o Gileno em 19/07)
 
