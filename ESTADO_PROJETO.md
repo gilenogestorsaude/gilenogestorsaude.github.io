@@ -1,12 +1,25 @@
 # Estado do Projeto — Gestão Saúde
 
 **Última atualização:** 2026-07-19
-**Versão atual em produção:** v1.15.1
+**Versão atual em produção:** v1.16.0
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
 
 > Este documento é o **handoff vivo** do projeto. Qualquer nova sessão de trabalho começa lendo este arquivo pra entender estado atual, decisões já tomadas, e próximos passos.
+
+---
+
+## Resumo da sessão 2026-07-19 (parte 4) — v1.16.0 (redesign de Refeições) — FECHA a parte visual
+
+**v1.16.0 (31e6ed7):**
+- **`dayMacroCardsHtml(dt)`** — "Resumo de hoje" em 4 cards (Calorias/Proteína/Carboidratos/Gorduras) com barra e verde ao bater a meta. **Ganho real de informação:** a página só mostrava o total da refeição SELECIONADA; o panorama do dia vivia só no Início. Sem meta definida mostra "—" sem quebrar.
+- **Catálogo de alimentos recolhível** (`isFoodCatalogOpen`/`toggleFoodCatalog`): **default inteligente** — refeição vazia → catálogo aberto (você veio registrar); refeição com item → recolhido atrás do botão grande "＋ Adicionar alimento em <refeição>" (a página fica curta pra conferir). A escolha manual do usuário (`D._uiCollapsed.foodCatalog`) manda daí em diante. Botão ▲ recolhe de volta (só aparece com itens).
+- Chips de refeição, card de horário, plano da nutri, itens/mover e busca TACO **intactos**.
+
+**Verificação:** JSC **28/28** (`verify_meal.js`: 4 cards, metas batidas, sem-meta, os 4 estados do default inteligente, toggle gravando o estado NOVO, ganchos do rMeal) + **regressão das 5 suítes da sessão: 156 checks, 0 falhas** + bench `meal.html`. ⚠️ Validar no iPhone.
+
+**➡️ Com isto a parte VISUAL do redesign está fechada** (Hidratação, Início, Refeições). Resta a **decisão de navegação**: aba "Saúde" juntando corpo+medicamentos+vitais e aba "Mais" — a ser apresentada JUNTO com o rename do módulo Consultas (o novo lar do contexto clínico provavelmente é essa aba). Depois, Etapa 2 do relatório (IA via VPS).
 
 ---
 
@@ -372,9 +385,9 @@ Marketing:
 
 ```
 Estou retomando o app Gestão Saúde. Lê /Users/gilenopaiva/Documents/Gileno_Gestao/Apps/Gestao_Saude_App/ESTADO_PROJETO.md
-pra contexto. Versão em produção: v1.15.1 (Início redesenhado: hero + próxima melhor ação).
-Pendências: validar v1.15.1 no iPhone, próximas etapas do redesign (Refeições + navegação nova),
-Etapa 2 do relatório (IA via VPS) e renomear módulo Consultas.
+pra contexto. Versão em produção: v1.16.0 (redesign visual fechado: Hidratação, Início e Refeições).
+Pendências: validar v1.16.0 no iPhone, decidir a navegação nova (aba Saúde/Mais) JUNTO com o
+rename do módulo Consultas, e a Etapa 2 do relatório (IA via VPS).
 
 [Aqui descreve: resultado do teste no iPhone / o que quer atacar primeiro]
 ```
