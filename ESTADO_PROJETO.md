@@ -522,13 +522,20 @@ Marketing:
 
 ```
 Estou retomando o app Gestão Saúde. Lê /Users/gilenopaiva/Documents/Gileno_Gestao/Apps/Gestao_Saude_App/ESTADO_PROJETO.md
-pra contexto. Versão em produção: v1.19.0 (Etapa 2 do relatório: prosa por IA via serviço
-na VPS, com agregados em vez de série crua e teto diário). O serviço de IA já está NO AR (custo medido: R$ 0,24 por
-relatório). PRIORIDADE da próxima sessão: cota por usuário (identidade via Firebase,
-1 relatório por semana de semana fechada), que é pré-requisito para liberar Pro pra
-outras pessoas. Ver o bloco no topo do ESTADO_PROJETO. Pendência menor: validar no iPhone.
+pra contexto, começando pelo bloco PRIORIDADE no topo.
 
-[Aqui descreve: resultado do teste no iPhone / o que quer atacar primeiro]
+Versão no ar: v1.19.0. O serviço de prosa por IA foi pro ar em 19/07 e já gerou
+relatório real (custo medido: R$ 0,24 por relatório).
+
+PRIORIDADE desta sessão: cota por usuário no Relatório por IA. Vou liberar Pro
+pra minha esposa, e hoje existe um token só, compartilhado. Precisa de:
+(a) identidade via Firebase ID token no lugar do token compartilhado
+(b) 1 relatório por semana, só de semana FECHADA
+(c) mostrar a cota no app (o endpoint já devolve usoDia/tetoDia)
+(d) exportar PDF ilimitado, no padrão do export do treino
+(e) "Gerar de novo" só quando os números mudarem, teto de +1
+
+Não liberar pra minha esposa antes do (a).
 ```
 
 ---
