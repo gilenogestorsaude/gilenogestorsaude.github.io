@@ -426,10 +426,10 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
 <!-- ========== PAGE: MEDICAMENTOS ========== -->
 <div id="page-meds" class="page">
     <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
-        <button class="btn-icon btn-outline" onclick="showPage('dash')" style="width:36px;height:36px">←</button>
+        <button class="btn-icon btn-outline" onclick="showPage('more')" style="width:36px;height:36px">←</button>
         <div style="flex:1">
-            <div style="font-size:16px;font-weight:700">Medicamentos</div>
-            <div style="font-size:11px;color:var(--text3)">Cadastro e adesão diária</div>
+            <div style="font-size:16px;font-weight:700">💊 Medicamentos</div>
+            <div style="font-size:11px;color:var(--text3)">Cadastro de remédios e suplementos</div>
         </div>
         <button class="btn btn-primary btn-sm" onclick="openAddMed()">+ Novo</button>
     </div>
@@ -526,10 +526,6 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
         <span class="nav-emo">💧</span>
         <span>Água</span>
     </button>
-    <button class="nav-item" onclick="showPage('meds')" data-page="meds">
-        <span class="nav-emo">💊</span>
-        <span>Meds</span>
-    </button>
     <button class="nav-item" onclick="showPage('more')" data-page="more">
         <span class="nav-emo">☰</span>
         <span>Mais</span>
@@ -568,7 +564,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.17.0';
+const APP_VERSION = '1.17.1';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1282,7 +1278,7 @@ function showPage(name) {
     cPage = name;
 
     // Páginas que moram DENTRO do hub mantêm o item "Mais" aceso (v1.17.0)
-    const MORE_CHILDREN = ['more','settings','goals','treino','vitais','consultas','report','tutorial','install','admin',
+    const MORE_CHILDREN = ['more','settings','goals','meds','treino','vitais','consultas','report','tutorial','install','admin',
         'template-editor','treino-execute','treino-history','treino-editor','treino-session'];
     const navName = MORE_CHILDREN.indexOf(name) !== -1 ? 'more' : name;
     document.querySelectorAll('.nav-item').forEach(n => {
@@ -4712,6 +4708,7 @@ function moreGroupHtml(title, rows) {
 function rMore() {
     if (!D) return;
     let rotina = '';
+    if (isModuleEnabled('medicamentos')) rotina += moreRowHtml('💊', 'Medicamentos', 'Cadastrar remédios e suplementos', "showPage('meds')");
     if (isModuleEnabled('treino')) rotina += moreRowHtml('🏋️', 'Treino', 'Fichas, execução guiada e histórico', "showPage('treino')");
     if (isModuleEnabled('vitais')) rotina += moreRowHtml('📊', 'Sinais vitais', 'Peso, pressão, frequência e sono', "showPage('vitais')");
     if (isModuleEnabled('consultas')) rotina += moreRowHtml('🩺', 'Saúde Clínica', 'Consultas, exames e acompanhamento médico', "showPage('consultas')");
@@ -7534,7 +7531,7 @@ function toggleModuleTreino() { toggleModule('treino'); }
 function applyBottomNavVisibility() {
     const nav = document.getElementById('bottom-nav');
     if (!nav) return;
-    const map = { meal: 'refeicao', hydro: 'hidratacao', meds: 'medicamentos' };
+    const map = { meal: 'refeicao', hydro: 'hidratacao' };
     nav.querySelectorAll('.nav-item').forEach(btn => {
         const page = btn.dataset.page;
         const mod = map[page];
