@@ -1,7 +1,7 @@
 # Estado do Projeto — Gestão Saúde
 
-**Última atualização:** 2026-07-19
-**Versão atual em produção:** v1.19.0 (serviço de IA no ar desde 19/07)
+**Última atualização:** 2026-07-19 (parte 9)
+**Versão atual em produção:** v1.19.0 · **v1.20.0 PRONTA e commitada, aguardando o deploy da VPS pra ser publicada** (ordem importa, ver PRIORIDADE)
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
@@ -10,9 +10,32 @@
 
 ---
 
-## 🔴 PRIORIDADE DA PRÓXIMA SESSÃO: cota por usuário no Relatório por IA
+## 🔴 PRIORIDADE: publicar a v1.20.0 (cota por usuário) — CÓDIGO PRONTO, FALTA O DEPLOY
 
-Decidido com o Gileno em 19/07/2026, logo depois do deploy. Ele vai **liberar versões Pro para outras pessoas, começando pela esposa**, e isso transforma um item de backlog em bloqueante.
+A sessão de 19/07 (parte 9) implementou os itens (a)-(e) abaixo, com 82 checks
+passando (30 no endpoint + 52 no app) e bench visual completo. **Sequência que
+falta, NESTA ordem (o app novo manda Bearer; servidor v1 responderia 401):**
+
+1. **Deploy do serviço v2 na VPS** (passo a passo no README do serviço:
+   `scp` dos 4 arquivos → `REL_UIDS` no relatorio.env → `up -d --build` na
+   janela root → health + 401 de fora).
+2. **Push do repo do app** (v1.20.0 já commitada localmente, gate verde).
+3. **Apagar a senha órfã do iCloud Keychain** (Ajustes → Senhas →
+   relatorio.srv1534583.hstgr.cloud): o print de 19/07 mostrou o token v1 salvo
+   lá como "senha de site" — com a v2 no ar ele vira lixo e deve morrer.
+4. **Liberar a esposa**: uid dela no `REL_UIDS` (console do Firebase →
+   Authentication) + `up -d`. Só DEPOIS do passo 1+2, nunca antes.
+5. Validar v1.20.0 no iPhone (junto com a v1.19.0, que ainda não foi validada lá).
+
+Nota do teste real dele: a prosa da semana 12-18/07 é LEGADA (sem hash), então
+"Gerar de novo" não aparece pra ela de propósito; o primeiro teste vivo da v2 é
+analisar uma semana fechada sem prosa (ex.: 05-11/07, se tiver dados) ou esperar
+o domingo 26/07 liberar a semana 19-25.
+
+### O problema que a v1.20.0 resolve (decidido com o Gileno em 19/07)
+
+Ele vai **liberar versões Pro para outras pessoas, começando pela esposa**, e o
+desenho v1 tinha um token só e um teto global.
 
 **O problema, em uma frase: hoje existe UM token e UM teto global.** Funciona porque o usuário é um só. No instante em que a esposa entrar:
 
@@ -39,6 +62,83 @@ Decidido com o Gileno em 19/07/2026, logo depois do deploy. Ele vai **liberar ve
 **Custo por assinante, com a regra de 1 por semana:** R$ 0,24 × 4 a 5 por mês = **cerca de R$ 1,10 por assinante por mês**, e no pior caso (todo mundo retificando toda semana) R$ 2,20. Esse é o piso do preço da Pro.
 
 ⚠️ **Não liberar para a esposa antes de (a).** Enquanto o token for compartilhado, dar acesso a ela é dar a chave do endpoint pago.
+
+---
+
+## Resumo da sessão 2026-07-19 (parte 9): v1.20.0 (cota por usuário) — construída, aguardando deploy
+
+Sessão inteira na prioridade. **Anexo que abriu a sessão:** print do iPhone com o
+Face ID oferecendo, no login do app, a "senha de https://relatorio.srv1534583…/r"
+— ou seja, **o token compartilhado v1 tinha vazado pro iCloud Keychain** (campo
+`type=password` em Ajustes). Sintoma perfeito do problema que a sessão resolve.
+
+**SERVIDOR v2 (`Operacoes_VPS/relatorio_ia_service/`, ainda não deployado):**
+- **(a) Identidade**: morreu o `X-Token`; entra `Authorization: Bearer <ID token
+  do Firebase>`, validado por assinatura RS256 contra as chaves públicas do
+  Google (cache pelo max-age), com `aud`/`iss`/`exp`/`sub` exigidos. Duas deps
+  novas pinadas (PyJWT 2.10.1 + cryptography 49.0.0) — a imagem já era própria.
+- **Allowlist `REL_UIDS`** (fail closed, no relatorio.env): é o cadeado REAL da
+  Pro enquanto não há cobrança. Log imprime o uid completo de quem levou 403.
+- **(b) Cota**: máx. 2 chamadas por uid por semana FECHADA (1 geração + 1
+  regeração), semana aberta = 422, e a 2ª chamada exige **hash sha256 do payload
+  DIFERENTE** (409 se igual) — a regra "só se os números mudaram" é imposta no
+  servidor, não só na interface. Fuso local via `REL_TZ_OFFSET=-3`. `uso.json`
+  virou v2 (`{dia, semanas{uid{domingo{n,hash}}}}`, migra o formato antigo,
+  poda >90 dias). **502 devolve a cota** (falha nossa não queima a análise da
+  semana do usuário). Teto diário global de 10 continua como segunda rede.
+- Códigos de erro estruturados (`codigo`) + `usoDia/tetoDia/usoSemana/tetoSemana`
+  em toda resposta de cota.
+- **`test_endpoint.py` agora é PERMANENTE no diretório do serviço** (30 checks):
+  sobe o app.py real com stub do SDK e das chaves do Google (certificado gerado
+  na hora, ID tokens assinados de verdade), cobre assinatura/aud/iss/exp/HS256
+  forjado/kid desconhecido, allowlist, semanas, cota+hash, rollback pós-502,
+  teto diário, CORS e a regressão do keep-alive de 19/07. Rodar: venv com
+  PyJWT+cryptography (não vai pra VPS; scp copia só os 4 arquivos de sempre).
+
+**APP v1.20.0 (commitada, push aguardando o deploy):**
+- **(a)** `gerarProsaIA` manda `Authorization: Bearer` de `auth.currentUser.getIdToken()`.
+  O campo "Chave de acesso" SUMIU de Ajustes, e a migração do `load()` **APAGA
+  `D.reportCfg.aiToken`** de quem tinha (credencial aposentada não dorme no
+  Firestore). Provado no bench: seed com chave legada → some.
+- **(b)(e)** Novos `weekIsClosed`, `aggregatesFingerprint` (FNV-1a do JSON
+  enviado) e **`proseGate`** (porteiro puro e testável: sem_registro /
+  semana_aberta / ja_gerada / nada_pra_regerar / regen_esgotada / sem_mudanca).
+  `proseFromResponse` (pura) grava `hash`, `regeracoes`, `usoSemana/tetoSemana`
+  junto da prosa. Regerar pede confirmação ("esta é a última desta semana").
+  Prosa legada v1.19 (sem hash) NÃO regenera de propósito (sem baseline não dá
+  pra provar mudança).
+- **(c)** Card da análise agora fala a cota: semana aberta → "abre no domingo";
+  botão de gerar → "1 análise por semana fechada"; pós-geração → "✓ Análise em
+  dia com os seus registros · a desta semana já foi usada"; números mudaram →
+  botão "↻ Gerar de novo (você corrigiu registros desta semana)"; teto batido →
+  "já foi refeita. Nova cota no próximo domingo".
+- **(d)** Exportar PDF no padrão visual do export do treino (outline, ✓) +
+  legenda "Exportar é ilimitado: só reimprime… não gasta nada".
+- Ajustes mostra o **ID da conta (uid)** — é de lá que se copia o uid pra
+  liberar alguém no `REL_UIDS`.
+
+**Verificação: 82 checks, 0 falhas** (30 endpoint + **52 no app** em
+`verify_cota.js`: weekIsClosed nas bordas com sábado, fingerprint, os 9 casos do
+proseGate, proseFromResponse, os 9 estados do card, Ajustes sem password,
+guardas síncronas do gerarProsaIA com confirm, afirmações de fonte — sem
+X-Token, migração apaga aiToken, versões 1.20.0 — e sintaxe de todos os blocos
+script). **Bench visual regenerado no padrão do app inteiro** (Firebase stubado
++ seed; `bench_saude` do launch.json re-apontado pro scratchpad desta sessão) +
+**fake_vps.py na 8777 que ecoa o header Authorization na prosa**: na tela
+apareceu "recebi [Bearer fake-id-token-do-bench]", provando o fluxo fim-a-fim.
+Regeração testada ao vivo (corrigir água → botão aparece → confirma → regeracoes
+1 → nova correção → botão some, aviso do teto), claro+escuro, zero erro de
+console.
+
+**⚠️ Gotchas novos desta sessão:**
+1. **JSC/osascript NÃO drena microtasks**: `async/await` nunca resolve nem com
+   NSRunLoop girando. Testar async = extrair a lógica pra funções puras
+   (proseGate/proseFromResponse) + testar só o trecho síncrono (guardas rodam
+   antes do 1º await e são observáveis por toast/confirm/proseBusy).
+2. **`let`/`const` de eval indireto não viram globais** (function declarations
+   sim). O harness avalia todas as fatias num eval só e exporta ponte
+   (`globalThis.__busy`) de dentro do próprio eval.
+3. cryptography pinada em **49.0.0** = a versão que os testes locais rodaram.
 
 ---
 

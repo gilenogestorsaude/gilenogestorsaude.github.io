@@ -564,7 +564,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.19.0';
+const APP_VERSION = '1.20.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1016,10 +1016,13 @@ async function load() {
             if (!D.weeklyNotes || typeof D.weeklyNotes !== 'object') D.weeklyNotes = {}; // v1.11.0
             if (!D.reportCfg || typeof D.reportCfg !== 'object') D.reportCfg = {};
             if (!(D.reportCfg.sessoesMeta > 0)) D.reportCfg.sessoesMeta = 3;
-            // v1.19.0: prosa por IA. Endereço e chave ficam VAZIOS de propósito:
+            // v1.19.0: prosa por IA. Endereço fica VAZIO de propósito:
             // o repo é público, então a infra dele não vai versionada; ele cola em Ajustes.
             if (typeof D.reportCfg.aiUrl !== 'string') D.reportCfg.aiUrl = '';
-            if (typeof D.reportCfg.aiToken !== 'string') D.reportCfg.aiToken = '';
+            // v1.20.0: a identidade virou o próprio login (ID token do Firebase).
+            // A chave compartilhada morreu, e é APAGADA de quem a tinha gravada:
+            // credencial aposentada não pode ficar dormindo no Firestore.
+            if ('aiToken' in D.reportCfg) delete D.reportCfg.aiToken;
             if (!D.weeklyProse || typeof D.weeklyProse !== 'object') D.weeklyProse = {};
             if (typeof D.activeExecution === 'undefined') D.activeExecution = null; // v1.12.0
             reconcileWorkoutOrigem(D); // v1.9.10 — define quem é do personal (autoritativo por ids, ou heurística legada)
@@ -4477,35 +4480,101 @@ function reportProseFor(startIso) {
     return (D.weeklyProse && D.weeklyProse[startIso]) || null;
 }
 
-// Gera (ou regera) a prosa da semana aberta. Fica em CACHE por semana: cada
-// chamada custa dinheiro, então reabrir o relatório não paga de novo.
+// Semana FECHADA = o sábado dela já passou. Análise só de semana fechada
+// (regra do Gileno): comentar semana incompleta dá veredito enganoso.
+function weekIsClosed(startIso) {
+    return addDaysStr(startIso, 6) < today();
+}
+
+// Impressão digital dos agregados enviados à IA (FNV-1a 32 bits, hex).
+// Não é criptografia: só detecta "os números mudaram desde a última análise".
+// O servidor faz a checagem análoga com sha256 do payload; esta aqui decide
+// a INTERFACE (mostrar ou não o Gerar de novo) sem gastar uma chamada.
+function aggregatesFingerprint(agg) {
+    const s = JSON.stringify(agg);
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    return ('0000000' + h.toString(16)).slice(-8);
+}
+
+// Porteiro da geração: decide se gerar/regerar É permitido, e por quê não.
+// Puro e síncrono de propósito (testável sem rede). As regras (do Gileno):
+// 1 análise por semana FECHADA; regerar só se os números mudaram; e no
+// máximo 1 regeração (teto total: 2 chamadas por semana).
+function proseGate(rep, p, force, fp) {
+    if (!rep.past.length) return { ok: false, motivo: 'sem_registro' };
+    if (!weekIsClosed(rep.startIso)) return { ok: false, motivo: 'semana_aberta' };
+    if (p && !force) return { ok: false, motivo: 'ja_gerada' };
+    if (force) {
+        if (!p) return { ok: false, motivo: 'nada_pra_regerar' };
+        if ((p.regeracoes || 0) >= 1) return { ok: false, motivo: 'regen_esgotada' };
+        // Prosa antiga (v1.19.0) não tem hash: sem baseline não dá pra provar
+        // que os números mudaram, então não regenera — só a partir da próxima.
+        if (!p.hash || p.hash === fp) return { ok: false, motivo: 'sem_mudanca' };
+    }
+    return { ok: true };
+}
+
+const PROSE_GATE_MSG = {
+    sem_registro: 'Semana sem nenhum dia registrado',
+    semana_aberta: 'A análise abre quando a semana fechar (a partir de domingo)',
+    regen_esgotada: 'A análise desta semana já foi refeita uma vez',
+    sem_mudanca: 'Os números não mudaram desde a última análise',
+};
+
+// Resposta do serviço -> objeto gravado em D.weeklyProse[startIso]. Pura
+// (testável sem rede): guarda a prosa, a impressão digital dos agregados
+// enviados (baseline do "os números mudaram?") e o contador de regerações.
+function proseFromResponse(data, fp, force, prev) {
+    return {
+        resumo: String(data.prosa.resumo || ''),
+        analise: String(data.prosa.analise || ''),
+        plano: Array.isArray(data.prosa.plano) ? data.prosa.plano.map(String) : [],
+        em: new Date().toISOString(),
+        hash: fp,
+        regeracoes: force ? ((prev && prev.regeracoes) || 0) + 1 : 0,
+        usoSemana: data.usoSemana || null,
+        tetoSemana: data.tetoSemana || null
+    };
+}
+
+// Gera (ou regera) a prosa da semana em exibição. Fica em CACHE por semana:
+// cada chamada custa dinheiro, então reabrir o relatório não paga de novo.
+// v1.20.0: a identidade é o ID token do Firebase (o login), não mais uma
+// chave colada em Ajustes — a VPS valida a assinatura e sabe QUEM pediu.
 async function gerarProsaIA(force) {
     const cfg = reportCfgSafe();
-    const url = (cfg.aiUrl || '').trim(), token = (cfg.aiToken || '').trim();
-    if (!url || !token) {
-        return toast('Configure o endereço e a chave em Ajustes, seção Relatório por IA', true);
-    }
+    const url = (cfg.aiUrl || '').trim();
+    if (!url) return toast('Configure o endereço em Ajustes, seção Relatório por IA', true);
     const rep = collectWeekReport(reportWeekStart);
-    if (!rep.past.length) return toast('Semana sem nenhum dia registrado', true);
-    if (reportProseFor(rep.startIso) && !force) return;
+    const p = reportProseFor(rep.startIso);
+    const agg = reportAggregatesForAI(rep);
+    const fp = aggregatesFingerprint(agg);
+    const gate = proseGate(rep, p, force, fp);
+    if (!gate.ok) {
+        const msg = PROSE_GATE_MSG[gate.motivo];
+        return msg ? toast(msg, true) : undefined;
+    }
+    if (force && !confirm('Gerar nova análise com os números corrigidos? Esta é a última desta semana.')) return;
 
     proseBusy = true;
     if (cPage === 'report') rReport();
     try {
+        let idToken = null;
+        try { idToken = await auth.currentUser.getIdToken(); } catch (e) {}
+        if (!idToken) throw new Error('sessão expirada, entre no app de novo');
         const resp = await fetch(url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Token': token },
-            body: JSON.stringify(reportAggregatesForAI(rep))
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + idToken },
+            body: JSON.stringify(agg)
         });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok || !data.ok) throw new Error(data.erro || `HTTP ${resp.status}`);
         if (!D.weeklyProse) D.weeklyProse = {};
-        D.weeklyProse[rep.startIso] = {
-            resumo: String(data.prosa.resumo || ''),
-            analise: String(data.prosa.analise || ''),
-            plano: Array.isArray(data.prosa.plano) ? data.prosa.plano.map(String) : [],
-            em: new Date().toISOString()
-        };
+        D.weeklyProse[rep.startIso] = proseFromResponse(data, fp, force, p);
         save();
         toast('✓ Análise gerada');
     } catch (e) {
@@ -4521,22 +4590,37 @@ let proseBusy = false;
 
 function proseCardHtml(rep) {
     const cfg = reportCfgSafe();
-    const configurado = !!((cfg.aiUrl || '').trim() && (cfg.aiToken || '').trim());
+    const configurado = !!(cfg.aiUrl || '').trim();
     const p = reportProseFor(rep.startIso);
+    const fechada = weekIsClosed(rep.startIso);
     let corpo;
     if (proseBusy) {
         corpo = `<div style="font-size:12px;color:var(--text3);text-align:center;padding:14px 0">Analisando a semana…</div>`;
     } else if (p) {
+        // Estado da cota (v1.20.0): regerar SÓ se os números mudaram desde a
+        // análise, e no máximo 1 vez. Regerar sobre dados idênticos produziria
+        // um texto diferente sobre a mesma realidade: gasto sem informação.
+        const fp = aggregatesFingerprint(reportAggregatesForAI(rep));
+        const mudou = !!p.hash && p.hash !== fp;
+        const regenOk = proseGate(rep, p, true, fp).ok;
+        const status = regenOk
+            ? `<button class="btn btn-outline btn-sm" style="margin-top:12px" onclick="gerarProsaIA(true)">↻ Gerar de novo (você corrigiu registros desta semana)</button>`
+            : mudou
+                ? `<div style="font-size:11px;color:var(--text3);margin-top:12px">Os números mudaram, mas a análise desta semana já foi refeita. Nova cota no próximo domingo.</div>`
+                : `<div style="font-size:11px;color:var(--text3);margin-top:12px">✓ Análise em dia com os seus registros · a desta semana já foi usada</div>`;
         corpo = `
             <div style="font-size:13px;color:var(--text);line-height:1.55">${escHtml(p.resumo)}</div>
             <div style="font-size:12px;color:var(--text2);line-height:1.55;margin-top:10px">${escHtml(p.analise).replace(/\n+/g, '<br><br>')}</div>
             ${p.plano.length ? `<div style="font-size:11px;font-weight:700;color:var(--text3);letter-spacing:.4px;margin:12px 0 6px">PLANO DA PRÓXIMA SEMANA</div>
             <ol style="margin:0;padding-left:18px;font-size:12px;color:var(--text2);line-height:1.6">${p.plano.map(x => `<li>${escHtml(x)}</li>`).join('')}</ol>` : ''}
-            <button class="btn btn-outline btn-sm" style="margin-top:12px" onclick="gerarProsaIA(true)">↻ Gerar de novo</button>`;
+            ${status}`;
+    } else if (!fechada) {
+        corpo = `<div style="font-size:12px;color:var(--text3);line-height:1.5">Esta semana ainda está em andamento. A análise abre <strong style="color:var(--text2)">no domingo</strong>, com a semana completa: analisar pela metade daria um veredito enganoso.</div>`;
     } else if (!configurado) {
         corpo = `<div style="font-size:12px;color:var(--text3);line-height:1.5">Ligue em Ajustes, seção <strong style="color:var(--text2)">Relatório por IA</strong>, para o app comentar a semana além dos números.</div>`;
     } else {
-        corpo = `<button class="btn btn-primary" style="width:100%" onclick="gerarProsaIA()">✨ Analisar esta semana</button>`;
+        corpo = `<button class="btn btn-primary" style="width:100%" onclick="gerarProsaIA()">✨ Analisar esta semana</button>
+            <div style="font-size:10px;color:var(--text3);text-align:center;margin-top:8px">1 análise por semana fechada · reabrir depois não gasta nada</div>`;
     }
     return `
         <div class="card mb-12">
@@ -4686,7 +4770,12 @@ function rReport() {
                 onchange="saveWeeklyNotes('${rep.startIso}', this.value)">${escHtml(rep.notes)}</textarea>
         </div>
 
-        <button class="btn btn-primary w-full" style="margin-bottom:24px" onclick="exportWeeklyReport()">📄 Exportar / imprimir PDF</button>`;
+        <div style="margin-bottom:24px">
+            <div style="display:flex;gap:8px">
+                <button class="btn btn-outline" style="flex:1;justify-content:space-between" onclick="exportWeeklyReport()"><span>📄 Exportar PDF</span><span style="font-size:10px;color:var(--text3)">${D.proPreview ? '✓' : '🔒'}</span></button>
+            </div>
+            <div style="font-size:10px;color:var(--text3);text-align:center;margin-top:6px">Exportar é ilimitado: só reimprime os números e a análise já gravados, não gasta nada.</div>
+        </div>`;
 }
 
 // ---- Exportação: HTML autocontido aberto fora do app (imprimir/salvar PDF lá).
@@ -4967,7 +5056,7 @@ function rSettings() {
         ${isModuleEnabled('refeicao') ? settingsSectionHtml('slots', '🍽', 'Campos de refeição', 'Renomear, horário previsto, ordem e ativar', settingsMealSlotsHtml()) : ''}
         ${isModuleEnabled('treino') ? settingsSectionHtml('treino', '🏋️', 'Treino', 'Descanso padrão e passo da carga', settingsTreinoHtml()) : ''}
         ${settingsSectionHtml('planos', '📋', 'Planos do profissional', 'Importar dieta da nutri e treino do personal', settingsImportHtml())}
-        ${D.proPreview ? settingsSectionHtml('ia', '🧠', 'Relatório por IA', 'Endereço e chave do serviço que comenta a semana', settingsIAHtml()) : ''}
+        ${D.proPreview ? settingsSectionHtml('ia', '🧠', 'Relatório por IA', 'Serviço que comenta a semana (acesso pelo seu login)', settingsIAHtml()) : ''}
         ${settingsSectionHtml('conta', '⚙️', 'Configurações e conta', 'Tema, versão, privacidade, exportar e sair', settingsContaHtml())}
     `;
 }
@@ -5000,28 +5089,27 @@ function settingsModulesHtml() {
 // privado dele), nunca no código: o repositório é público. Só aparece no Modo Pro.
 function settingsIAHtml() {
     const cfg = reportCfgSafe();
-    const url = cfg.aiUrl || '', tok = cfg.aiToken || '';
-    const pronto = !!(url.trim() && tok.trim());
+    const url = cfg.aiUrl || '';
+    const pronto = !!url.trim();
     return `
         <div class="card mb-12">
             <div class="card-title">🧠 Relatório por IA</div>
             <div style="font-size:11px;color:var(--text3);margin-bottom:10px;line-height:1.5">
                 Com isto ligado, o Relatório Semanal ganha resumo, análise e plano de ação escritos por IA a partir dos seus números.
                 Saem do aparelho apenas os <strong style="color:var(--text2)">totais e médias da semana</strong>, nunca o registro dia a dia.
-                A chave do serviço fica só na sua conta, nunca no código do app.
+                O acesso é reconhecido pelo seu <strong style="color:var(--text2)">login</strong>: não existe chave pra colar.
+                Cota: 1 análise por semana fechada (e 1 refeita, se você corrigir registros).
             </div>
             <div class="form-group">
                 <label class="form-label">Endereço do serviço</label>
                 <input type="url" class="form-input" value="${escHtml(url)}" placeholder="https://…"
                        oninput="D.reportCfg.aiUrl = this.value.trim()" onchange="save(); rSettings()">
             </div>
-            <div class="form-group">
-                <label class="form-label">Chave de acesso</label>
-                <input type="password" class="form-input" value="${escHtml(tok)}" placeholder="cole a chave aqui"
-                       oninput="D.reportCfg.aiToken = this.value.trim()" onchange="save(); rSettings()">
-            </div>
             <div style="font-size:11px;color:${pronto ? 'var(--green)' : 'var(--text3)'}">
-                ${pronto ? '✓ Configurado. O botão de analisar aparece no Relatório Semanal.' : 'Falta preencher os dois campos.'}
+                ${pronto ? '✓ Configurado. O botão de analisar aparece no Relatório Semanal.' : 'Falta preencher o endereço.'}
+            </div>
+            <div style="font-size:10px;color:var(--text3);margin-top:8px;word-break:break-all">
+                ID desta conta (necessário pra liberar o acesso): <code>${U ? escHtml(U.uid) : '—'}</code>
             </div>
         </div>`;
 }
