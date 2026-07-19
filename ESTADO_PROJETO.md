@@ -1,12 +1,40 @@
 # Estado do Projeto — Gestão Saúde
 
 **Última atualização:** 2026-07-19
-**Versão atual em produção:** v1.17.2
+**Versão atual em produção:** v1.18.0
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
 
 > Este documento é o **handoff vivo** do projeto. Qualquer nova sessão de trabalho começa lendo este arquivo pra entender estado atual, decisões já tomadas, e próximos passos.
+
+---
+
+## Resumo da sessão 2026-07-19 (parte 6) — v1.18.0 (tipos novos de registro em Saúde Clínica)
+
+Primeira feature depois do redesign fechado. O módulo deixa de ser só "histórico de consultas" e vira o lar do **contexto clínico** que o relatório/IA vai consumir na Etapa 2.
+
+**DECISÃO DE SCHEMA — lista SEPARADA, não campo novo em consultas.** `D.clinicos` nasceu ao lado de `D.consultas`, intocadas. Motivo: **consulta é encontro pontual (data única); evento clínico tem PERÍODO e SITUAÇÃO**. Enfiar os dois no mesmo array exigiria migrar dado de saúde já gravado — risco real, ganho zero. Mesmo princípio que manteve a chave `D.consultas` no rename da v1.17.0.
+
+**Shape:** `{ id, tipo: 'doenca'|'medtemp'|'exame', titulo, detalhe?, inicio, fim?, situacao: 'aberto'|'fechado', notas?, createdAt }`. Um `CLINICO_TIPOS` guarda os rótulos por tipo, então **o editor fala a língua do registro**: exame pede "Pedido em / Agendado / realizado em" e fecha como "Realizado"; medicação pede "Começou em / Vai até" e fecha como "Encerrada"; doença fecha como "Resolvida". Uma função (`clinicoStatusLine`) traduz período+situação na frase que ele lê primeiro ("Ativa há 6 dias", "Em curso · até Qua 22 Jul (em 3 dias)", "Pedido há 10 dias · sem data marcada").
+
+**⏰ ATRASO É A FEATURE.** `clinicoAtrasado` = aberto **e** `fim` já passou. Vira selo âmbar, sobe pro topo da ordenação e muda o texto pra cobrança direta: exame vencido pergunta **"Era Ter 14 Jul — já fez?"**, remédio vencido diz "Prazo terminou em…". É o que impede um teste ergométrico de sumir no histórico.
+
+**Fechar em 1 toque** (`fecharClinico`) — mesmo espírito da Hidratação v1.14.0. O botão traz o verbo do tipo (✓ Realizado / ✓ Encerrada / ✓ Resolvida). Sem data final gravada, assume hoje; **com data já preenchida, PRESERVA** (a data marcada do exame é melhor registro do que o dia em que ele lembrou de tocar no botão).
+
+**Página reordenada por urgência:** próxima consulta → **⚠️ Em aberto (N)** → Agendadas → Histórico de consultas → Encerrados. O subtítulo do header passa a liderar com "N em aberto". O "+ Nova" virou **"+ Novo" com seletor de tipo** (`openClinicoPicker`), com **Consulta médica no topo** — continua sendo o caminho principal. Card do Início ganha o bloco "N EM ABERTO" **antes** da próxima consulta (a consulta já tem data; o exame pendente é que cobra ação). `nextBestAction` NÃO foi tocado de propósito: exame pendente não é ação-de-hoje e ia virar ruído no card diário.
+
+**Verificação:** JSC **93/93** (`verify_clinico.js`: os 3 tipos, atraso em todas as bordas, cada frase de status, ordenação, XSS de título/detalhe, validações do save, insert-vs-update, fechar preservando data, excluir com/sem confirmação, as 4 seções em ordem, **regressão do caminho sem nenhum evento clínico**, picker, editor novo vs existente, card do Início nos 3 estados, módulo desligado) + **regressão das 6 suítes: 219 checks, 0 falhas** = **312 no total**.
+
+**Bench visual no navegador** (obrigatório: o JSC é cego pra CSS/DOM). Bench novo = **app REAL inteiro** com Firebase stubado + seed, não mais recorte de página. Conferido em **escuro e claro**, viewport mobile, zero erros de console: 1 toque em "✓ Realizado" moveu o exame de "Em aberto (3)" pra "Encerrados", subtítulo 3→2; round-trip completo criando um exame novo pelo picker.
+
+**⚠️ 2 achados que só o bench pegou:**
+1. **`toast()` usa `textContent`** — eu estava passando o título por `escHtml`, então um título com "&" apareceria como "&amp;" na tela. Escape é pro `innerHTML` dos cards, não pro toast.
+2. **Estado vazio anunciava "0 consultas registradas"** no subtítulo. Agora cai num texto neutro.
+
+**⚠️ Gotcha do bench (custou 2 tentativas):** o screenshot volta em 2× (imagem 750×1624), mas **as coordenadas do clique são no espaço 375×812**. Clique fora da área não dá erro — a tela só não muda, e parece bug do app.
+
+**➡️ Falta:** validar a v1.18.0 no iPhone. Depois: **Etapa 2 do relatório** (IA via VPS) — e agora `D.clinicos` é insumo natural dela ("estava de corticoide na semana", "tratando lombalgia"), o que era justamente o objetivo do rename.
 
 ---
 
@@ -313,6 +341,7 @@ D = {
   treinos: [{id, data, nome, exercicios[{id, nome, series[{reps, carga}]}], notas?, duracao?, createdAt}],
   workoutTemplates: [{id, nome, exercicios[...], notas?, createdAt}],   // Treino A/B/C reutilizáveis
   consultas: [{id, data, medico, especialidade, local?, queixa, conduta, prescricao?, proximaConsulta?, notas?, createdAt}],
+  clinicos: [{id, tipo:'doenca'|'medtemp'|'exame', titulo, detalhe?, inicio, fim?, situacao:'aberto'|'fechado', notas?, createdAt}],  // v1.18.0 — período+situação, separado de consultas
   modules: { refeicao, hidratacao, medicamentos, treino, vitais, consultas },   // ligar/desligar áreas
   theme, bphCutoff, bphEnabled, _uiCollapsed
 }
@@ -405,10 +434,9 @@ Marketing:
 
 ```
 Estou retomando o app Gestão Saúde. Lê /Users/gilenopaiva/Documents/Gileno_Gestao/Apps/Gestao_Saude_App/ESTADO_PROJETO.md
-pra contexto. Versão em produção: v1.17.2 (redesign FECHADO: Hidratação, Início, Refeições,
-navegação com hub "Mais", Ajustes recolhível e módulo "Saúde Clínica").
-Pendências: validar v1.17.2 no iPhone, tipos novos de registro em Saúde Clínica (doença,
-medicação temporária, exame pendente) e a Etapa 2 do relatório (IA via VPS).
+pra contexto. Versão em produção: v1.18.0 (redesign fechado + Saúde Clínica agora registra
+doença, medicação temporária e exame pendente, com seção "Em aberto" e fechar em 1 toque).
+Pendências: validar v1.18.0 no iPhone e a Etapa 2 do relatório (IA via VPS, aguarda OK de custo).
 
 [Aqui descreve: resultado do teste no iPhone / o que quer atacar primeiro]
 ```

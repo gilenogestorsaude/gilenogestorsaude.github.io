@@ -418,7 +418,7 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
             <div style="font-size:16px;font-weight:700">🩺 Saúde Clínica</div>
             <div style="font-size:11px;color:var(--text3)" id="consultas-subtitle">Consultas, exames e acompanhamento</div>
         </div>
-        <button class="btn btn-primary btn-sm" onclick="openConsultaEditor()">+ Nova</button>
+        <button class="btn btn-primary btn-sm" onclick="openClinicoPicker()">+ Novo</button>
     </div>
     <div class="page-body" id="consultas-body"></div>
 </div>
@@ -564,7 +564,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.17.2';
+const APP_VERSION = '1.18.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -812,6 +812,12 @@ function defaultD() {
         // Consultas medicas
         // consultas: [{ id, data, medico, especialidade, local?, queixa, conduta, prescricao?, proximaConsulta?, notas?, createdAt }]
         consultas: [],
+        // Eventos clinicos (v1.18.0) — LISTA SEPARADA de consultas de proposito:
+        // consulta e um encontro pontual (data unica); estes tem PERIODO e SITUACAO
+        // (doenca ativa, remedio em curso, exame nao realizado). Misturar os dois
+        // schemas quebraria o historico ja gravado sem ganho nenhum.
+        // clinicos: [{ id, tipo: 'doenca'|'medtemp'|'exame', titulo, detalhe?, inicio, fim?, situacao: 'aberto'|'fechado', notas?, createdAt }]
+        clinicos: [],
         // Settings
         theme: 'dark',
         bphCutoff: 17,
@@ -1003,6 +1009,7 @@ async function load() {
                 if (typeof D.modules[m] === 'undefined') D.modules[m] = true;
             });
             if (!D.consultas) D.consultas = [];
+            if (!Array.isArray(D.clinicos)) D.clinicos = []; // v1.18.0
             if (typeof D.dietPlan === 'undefined') D.dietPlan = null;
             if (typeof D.workoutPlan === 'undefined') D.workoutPlan = null; // reservado: plano do personal (espelha dietPlan)
             if (typeof D.proPreview !== 'boolean') D.proPreview = false;
@@ -2445,19 +2452,34 @@ function rDash() {
                 <span class="card-title" style="margin:0">🩺 Saúde Clínica</span>
                 <div style="display:flex;gap:6px">
                     <button class="btn btn-outline btn-sm" onclick="showPage('consultas')">Ver tudo</button>
-                    <button class="btn btn-primary btn-sm" onclick="openConsultaEditor()">+ Nova</button>
+                    <button class="btn btn-primary btn-sm" onclick="openClinicoPicker()">+ Novo</button>
                 </div>
             </div>
             ${(() => {
                 const consultas = D.consultas || [];
                 const next = getNextConsulta();
+                // v1.18.0 — o que está em aberto aparece ANTES da próxima consulta:
+                // exame não feito e remédio em curso cobram ação hoje; a consulta já tem data.
+                const abertos = sortClinicosAbertos(getClinicos('aberto'));
+                let abertoHtml = '';
+                if (abertos.length > 0) {
+                    const temAtraso = abertos.some(clinicoAtrasado);
+                    const cor = temAtraso ? 'var(--yellow)' : 'var(--primary)';
+                    const topo = abertos[0];
+                    abertoHtml = `
+                        <div onclick="showPage('consultas')" style="cursor:pointer;padding:10px;background:var(--bg);border-radius:12px;border-left:3px solid ${cor};margin-bottom:8px">
+                            <div style="font-size:10px;color:${cor};font-weight:700;letter-spacing:.5px">${abertos.length} EM ABERTO</div>
+                            <div style="font-size:13px;font-weight:700;color:var(--text);margin-top:2px">${clinicoMeta(topo.tipo).icon} ${escHtml(topo.titulo)}</div>
+                            <div style="font-size:11px;color:var(--text3)">${clinicoStatusLine(topo)}</div>
+                        </div>`;
+                }
                 if (consultas.length === 0) {
-                    return `<div style="font-size:12px;color:var(--text3);text-align:center;padding:8px 0">Nenhuma consulta registrada.</div>`;
+                    return abertoHtml + `<div style="font-size:12px;color:var(--text3);text-align:center;padding:8px 0">Nenhuma consulta registrada.</div>`;
                 }
                 if (next) {
                     const d = -daysSince(next.data);
                     const dStr = d === 0 ? 'HOJE' : (d === 1 ? 'AMANHÃ' : `em ${d} dias`);
-                    return `
+                    return abertoHtml + `
                         <div style="padding:10px;background:var(--bg);border-radius:12px">
                             <div style="font-size:10px;color:var(--text3);font-weight:600;letter-spacing:.5px">PRÓXIMA — ${dStr}</div>
                             <div style="font-size:14px;font-weight:700;color:var(--text);margin-top:2px">${next.especialidade || 'Consulta'}</div>
@@ -2469,7 +2491,7 @@ function rDash() {
                 // Sem próxima — mostra última
                 const last = consultas.slice().sort((a, b) => b.data.localeCompare(a.data))[0];
                 const dPast = daysSince(last.data);
-                return `
+                return abertoHtml + `
                     <div style="font-size:12px;color:var(--text2)">
                         Última: <strong style="color:var(--text)">${last.especialidade || 'Consulta'}</strong> há ${dPast} dia${dPast === 1 ? '' : 's'}
                     </div>
@@ -7003,11 +7025,17 @@ function rConsultas() {
     if (!D) return;
     const consultas = (D.consultas || []).slice().sort((a, b) => b.data.localeCompare(a.data));
     const next = getNextConsulta();
+    const abertos = sortClinicosAbertos(getClinicos('aberto'));   // v1.18.0
+    const fechados = getClinicos('fechado').slice().sort((a, b) => String(b.fim || b.inicio || '').localeCompare(String(a.fim || a.inicio || '')));
 
-    // Subtítulo
+    // Subtítulo — o que está EM ABERTO manda, porque é o que exige ação.
     const subEl = $('consultas-subtitle');
     if (subEl) {
-        if (next) {
+        if (consultas.length === 0 && abertos.length === 0 && fechados.length === 0) {
+            subEl.textContent = 'Consultas, exames e acompanhamento';   // nada registrado: não anuncia "0"
+        } else if (abertos.length > 0) {
+            subEl.textContent = `${abertos.length} em aberto • ${consultas.length} consulta${consultas.length === 1 ? '' : 's'}`;
+        } else if (next) {
             const d = -daysSince(next.data);
             const dStr = d === 0 ? 'hoje' : (d === 1 ? 'amanhã' : `em ${d} dias`);
             subEl.textContent = `Próxima: ${next.especialidade || 'Consulta'} ${dStr} • ${consultas.length} registradas`;
@@ -7016,13 +7044,13 @@ function rConsultas() {
         }
     }
 
-    if (consultas.length === 0) {
+    if (consultas.length === 0 && abertos.length === 0 && fechados.length === 0) {
         $('consultas-body').innerHTML = `
             <div class="card text-center" style="padding:32px 20px">
                 <div style="font-size:48px;margin-bottom:12px">📅</div>
-                <div style="font-size:16px;font-weight:700;margin-bottom:6px">Nenhuma consulta registrada</div>
-                <div style="font-size:13px;color:var(--text3);margin-bottom:20px">Registre suas consultas pra ter histórico médico organizado. Útil pra levar ao próximo médico.</div>
-                <button class="btn btn-primary" onclick="openConsultaEditor()">+ Registrar primeira consulta</button>
+                <div style="font-size:16px;font-weight:700;margin-bottom:6px">Nada registrado ainda</div>
+                <div style="font-size:13px;color:var(--text3);margin-bottom:20px">Guarde aqui consultas, doenças, medicação temporária e exames pendentes. É o histórico que você leva ao próximo médico.</div>
+                <button class="btn btn-primary" onclick="openClinicoPicker()">+ Registrar o primeiro</button>
             </div>`;
         return;
     }
@@ -7065,18 +7093,29 @@ function rConsultas() {
             </div>`;
     }
 
+    const secao = (txt) => `<div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin:12px 0 8px">${txt}</div>`;
+
+    // EM ABERTO vem primeiro: doença ativa, remédio em curso, exame não realizado.
+    let abertosHtml = '';
+    if (abertos.length > 0) {
+        abertosHtml = secao(`⚠️ Em aberto (${abertos.length})`) + abertos.map(clinicoItemHtml).join('');
+    }
+
     let listHtml = '';
     if (futuras.length > 0) {
-        listHtml += `<div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin:12px 0 8px">Agendadas (${futuras.length})</div>`;
+        listHtml += secao(`Agendadas (${futuras.length})`);
         futuras.sort((a, b) => a.data.localeCompare(b.data));
         futuras.forEach(c => listHtml += renderItem(c));
     }
     if (passadas.length > 0) {
-        listHtml += `<div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin:12px 0 8px">Histórico (${passadas.length})</div>`;
+        listHtml += secao(`Histórico de consultas (${passadas.length})`);
         passadas.forEach(c => listHtml += renderItem(c));
     }
+    if (fechados.length > 0) {
+        listHtml += secao(`Encerrados (${fechados.length})`) + fechados.map(clinicoItemHtml).join('');
+    }
 
-    $('consultas-body').innerHTML = `${resumoHtml}${listHtml}`;
+    $('consultas-body').innerHTML = `${resumoHtml}${abertosHtml}${listHtml}`;
 }
 
 let editingConsulta = null;
@@ -7215,6 +7254,284 @@ function deleteConsulta(id) {
     save();
     closeConsultaEditor();
     toast('Consulta excluída');
+    if (cPage === 'consultas') rConsultas();
+    if (cPage === 'dash') rDash();
+}
+
+// ========== SAÚDE CLÍNICA — EVENTOS (doença / medicação temporária / exame) ==========
+// v1.18.0. Vive em D.clinicos, SEPARADO de D.consultas (ver comentário do schema).
+// Diferença de natureza: consulta = encontro pontual; evento clínico = período + situação.
+
+const CLINICO_TIPOS = {
+    doenca: {
+        icon: '🤒', nome: 'Doença ou evento de saúde', curto: 'Doença',
+        labelTitulo: 'O que foi', phTitulo: 'Ex: Gripe, lombalgia, dengue',
+        labelDetalhe: 'Sintomas / diagnóstico — opcional', phDetalhe: 'O que sentiu, como o médico chamou',
+        labelInicio: 'Começou em', labelFim: 'Resolveu em — deixe vazio se ainda está ativa',
+        aberto: 'Ativa', fechado: 'Resolvida', acaoFechar: '✓ Resolvida',
+        vazio: 'Ex: uma gripe, uma crise de lombalgia, uma virose'
+    },
+    medtemp: {
+        icon: '💊', nome: 'Medicação temporária', curto: 'Medicação',
+        labelTitulo: 'Medicamento', phTitulo: 'Ex: Prednisona 20mg, Amoxicilina 500mg',
+        labelDetalhe: 'Posologia — opcional', phDetalhe: 'Ex: 1 comprimido de manhã, por 5 dias',
+        labelInicio: 'Começou em', labelFim: 'Vai até — opcional',
+        aberto: 'Em curso', fechado: 'Encerrada', acaoFechar: '✓ Encerrada',
+        vazio: 'Corticoide, antibiótico — remédio com data pra acabar'
+    },
+    exame: {
+        icon: '🔬', nome: 'Exame pendente', curto: 'Exame',
+        labelTitulo: 'Exame', phTitulo: 'Ex: Teste ergométrico, hemograma',
+        labelDetalhe: 'Quem pediu / onde fazer — opcional', phDetalhe: 'Ex: Dr. Carlos — Clínica Cardio',
+        labelInicio: 'Pedido em', labelFim: 'Agendado / realizado em — opcional',
+        aberto: 'Não realizado', fechado: 'Realizado', acaoFechar: '✓ Realizado',
+        vazio: 'Exame que o médico pediu e você ainda não fez'
+    }
+};
+
+function clinicoMeta(tipo) { return CLINICO_TIPOS[tipo] || CLINICO_TIPOS.doenca; }
+
+function getClinicos(situacao) {
+    const list = (D && Array.isArray(D.clinicos)) ? D.clinicos : [];
+    return list.filter(c => (situacao ? (c.situacao || 'aberto') === situacao : true));
+}
+
+// Um item aberto "cobra atenção" quando a data-fim já passou: remédio que deveria
+// ter acabado, exame que era pra ter sido feito. Vira selo ⏰ e sobe na ordenação.
+function clinicoAtrasado(c) {
+    if ((c.situacao || 'aberto') !== 'aberto') return false;
+    if (!c.fim) return false;
+    return c.fim < today();
+}
+
+// Linha de status legível por tipo — é o que o Gileno lê antes de qualquer outra coisa.
+function clinicoStatusLine(c) {
+    const m = clinicoMeta(c.tipo);
+    const fechado = (c.situacao || 'aberto') === 'fechado';
+    const dIni = c.inicio ? daysSince(c.inicio) : null;
+
+    if (fechado) {
+        if (c.tipo === 'exame') return c.fim ? `Realizado em ${formatDataTreino(c.fim)}` : 'Realizado';
+        if (c.inicio && c.fim) {
+            const dur = daysSince(c.inicio) - daysSince(c.fim) + 1;
+            return `${formatDataTreino(c.inicio)} a ${formatDataTreino(c.fim)} · ${dur} dia${dur === 1 ? '' : 's'}`;
+        }
+        return c.inicio ? `Desde ${formatDataTreino(c.inicio)} · ${m.fechado.toLowerCase()}` : m.fechado;
+    }
+
+    if (clinicoAtrasado(c)) {
+        return c.tipo === 'exame'
+            ? `⏰ Era ${formatDataTreino(c.fim)} — já fez?`
+            : `⏰ Prazo terminou em ${formatDataTreino(c.fim)}`;
+    }
+    if (c.fim) {
+        const falta = -daysSince(c.fim);
+        const fStr = falta === 0 ? 'hoje' : (falta === 1 ? 'amanhã' : `em ${falta} dias`);
+        return c.tipo === 'exame'
+            ? `Agendado para ${formatDataTreino(c.fim)} (${fStr})`
+            : `Em curso · até ${formatDataTreino(c.fim)} (${fStr})`;
+    }
+    if (dIni === null) return m.aberto;
+    const dStr = dIni === 0 ? 'hoje' : (dIni === 1 ? 'há 1 dia' : `há ${dIni} dias`);
+    if (c.tipo === 'exame') return `Pedido ${dStr} · sem data marcada`;
+    if (c.tipo === 'doenca') return `Ativa ${dIni === 0 ? 'desde hoje' : dStr}`;
+    return `Em curso ${dIni === 0 ? 'desde hoje' : dStr}`;
+}
+
+// Abertos primeiro os atrasados, depois os mais recentes.
+function sortClinicosAbertos(list) {
+    return list.slice().sort((a, b) => {
+        const atA = clinicoAtrasado(a) ? 0 : 1, atB = clinicoAtrasado(b) ? 0 : 1;
+        if (atA !== atB) return atA - atB;
+        return String(b.inicio || '').localeCompare(String(a.inicio || ''));
+    });
+}
+
+function clinicoItemHtml(c) {
+    const m = clinicoMeta(c.tipo);
+    const aberto = (c.situacao || 'aberto') === 'aberto';
+    const atrasado = clinicoAtrasado(c);
+    const cor = !aberto ? 'var(--text3)' : (atrasado ? 'var(--yellow)' : 'var(--primary)');
+    return `
+        <div class="card mb-8" style="${aberto ? `border-left:3px solid ${cor}` : ''}">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+                <div style="flex:1;min-width:0;cursor:pointer" onclick="openClinicoEditor('${c.tipo}','${c.id}')">
+                    <div style="font-size:11px;color:${cor};font-weight:700;letter-spacing:.3px">${m.icon} ${m.curto.toUpperCase()} · ${(aberto ? m.aberto : m.fechado).toUpperCase()}</div>
+                    <div style="font-size:14px;font-weight:700;color:var(--text);margin-top:2px">${escHtml(c.titulo)}</div>
+                    <div style="font-size:11px;color:var(--text3);margin-top:2px">${clinicoStatusLine(c)}</div>
+                    ${c.detalhe ? `<div style="font-size:12px;color:var(--text2);margin-top:4px">${escHtml(c.detalhe)}</div>` : ''}
+                </div>
+                ${aberto ? `<button class="btn btn-outline btn-sm" style="flex-shrink:0" onclick="fecharClinico('${c.id}')">${m.acaoFechar}</button>` : ''}
+            </div>
+        </div>`;
+}
+
+// Seletor do "+ Nova": consulta continua sendo o caminho principal (fica no topo).
+function openClinicoPicker() {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'clinico-picker';
+    overlay.onclick = e => { if (e.target === overlay) closeClinicoPicker(); };
+    const opcoes = Object.keys(CLINICO_TIPOS).map(t => {
+        const m = CLINICO_TIPOS[t];
+        return `
+            <div class="card mb-8" style="cursor:pointer" onclick="closeClinicoPicker(); openClinicoEditor('${t}')">
+                <div style="font-size:14px;font-weight:700;color:var(--text)">${m.icon} ${m.nome}</div>
+                <div style="font-size:11px;color:var(--text3);margin-top:2px">${m.vazio}</div>
+            </div>`;
+    }).join('');
+    overlay.innerHTML = `
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>O que você quer registrar?</h3>
+                <button class="modal-close" onclick="closeClinicoPicker()">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="card mb-8" style="cursor:pointer" onclick="closeClinicoPicker(); openConsultaEditor()">
+                    <div style="font-size:14px;font-weight:700;color:var(--text)">🩺 Consulta médica</div>
+                    <div style="font-size:11px;color:var(--text3);margin-top:2px">Encontro com o médico — queixa, conduta, retorno</div>
+                </div>
+                ${opcoes}
+            </div>
+            <div style="display:flex;margin-top:12px">
+                <button class="btn btn-outline" style="flex:1" onclick="closeClinicoPicker()">Cancelar</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+}
+
+function closeClinicoPicker() {
+    const o = $('clinico-picker');
+    if (o) o.remove();
+}
+
+let editingClinico = null;
+
+function openClinicoEditor(tipo, id) {
+    if (id) {
+        const found = (D.clinicos || []).find(c => c.id === id);
+        if (!found) return;
+        editingClinico = JSON.parse(JSON.stringify(found));
+    } else {
+        editingClinico = {
+            id: uid(), tipo: tipo, titulo: '', detalhe: '',
+            inicio: today(), fim: '', situacao: 'aberto', notas: '', createdAt: Date.now()
+        };
+    }
+    const m = clinicoMeta(editingClinico.tipo);
+    const isEditing = (D.clinicos || []).some(c => c.id === editingClinico.id);
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'clinico-editor';
+    overlay.onclick = e => { if (e.target === overlay) closeClinicoEditor(); };
+    overlay.innerHTML = `
+        <div class="modal-box" style="max-height:92vh;display:flex;flex-direction:column">
+            <div class="modal-header" style="flex-shrink:0">
+                <h3>${isEditing ? 'Editar' : 'Novo'} — ${m.icon} ${m.curto}</h3>
+                <button class="modal-close" onclick="closeClinicoEditor()">×</button>
+            </div>
+            <div style="overflow-y:auto;flex:1">
+                <div class="form-group">
+                    <label class="form-label">${m.labelTitulo}</label>
+                    <input type="text" id="clin-titulo" class="form-input" value="${escHtml(editingClinico.titulo)}" placeholder="${m.phTitulo}"
+                           oninput="editingClinico.titulo = this.value">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">${m.labelDetalhe}</label>
+                    <textarea id="clin-detalhe" class="form-input" rows="2" placeholder="${m.phDetalhe}"
+                              oninput="editingClinico.detalhe = this.value">${escHtml(editingClinico.detalhe || '')}</textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">${m.labelInicio}</label>
+                    <input type="date" id="clin-inicio" class="form-input" value="${editingClinico.inicio || ''}"
+                           oninput="editingClinico.inicio = this.value">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">${m.labelFim}</label>
+                    <input type="date" id="clin-fim" class="form-input" value="${editingClinico.fim || ''}"
+                           oninput="editingClinico.fim = this.value">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Situação</label>
+                    <div class="chip-row" id="clin-sit-chips">
+                        <button type="button" class="chip ${(editingClinico.situacao || 'aberto') === 'aberto' ? 'active' : ''}" onclick="setClinicoSituacao('aberto')">${m.aberto}</button>
+                        <button type="button" class="chip ${editingClinico.situacao === 'fechado' ? 'active' : ''}" onclick="setClinicoSituacao('fechado')">${m.fechado}</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Notas — opcional</label>
+                    <textarea id="clin-notas" class="form-input" rows="2" placeholder="Observações pessoais"
+                              oninput="editingClinico.notas = this.value">${escHtml(editingClinico.notas || '')}</textarea>
+                </div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:12px;flex-shrink:0">
+                ${isEditing ? `<button class="btn btn-outline" style="flex:1;color:var(--red)" onclick="deleteClinico('${editingClinico.id}')">Excluir</button>` : ''}
+                <button class="btn btn-outline" style="flex:1" onclick="closeClinicoEditor()">Cancelar</button>
+                <button class="btn btn-primary" style="flex:1" onclick="saveClinico()">Salvar</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+}
+
+function setClinicoSituacao(sit) {
+    if (!editingClinico) return;
+    editingClinico.situacao = sit;
+    document.querySelectorAll('#clin-sit-chips .chip').forEach((c, i) => {
+        c.classList.toggle('active', (i === 0) === (sit === 'aberto'));
+    });
+}
+
+function closeClinicoEditor() {
+    const o = $('clinico-editor');
+    if (o) o.remove();
+    editingClinico = null;
+}
+
+function saveClinico() {
+    if (!editingClinico) return;
+    if (!String(editingClinico.titulo || '').trim()) {
+        return toast(`Informe ${clinicoMeta(editingClinico.tipo).labelTitulo.toLowerCase()}`, true);
+    }
+    if (!editingClinico.inicio) return toast('A data de início é obrigatória', true);
+    if (editingClinico.fim && editingClinico.fim < editingClinico.inicio) {
+        return toast('A data final não pode ser antes do início', true);
+    }
+    if (!D.clinicos) D.clinicos = [];
+    const idx = D.clinicos.findIndex(c => c.id === editingClinico.id);
+    const wasEditing = idx >= 0;
+    if (wasEditing) D.clinicos[idx] = editingClinico;
+    else D.clinicos.push(editingClinico);
+    save();
+    closeClinicoEditor();
+    toast(wasEditing ? 'Registro atualizado' : '✓ Registrado');
+    if (cPage === 'consultas') rConsultas();
+    if (cPage === 'dash') rDash();
+}
+
+// 1 toque pra fechar o que está em aberto — o gesto mais comum do módulo.
+function fecharClinico(id) {
+    const c = (D.clinicos || []).find(x => x.id === id);
+    if (!c) return;
+    const m = clinicoMeta(c.tipo);
+    c.situacao = 'fechado';
+    // Sem data final registrada, assume hoje (foi hoje que ele marcou).
+    if (!c.fim) c.fim = today();
+    save();
+    // toast() usa textContent — escapar aqui mostraria "&amp;" literal na tela.
+    toast(`${c.titulo} — ${m.fechado.toLowerCase()}`);
+    if (cPage === 'consultas') rConsultas();
+    if (cPage === 'dash') rDash();
+}
+
+function deleteClinico(id) {
+    const c = (D.clinicos || []).find(x => x.id === id);
+    if (!c) return;
+    if (!confirm(`Excluir "${c.titulo}"? Isso apaga o registro do histórico.`)) return;
+    D.clinicos = D.clinicos.filter(x => x.id !== id);
+    save();
+    closeClinicoEditor();
+    toast('Registro excluído');
     if (cPage === 'consultas') rConsultas();
     if (cPage === 'dash') rDash();
 }
