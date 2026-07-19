@@ -1,12 +1,26 @@
 # Estado do Projeto — Gestão Saúde
 
-**Última atualização:** 2026-07-18
-**Versão atual em produção:** v1.12.0
+**Última atualização:** 2026-07-19
+**Versão atual em produção:** v1.13.0
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
 
 > Este documento é o **handoff vivo** do projeto. Qualquer nova sessão de trabalho começa lendo este arquivo pra entender estado atual, decisões já tomadas, e próximos passos.
+
+---
+
+## Resumo da sessão 2026-07-19 — v1.12.1 + v1.13.0 (iPhone validado + sessão editável)
+
+**Validação no iPhone real (PWA standalone), enfim feita pelo Gileno:** pausa → troca de app → banner "TREINO EM ANDAMENTO" restaurou 6/20 séries ✅; Exportar PDF abriu e imprimiu ✅. Dois achados no export:
+
+**v1.12.1 (fcf25af) — botão ← Voltar no documento exportado.** No PWA o `window.open` navega a PRÓPRIA janela do app por cima do documento (provado pelo rodapé do PDF do Gileno: URL = saude.gilenogestao.com.br, não about:blank) → usuário ficava preso sem voltar. Novo `exportDocChrome()` (helper único usado por treino e relatório) injeta "← Voltar" + "🖨 Imprimir": `window.close()` cobre navegador comum, `location.replace(APP_URL)` cobre o PWA (recarregar não perde nada pós-v1.12.0). ⚠️ Gotcha: o `</script>` dentro do template literal DEVE ser `<\/script>` (senão fecha o script do próprio app). O 2º achado (erro ao enviar PDF pro WhatsApp) é bug do iOS/WhatsApp na folha de impressão, não nosso: "Tentar novamente" ou Salvar em Arquivos → compartilhar de lá.
+
+**v1.13.0 (d3f3dd1) — editar a sessão EM ANDAMENTO** (pedido do Gileno: o Rodolfo troca exercício na hora, ex. um da terça no treino de segunda, e o nº de séries muda durante o exercício). Decisão de produto: alterações valem SÓ pra sessão do dia; template intacto (pra mudar em definitivo já existe o ✏️).
+- **⇄ por exercício** → `openExecExercisePicker(exIdx)`: seletor com exercícios de TODOS os templates agrupados (treino atual primeiro), aviso "o template não muda", e "🗑 Remover este exercício da sessão". Troca (`applyExecExercise`) reusa **`seedExecExercise`** — helper extraído do `executeTemplate` (carga da última vez + pirâmide via `expandReps`); série já feita → confirmação. Botão "➕ Adicionar exercício a esta sessão" no rodapé (mesmo picker, `exIdx=null`).
+- **séries − / +** por exercício (`addExecSet`/`removeExecSet`): + copia reps/carga da última série; − tira a última NÃO-feita, só apaga feita com confirmação; mínimos de 1 série e 1 exercício. Tudo chama `persistExecution()` (sobrevive a reload).
+
+**Verificação:** JSC **36/36** (`verify_exec_edit.js` no scratchpad: semeadura/pirâmide, add/remove com todas as bordas e caminhos de confirm, troca/adição/remoção, HTML do picker, ganchos do render) + **bench visual novo** (só a tela de execução com funções REAIS extraídas + stubs; `bench_saude` do launch.json re-apontado pro scratchpad desta sessão — regenerar quando mudar de sessão): add série, picker e troca com semeadura 42,5 kg conferidos no navegador, zero erros de console. ⚠️ Validar v1.13.0 no iPhone.
 
 ---
 
@@ -327,10 +341,11 @@ Marketing:
 ## Frase pra retomar este projeto em nova sessão
 
 ```
-Estou retomando o app Gestão Saúde. Lê /Users/gilenopaiva/Documents/Gileno_Gestao/Gestao_Saude/ESTADO_PROJETO.md
-pra contexto, e o IDEIAS_PREMIUM.md no mesmo dir pra roadmap. Versão atual em produção: v1.9.0.
+Estou retomando o app Gestão Saúde. Lê /Users/gilenopaiva/Documents/Gileno_Gestao/Apps/Gestao_Saude_App/ESTADO_PROJETO.md
+pra contexto. Versão em produção: v1.13.0 (sessão de treino editável + export com Voltar).
+Pendências: validar v1.13.0 no iPhone, Etapa 2 do relatório (IA via VPS) e renomear módulo Consultas.
 
-[Aqui descreve o que quer fazer: bug encontrado no teste, próxima feature, S6 lançamento, etc]
+[Aqui descreve: resultado do teste no iPhone / o que quer atacar primeiro]
 ```
 
 ---
