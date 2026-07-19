@@ -1,12 +1,38 @@
 # Estado do Projeto — Gestão Saúde
 
 **Última atualização:** 2026-07-19
-**Versão atual em produção:** v1.18.1
+**Versão atual em produção:** v1.19.0
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
 
 > Este documento é o **handoff vivo** do projeto. Qualquer nova sessão de trabalho começa lendo este arquivo pra entender estado atual, decisões já tomadas, e próximos passos.
+
+---
+
+## Resumo da sessão 2026-07-19 (parte 8): v1.19.0 (Etapa 2 do relatório, prosa por IA)
+
+Ele confirmou a Etapa 2 com as duas travas que propus: **agregados em vez de série crua** e **teto diário desde o dia 1** ("melhor já construir antes de começar a vender").
+
+**ARQUITETURA.** O app NUNCA fala com a Claude API direto: a chave viveria no bundle e o repositório é público. Serviço novo na VPS (`Operacoes_VPS/relatorio_ia_service/`) guarda a chave, impõe o teto e devolve só a prosa. Molde copiado de recepção/mesa (container mínimo atrás do Traefik, não-root, `cap_drop ALL`, rootfs read-only, sem `ports:`), com **uma diferença**: precisa do SDK oficial da Anthropic, então tem imagem própria com a dependência pinada, no espírito do conector. `app.py` continua entrando por bind-mount read-only.
+
+**É O PRIMEIRO SERVIÇO DA VPS QUE GASTA DINHEIRO POR REQUISIÇÃO**, e a postura reflete isso: token no header `X-Token` (nunca no path, que entra em log e em Referer) comparado com `hmac.compare_digest`; rate-limit do Traefik apertado pra 1/s burst 3 (os outros usam 30/15); e **teto diário no próprio app** (`REL_MAX_DIA=10`), que faz token vazado virar gasto limitado e conhecido. O contador guarda só o dia corrente, então não vira histórico de uso.
+
+**O QUE SAI DO APARELHO.** `reportAggregatesForAI(rep)`, função pura, monta só médias, contagens, alertas e a variação líquida de peso. **Não saem**: série diária de peso, pressão arterial, frequência cardíaca, horários de sono, nomes de alimentos nem nomes de remédio (vai a adesão em %, não o `Losartana`). Payload real medido: **981 bytes**. O contexto clínico da v1.18.0 entra, mas só o que está **em aberto**, porque é o que muda a leitura da semana: queda de treino durante uma lombalgia não é indisciplina, e o system prompt manda dizer isso.
+
+**CHAVE E ENDEREÇO NASCEM VAZIOS** no código e são colados por ele em Ajustes, seção nova "Relatório por IA" (só no Modo Pro, campo da chave é `type=password`). Motivo: o repo é público, então nem a infra dele vai versionada.
+
+**PROSA EM CACHE POR SEMANA** (`D.weeklyProse[domingoISO]`): reabrir o relatório não paga de novo. Regerar é explícito. Entra também no PDF, abrindo o documento (é o veredito), com a ressalva de que não substitui avaliação médica.
+
+**Chamada da API:** `claude-opus-4-8`, `thinking: {type:'adaptive'}` **explícito** (no 4.8, omitir roda sem pensar), `effort: medium`, e **saída estruturada por schema**, que garante JSON válido e elimina parsing de prosa livre. Sem `temperature`/`top_p`/`budget_tokens`, que dariam 400 nesse modelo.
+
+**Custo real recalculado:** cerca de **R$ 0,25 por relatório** (US$ 0,043), não os R$ 0,05-0,15 que eu tinha estimado antes. A parcela variável é o raciocínio do modelo. Uso pessoal fica em torno de R$ 1/mês; o número que importa é o da precificação da Pro.
+
+**Verificação:** **428 checks, 0 falhas.** 44 no endpoint (teste em Python que sobe o `app.py` REAL com stub do SDK e bate nele por HTTP: token, teto, CORS, limites de corpo, falhas da API viram 502 sem vazar detalhe, e os parâmetros exatos da chamada) + 51 novos no app (`verify_prosa.js`, com foco em provar que a série crua NÃO sai) + regressão de 333.
+
+**⚠️ Bug que só o bench visual pegou:** eu mandava `sono.mediaHoras` com o valor cru de `rep.sonoAvg`, que o app guarda em **minutos**. A IA leria "415 horas de sono". Corrigido com conversão e teste de faixa plausível. O JSC tinha passado porque eu só checava que era número.
+
+**➡️ Falta o deploy**, que depende da chave da Anthropic e por isso é dele: runbook completo em `Operacoes_VPS/relatorio_ia_service/README.md` (subir arquivos, criar `relatorio.env` com `chmod 600`, `docker compose up -d --build`, conferir `/health` e um 401, colar endereço e chave em Ajustes, e só então o primeiro teste real). O log da VPS imprime os tokens gastos de verdade, que confirmam ou corrigem a tabela de custo.
 
 ---
 
@@ -450,10 +476,10 @@ Marketing:
 
 ```
 Estou retomando o app Gestão Saúde. Lê /Users/gilenopaiva/Documents/Gileno_Gestao/Apps/Gestao_Saude_App/ESTADO_PROJETO.md
-pra contexto. Versão em produção: v1.18.1 (Saúde Clínica registra doença, medicação temporária
-e exame pendente, com seção "Em aberto" e fechar em 1 toque; caixinha do plano da nutri só
-marca depois de registrado). Pendências: validar v1.18.1 no iPhone e a Etapa 2 do relatório
-(IA via VPS, aguarda OK de custo).
+pra contexto. Versão em produção: v1.19.0 (Etapa 2 do relatório: prosa por IA via serviço
+na VPS, com agregados em vez de série crua e teto diário). Pendências: fazer o DEPLOY do
+serviço (runbook em Operacoes_VPS/relatorio_ia_service/README.md, depende da chave da
+Anthropic) e validar no iPhone.
 
 [Aqui descreve: resultado do teste no iPhone / o que quer atacar primeiro]
 ```

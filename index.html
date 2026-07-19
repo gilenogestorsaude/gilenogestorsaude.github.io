@@ -564,7 +564,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.18.1';
+const APP_VERSION = '1.19.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1016,6 +1016,11 @@ async function load() {
             if (!D.weeklyNotes || typeof D.weeklyNotes !== 'object') D.weeklyNotes = {}; // v1.11.0
             if (!D.reportCfg || typeof D.reportCfg !== 'object') D.reportCfg = {};
             if (!(D.reportCfg.sessoesMeta > 0)) D.reportCfg.sessoesMeta = 3;
+            // v1.19.0: prosa por IA. Endereço e chave ficam VAZIOS de propósito:
+            // o repo é público, então a infra dele não vai versionada; ele cola em Ajustes.
+            if (typeof D.reportCfg.aiUrl !== 'string') D.reportCfg.aiUrl = '';
+            if (typeof D.reportCfg.aiToken !== 'string') D.reportCfg.aiToken = '';
+            if (!D.weeklyProse || typeof D.weeklyProse !== 'object') D.weeklyProse = {};
             if (typeof D.activeExecution === 'undefined') D.activeExecution = null; // v1.12.0
             reconcileWorkoutOrigem(D); // v1.9.10 — define quem é do personal (autoritativo por ids, ou heurística legada)
             if (typeof D.restDefault !== 'number' || D.restDefault < 15) D.restDefault = 90; // v1.9.11
@@ -4332,14 +4337,14 @@ function collectWeekReport(startIso) {
         else add('green', '🎯', `Proteína na meta em todos os ${nutri.dias} dias registrados. 👏`);
     }
     if (agua.dias >= 2) {
-        if (agua.diasAbaixo70 >= 3) add('red', '💧', `Hidratação abaixo de 70% da meta em ${agua.diasAbaixo70} dias — ponto de correção prioritário.`);
+        if (agua.diasAbaixo70 >= 3) add('red', '💧', `Hidratação abaixo de 70% da meta em ${agua.diasAbaixo70} dias, ponto de correção prioritário.`);
         else if (agua.diasMeta < agua.dias) add('yellow', '💧', `Hidratação na meta em ${agua.diasMeta} de ${agua.dias} dias registrados.`);
         else add('green', '💧', `Hidratação na meta em todos os ${agua.dias} dias registrados. 👏`);
     }
     if (isModuleEnabled('treino')) {
         if (treinoAgg.sessoes === 0 && past.length >= 4) add('red', '🏋️', `Nenhuma sessão de treino registrada na semana (meta: ${treinoAgg.meta}).`);
         else if (treinoAgg.sessoes < treinoAgg.meta) add('yellow', '🏋️', `${treinoAgg.sessoes} de ${treinoAgg.meta} sessões de treino na semana.`);
-        else if (treinoAgg.sessoes > 0) add('green', '🏋️', `${treinoAgg.sessoes} sessões de treino — meta semanal atingida. 👏`);
+        else if (treinoAgg.sessoes > 0) add('green', '🏋️', `${treinoAgg.sessoes} sessões de treino: meta semanal atingida. 👏`);
     }
     if (medAgg.temMeds && medAgg.pct != null) {
         if (medAgg.pct < 80) add('red', '💊', `Adesão à medicação em ${medAgg.pct}% nos dias com registro.`);
@@ -4413,6 +4418,133 @@ function saveWeeklyNotes(startIso, val) {
     if (v) D.weeklyNotes[startIso] = v; else delete D.weeklyNotes[startIso];
     save();
 }
+// ========== RELATÓRIO SEMANAL: PROSA POR IA (Etapa 2, v1.19.0) ==========
+// O app NUNCA fala com a Claude API direto: a chave viveria no bundle e este
+// repositório é público. O app fala com um endpoint da VPS, que guarda a chave,
+// impõe teto diário de chamadas e devolve só a prosa.
+
+// O que sai do aparelho. Decisão de privacidade tomada com o Gileno: vão os
+// AGREGADOS (médias, contagens, alertas já calculados), não a série diária crua.
+// A prosa sai praticamente igual e a exposição cai muito. Função pura pra ser
+// testável e pra dar pra auditar num olhar o que exatamente é enviado.
+function reportAggregatesForAI(rep) {
+    const r1 = n => (typeof n === 'number' && isFinite(n)) ? Math.round(n * 10) / 10 : null;
+    const metas = (rep.past[0] && rep.past[0].goals) || {};
+    const out = {
+        semana: { de: rep.startIso, ate: rep.endIso, diasComRegistro: rep.past.length },
+        nutricao: {
+            diasRegistrados: rep.nutri.dias,
+            mediaKcal: r1(rep.nutri.avgKcal), mediaProteina: r1(rep.nutri.avgProt),
+            mediaCarbo: r1(rep.nutri.avgCarbo), mediaGordura: r1(rep.nutri.avgGord),
+            metaKcal: metas.kcal || null, metaProteina: metas.prot || null,
+            diasProteinaOk: rep.nutri.diasProtOk, diasKcalOk: rep.nutri.diasKcalOk
+        },
+        hidratacao: {
+            diasRegistrados: rep.agua.dias, mediaMl: r1(rep.agua.avg),
+            metaMl: metas.water || null, diasNaMeta: rep.agua.diasMeta,
+            diasAbaixo70pct: rep.agua.diasAbaixo70
+        },
+        treino: {
+            sessoes: rep.treinoAgg.sessoes, meta: rep.treinoAgg.meta,
+            minutos: rep.treinoAgg.minutos, volumeKg: r1(rep.treinoAgg.volume)
+        },
+        // sonoAvg vem em MINUTOS no app. Mandar o número cru rotulado como horas
+        // fazia a IA ler "415 horas de sono" e escrever besteira. Converte aqui.
+        sono: { mediaHoras: rep.sonoAvg != null ? r1(rep.sonoAvg / 60) : null },
+        peso: { variacaoKg: r1(rep.pesoVar) },
+        alertas: (rep.alerts || []).map(a => ({ nivel: a.level, texto: a.text })),
+        anotacoesDaSemana: rep.notes || ''
+    };
+    if (rep.medAgg.temMeds) {
+        out.medicacao = {
+            adesaoPct: rep.medAgg.pct, diasComRegistro: rep.medAgg.diasReg,
+            diasSemRegistro: rep.medAgg.diasSemReg
+        };
+    }
+    // Contexto clínico (v1.18.0): o que estava EM ABERTO muda a leitura da semana.
+    // Uma queda de treino durante uma lombalgia não é indisciplina.
+    const abertos = (typeof getClinicos === 'function') ? getClinicos('aberto') : [];
+    if (abertos.length) {
+        out.contextoClinico = abertos.map(c => ({
+            tipo: clinicoMeta(c.tipo).curto, titulo: c.titulo,
+            situacao: clinicoStatusLine(c), detalhe: c.detalhe || ''
+        }));
+    }
+    return out;
+}
+
+function reportProseFor(startIso) {
+    return (D.weeklyProse && D.weeklyProse[startIso]) || null;
+}
+
+// Gera (ou regera) a prosa da semana aberta. Fica em CACHE por semana: cada
+// chamada custa dinheiro, então reabrir o relatório não paga de novo.
+async function gerarProsaIA(force) {
+    const cfg = reportCfgSafe();
+    const url = (cfg.aiUrl || '').trim(), token = (cfg.aiToken || '').trim();
+    if (!url || !token) {
+        return toast('Configure o endereço e a chave em Ajustes, seção Relatório por IA', true);
+    }
+    const rep = collectWeekReport(reportWeekStart);
+    if (!rep.past.length) return toast('Semana sem nenhum dia registrado', true);
+    if (reportProseFor(rep.startIso) && !force) return;
+
+    proseBusy = true;
+    if (cPage === 'report') rReport();
+    try {
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Token': token },
+            body: JSON.stringify(reportAggregatesForAI(rep))
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || !data.ok) throw new Error(data.erro || `HTTP ${resp.status}`);
+        if (!D.weeklyProse) D.weeklyProse = {};
+        D.weeklyProse[rep.startIso] = {
+            resumo: String(data.prosa.resumo || ''),
+            analise: String(data.prosa.analise || ''),
+            plano: Array.isArray(data.prosa.plano) ? data.prosa.plano.map(String) : [],
+            em: new Date().toISOString()
+        };
+        save();
+        toast('✓ Análise gerada');
+    } catch (e) {
+        // Degradação graciosa: VPS fora do ar não pode derrubar o relatório.
+        toast(`Não consegui gerar: ${e.message}`, true);
+    } finally {
+        proseBusy = false;
+        if (cPage === 'report') rReport();
+    }
+}
+
+let proseBusy = false;
+
+function proseCardHtml(rep) {
+    const cfg = reportCfgSafe();
+    const configurado = !!((cfg.aiUrl || '').trim() && (cfg.aiToken || '').trim());
+    const p = reportProseFor(rep.startIso);
+    let corpo;
+    if (proseBusy) {
+        corpo = `<div style="font-size:12px;color:var(--text3);text-align:center;padding:14px 0">Analisando a semana…</div>`;
+    } else if (p) {
+        corpo = `
+            <div style="font-size:13px;color:var(--text);line-height:1.55">${escHtml(p.resumo)}</div>
+            <div style="font-size:12px;color:var(--text2);line-height:1.55;margin-top:10px">${escHtml(p.analise).replace(/\n+/g, '<br><br>')}</div>
+            ${p.plano.length ? `<div style="font-size:11px;font-weight:700;color:var(--text3);letter-spacing:.4px;margin:12px 0 6px">PLANO DA PRÓXIMA SEMANA</div>
+            <ol style="margin:0;padding-left:18px;font-size:12px;color:var(--text2);line-height:1.6">${p.plano.map(x => `<li>${escHtml(x)}</li>`).join('')}</ol>` : ''}
+            <button class="btn btn-outline btn-sm" style="margin-top:12px" onclick="gerarProsaIA(true)">↻ Gerar de novo</button>`;
+    } else if (!configurado) {
+        corpo = `<div style="font-size:12px;color:var(--text3);line-height:1.5">Ligue em Ajustes, seção <strong style="color:var(--text2)">Relatório por IA</strong>, para o app comentar a semana além dos números.</div>`;
+    } else {
+        corpo = `<button class="btn btn-primary" style="width:100%" onclick="gerarProsaIA()">✨ Analisar esta semana</button>`;
+    }
+    return `
+        <div class="card mb-12">
+            <div class="card-title">🧠 Análise da semana</div>
+            ${corpo}
+        </div>`;
+}
+
 function editSessoesMeta(delta) {
     const cfg = reportCfgSafe();
     cfg.sessoesMeta = Math.min(14, Math.max(1, cfg.sessoesMeta + delta));
@@ -4545,11 +4677,11 @@ function rReport() {
             <div style="font-size:34px;margin-bottom:8px">📭</div>
             <div style="font-weight:700;color:var(--text);margin-bottom:6px">Sem dados nesta semana</div>
             <div style="font-size:12px;color:var(--text3);line-height:1.5">O relatório é montado com o que você registra no dia a dia: refeições, água, medicamentos, treinos e sinais vitais.</div>
-        </div>` : alertsHtml + vitaisHtml + nutriHtml + treinoHtml + aguaHtml + medHtml}
+        </div>` : proseCardHtml(rep) + alertsHtml + vitaisHtml + nutriHtml + treinoHtml + aguaHtml + medHtml}
 
         <div class="card mb-12">
             <div class="card-title">📝 Anotações da semana</div>
-            <div style="font-size:11px;color:var(--text3);margin-bottom:8px;line-height:1.5">Contexto que os números não mostram (viagem, doença, remédio novo, orientação do médico…). Entra no PDF e, no futuro, na análise por IA.</div>
+            <div style="font-size:11px;color:var(--text3);margin-bottom:8px;line-height:1.5">Contexto que os números não mostram (viagem, doença, remédio novo, orientação do médico…). Entra no PDF e é insumo da análise por IA.</div>
             <textarea class="form-input" rows="3" placeholder="Ex.: terça e quarta em viagem de trabalho, sem balança…"
                 onchange="saveWeeklyNotes('${rep.startIso}', this.value)">${escHtml(rep.notes)}</textarea>
         </div>
@@ -4579,6 +4711,19 @@ h1{font-size:20px;margin:0 0 2px}h2{font-size:14px;margin:18px 0 4px;border-bott
 ${exportDocChrome()}
 <h1>Gileno Gestão · SAÚDE</h1>
 <div class="sub">Relatório Semanal${nome ? ' · ' + nome : ''} · Domingo ${fmtDM(rep.startIso)} a Sábado ${fmtDM(rep.endIso)}</div>
+
+${(() => {
+    // v1.19.0: a prosa por IA, quando já gerada, abre o documento: é o veredito
+    // da semana. Sem prosa gerada o PDF sai exatamente como saía antes.
+    const p = reportProseFor(rep.startIso);
+    if (!p) return '';
+    return `<h2>🧠 Análise da semana</h2>
+<div style="font-size:13px;line-height:1.6;font-weight:600">${escHtml(p.resumo)}</div>
+<div style="font-size:12px;line-height:1.6;margin-top:8px;white-space:pre-wrap">${escHtml(p.analise)}</div>
+${p.plano.length ? `<div style="font-size:12px;font-weight:700;margin:10px 0 4px">Plano da próxima semana</div>
+<ol style="font-size:12px;line-height:1.6;margin:0;padding-left:20px">${p.plano.map(x => `<li>${escHtml(x)}</li>`).join('')}</ol>` : ''}
+<div class="sub" style="margin-top:6px;font-size:10px">Análise gerada por IA a partir dos seus registros. Não substitui avaliação médica.</div>`;
+})()}
 
 ${rep.alerts.length ? `<h2>🚦 Alertas da semana</h2>${rep.alerts.map(al =>
     `<div class="alert" style="border-left-color:${alertColor[al.level]};color:${alertColor[al.level]}">${al.icon} ${al.text}</div>`).join('')}` : ''}
@@ -4822,6 +4967,7 @@ function rSettings() {
         ${isModuleEnabled('refeicao') ? settingsSectionHtml('slots', '🍽', 'Campos de refeição', 'Renomear, horário previsto, ordem e ativar', settingsMealSlotsHtml()) : ''}
         ${isModuleEnabled('treino') ? settingsSectionHtml('treino', '🏋️', 'Treino', 'Descanso padrão e passo da carga', settingsTreinoHtml()) : ''}
         ${settingsSectionHtml('planos', '📋', 'Planos do profissional', 'Importar dieta da nutri e treino do personal', settingsImportHtml())}
+        ${D.proPreview ? settingsSectionHtml('ia', '🧠', 'Relatório por IA', 'Endereço e chave do serviço que comenta a semana', settingsIAHtml()) : ''}
         ${settingsSectionHtml('conta', '⚙️', 'Configurações e conta', 'Tema, versão, privacidade, exportar e sair', settingsContaHtml())}
     `;
 }
@@ -4847,6 +4993,36 @@ function settingsModulesHtml() {
                     <button class="toggle ${isModuleEnabled(m) ? 'on' : ''}" onclick="toggleModule('${m}')"></button>
                 </div>`;
             }).join('')}
+        </div>`;
+}
+
+// v1.19.0: endereço e chave do serviço de prosa por IA. Ficam SÓ aqui (Firestore
+// privado dele), nunca no código: o repositório é público. Só aparece no Modo Pro.
+function settingsIAHtml() {
+    const cfg = reportCfgSafe();
+    const url = cfg.aiUrl || '', tok = cfg.aiToken || '';
+    const pronto = !!(url.trim() && tok.trim());
+    return `
+        <div class="card mb-12">
+            <div class="card-title">🧠 Relatório por IA</div>
+            <div style="font-size:11px;color:var(--text3);margin-bottom:10px;line-height:1.5">
+                Com isto ligado, o Relatório Semanal ganha resumo, análise e plano de ação escritos por IA a partir dos seus números.
+                Saem do aparelho apenas os <strong style="color:var(--text2)">totais e médias da semana</strong>, nunca o registro dia a dia.
+                A chave do serviço fica só na sua conta, nunca no código do app.
+            </div>
+            <div class="form-group">
+                <label class="form-label">Endereço do serviço</label>
+                <input type="url" class="form-input" value="${escHtml(url)}" placeholder="https://…"
+                       oninput="D.reportCfg.aiUrl = this.value.trim()" onchange="save(); rSettings()">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Chave de acesso</label>
+                <input type="password" class="form-input" value="${escHtml(tok)}" placeholder="cole a chave aqui"
+                       oninput="D.reportCfg.aiToken = this.value.trim()" onchange="save(); rSettings()">
+            </div>
+            <div style="font-size:11px;color:${pronto ? 'var(--green)' : 'var(--text3)'}">
+                ${pronto ? '✓ Configurado. O botão de analisar aparece no Relatório Semanal.' : 'Falta preencher os dois campos.'}
+            </div>
         </div>`;
 }
 
