@@ -545,7 +545,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.15.1';
+const APP_VERSION = '1.16.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -2517,6 +2517,51 @@ function openMealSlot(slotId) {
     showPage('meal');
 }
 
+// ===== Refeições — resumo do dia em 4 macros (redesign v1.16.0, molde do mockup) =====
+// A página só mostrava o total da refeição selecionada; o panorama do dia ficava só no Início.
+function dayMacroCardsHtml(dt) {
+    const g = getGoals(dt);
+    const m = getDayMeals(dt);
+    const card = (label, val, meta, unit, color) => {
+        const has = meta > 0;
+        const pct = has ? Math.min(val / meta * 100, 100) : 0;
+        const hit = has && val >= meta;
+        return `
+        <div class="card" style="padding:12px;margin:0">
+            <div style="font-size:12px;color:var(--text2);font-weight:700">${label}</div>
+            <div style="margin:2px 0 8px;white-space:nowrap">
+                <span style="font-size:21px;font-weight:800;color:${hit ? 'var(--green)' : 'var(--text)'}">${fmtN(val)}</span>
+                <span style="font-size:12px;color:var(--text3)"> / ${has ? fmtN(meta) + unit : '—'}</span>
+            </div>
+            <div class="progress-bar" style="height:6px"><div class="progress-fill" style="width:${pct}%;background:${hit ? 'var(--green)' : color}"></div></div>
+        </div>`;
+    };
+    return `
+    <div style="font-size:15px;font-weight:800;color:var(--text);margin:0 0 8px">Resumo ${viewingToday() ? 'de hoje' : 'do dia'}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
+        ${card('Calorias', m.totalKcal, g.kcal, '', 'var(--primary)')}
+        ${card('Proteína', m.totalProt, g.prot, ' g', 'var(--accent)')}
+        ${card('Carboidratos', m.totalCarbo, g.carbo, ' g', '#3b82f6')}
+        ${card('Gorduras', m.totalGord, g.gord, ' g', '#a855f7')}
+    </div>`;
+}
+
+// Catálogo de alimentos recolhível: fica aberto quando a refeição está vazia (você veio
+// registrar) e recolhido quando já tem item (a página fica curta pra conferir). A escolha
+// manual do usuário, se houver, manda.
+function isFoodCatalogOpen(hasItems) {
+    const v = D._uiCollapsed ? D._uiCollapsed.foodCatalog : undefined;
+    return v === undefined ? !hasItems : !v;
+}
+function toggleFoodCatalog() {
+    if (!D._uiCollapsed) D._uiCollapsed = {};
+    const slot = (getDayData(curDate()).slots || {})[selectedMealSlot];
+    const hasItems = !!(slot && slot.items && slot.items.length);
+    D._uiCollapsed.foodCatalog = isFoodCatalogOpen(hasItems); // guarda o ESTADO NOVO (colapsado?)
+    save();
+    rMeal();
+}
+
 // ========== RENDER: ADD MEAL ==========
 function rMeal() {
     if (!D) return;
@@ -2576,8 +2621,12 @@ function rMeal() {
         foodsHtml += foodItemHtml(f);
     });
 
+    const hasItems = !!(slot.items && slot.items.length > 0);
+    const catalogOpen = isFoodCatalogOpen(hasItems);
+
     $('meal-body').innerHTML = `
         ${dateStripHtml()}
+        ${dayMacroCardsHtml(dt)}
         <div class="chip-row">${chipsHtml}</div>
 
         <div class="card mb-12" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
@@ -2609,12 +2658,14 @@ function rMeal() {
             </div>
         </div>` : ''}
 
+        ${catalogOpen ? `
         <div class="card">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:6px">
-                <span class="card-title" style="margin:0">Adicionar Alimento</span>
+                <span class="card-title" style="margin:0">Adicionar em ${curSlotCfg.name}</span>
                 <div style="display:flex;gap:6px">
                     <button class="btn btn-outline btn-sm" onclick="forceMigrateTACO()" title="Atualiza alimentos padrão para valores TACO oficiais">🔄 TACO</button>
                     <button class="btn btn-primary btn-sm" onclick="openFoodEditor()">+ Novo</button>
+                    ${hasItems ? `<button class="btn btn-outline btn-sm" onclick="toggleFoodCatalog()" title="Recolher">▲</button>` : ''}
                 </div>
             </div>
             <div class="search-box">
@@ -2622,7 +2673,8 @@ function rMeal() {
                 <input type="text" placeholder="Buscar alimento..." id="food-search" oninput="filterFoods()">
             </div>
             <div id="food-list">${foodsHtml}</div>
-        </div>
+        </div>`
+        : `<button class="btn btn-primary w-full" style="padding:15px;font-size:15px" onclick="toggleFoodCatalog()">＋ Adicionar alimento em ${curSlotCfg.name}</button>`}
     `;
 }
 
