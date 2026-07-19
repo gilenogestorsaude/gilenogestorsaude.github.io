@@ -1,7 +1,7 @@
 # Estado do Projeto — Gestão Saúde
 
 **Última atualização:** 2026-07-19
-**Versão atual em produção:** v1.19.0
+**Versão atual em produção:** v1.19.0 (serviço de IA no ar desde 19/07)
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
@@ -32,7 +32,21 @@ Ele confirmou a Etapa 2 com as duas travas que propus: **agregados em vez de sé
 
 **⚠️ Bug que só o bench visual pegou:** eu mandava `sono.mediaHoras` com o valor cru de `rep.sonoAvg`, que o app guarda em **minutos**. A IA leria "415 horas de sono". Corrigido com conversão e teste de faixa plausível. O JSC tinha passado porque eu só checava que era número.
 
-**➡️ Falta o deploy**, que depende da chave da Anthropic e por isso é dele: runbook completo em `Operacoes_VPS/relatorio_ia_service/README.md` (subir arquivos, criar `relatorio.env` com `chmod 600`, `docker compose up -d --build`, conferir `/health` e um 401, colar endereço e chave em Ajustes, e só então o primeiro teste real). O log da VPS imprime os tokens gastos de verdade, que confirmam ou corrigem a tabela de custo.
+**✅ DEPLOY FEITO 19/07/2026, serviço EM PRODUÇÃO.** Guiado passo a passo com ele. Primeiro relatório real gerado com sucesso, e a análise saiu com o rigor pedido: apontou proteína fora da meta em 6 de 7 dias, adesão de medicação em 84%, elogiou só o treino (3 de 3), e leu o ganho de 1,2 kg como retenção e não gordura, cruzando com hidratação e sono baixos. Não puxou o saco.
+
+**Custo real medido:** `[rel] ok in=1828 out=1403` = **US$ 0,044 por relatório (R$ 0,24)**. A estimativa pré-deploy era US$ 0,043, erro de 3%. US$ 20 de crédito compram 452 relatórios, quase 9 anos a um por semana.
+
+**⚠️ TRÊS ACHADOS DO DEPLOY, todos já corrigidos e documentados:**
+
+1. **Bug real de keep-alive (só aparece em produção).** Resposta de erro que saía sem ler o corpo da requisição deixava o corpo no buffer do socket; atrás do Traefik, que faz pool de conexões, a requisição seguinte lia `{}POST /r HTTP/1.1` como linha de comando e devolvia `501 Unsupported method ('{}POST')`. **O teste local não pegou porque o urllib abre conexão nova a cada chamada.** Correção: toda resposta de erro que não leu o corpo sai com `Connection: close`. Teste de regressão novo com `http.client` reusando conexão, e **validado removendo a correção pra confirmar que ele falha** (2 falhas reproduzindo o mesmo 501). Também entrou `do_HEAD` pro `/health`.
+
+2. **`docker compose restart` NÃO relê o `env_file`.** Reinicia o container com o ambiente antigo. Isso me fez diagnosticar errado uma rotação de token que parecia não ter funcionado. Para trocar chave ou token é `up -d`, que recria o container. `restart` só serve pro `app.py`, que é bind-mount.
+
+3. **Chave da API colada com `1. ` de numeração de lista grudado na frente.** Dava `authentication_error: invalid x-api-key`. Passou pela minha conferência porque eu só olhei o TAMANHO (111 caracteres pareceu plausível: a chave real tem 108, mais os 3 do `1. `). Diagnosticado sem nunca ver a chave, com um comando que mostra só prefixo público, tamanho e se há caractere inválido. **Lição: conferir formato, não só tamanho.**
+
+**⚠️ Incidente de credencial:** o token do endpoint apareceu num print que ele mandou no chat. Rotacionado na hora, antes mesmo de ser colado no app, e confirmado morto (401). O runbook agora avisa quais telas podem ser fotografadas e quais não.
+
+Runbook completo e atualizado com os números de produção em `Operacoes_VPS/relatorio_ia_service/README.md` (subir arquivos, criar `relatorio.env` com `chmod 600`, `docker compose up -d --build`, conferir `/health` e um 401, colar endereço e chave em Ajustes, e só então o primeiro teste real). O log da VPS imprime os tokens gastos de verdade, que confirmam ou corrigem a tabela de custo.
 
 ---
 
@@ -477,9 +491,8 @@ Marketing:
 ```
 Estou retomando o app Gestão Saúde. Lê /Users/gilenopaiva/Documents/Gileno_Gestao/Apps/Gestao_Saude_App/ESTADO_PROJETO.md
 pra contexto. Versão em produção: v1.19.0 (Etapa 2 do relatório: prosa por IA via serviço
-na VPS, com agregados em vez de série crua e teto diário). Pendências: fazer o DEPLOY do
-serviço (runbook em Operacoes_VPS/relatorio_ia_service/README.md, depende da chave da
-Anthropic) e validar no iPhone.
+na VPS, com agregados em vez de série crua e teto diário). O serviço de IA já está NO AR e o primeiro relatório
+real foi gerado (custo medido: R$ 0,24). Pendência: validar no iPhone.
 
 [Aqui descreve: resultado do teste no iPhone / o que quer atacar primeiro]
 ```
