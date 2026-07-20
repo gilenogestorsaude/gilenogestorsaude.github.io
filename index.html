@@ -564,7 +564,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.22.0';
+const APP_VERSION = '1.22.1';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -3777,7 +3777,7 @@ function doWorkoutImport() {
     if (res.addedTemplates) partes.push(`${res.addedTemplates} ficha(s) nova(s)`);
     if (res.updatedTemplates) partes.push(`${res.updatedTemplates} atualizada(s)`);
     toast(`✓ Treino importado · ${partes.join(', ')} · ${res.totalEx} exercício(s)`);
-    if (cPage === 'goals') rGoals();
+    rerenderConfigHost();
     if (cPage === 'treino') rTreino();
 }
 
@@ -3786,19 +3786,19 @@ function clearWorkoutPlan() {
     D.workoutPlan = null;
     save();
     toast('Vínculo do treino removido');
-    if (cPage === 'goals') rGoals();
+    rerenderConfigHost();
 }
 
 // Config do treino (Configurações) — ponto de partida; o ajuste fino é no dedo durante a execução.
 function adjustRestDefault(delta) {
     D.restDefault = Math.max(15, (D.restDefault || 90) + delta);
     save();
-    if (cPage === 'goals') rGoals();
+    rerenderConfigHost();
 }
 function adjustCargaStep(delta) {
     D.cargaStep = Math.max(1, Math.round(((D.cargaStep || 1) + delta) * 10) / 10);
     save();
-    if (cPage === 'goals') rGoals();
+    rerenderConfigHost();
 }
 
 // ========== HORÁRIOS (previsto + realizado) ==========
@@ -5428,6 +5428,16 @@ function editGoal(field, dayType) {
     }
 }
 
+// Os blocos de config (módulos, campos de refeição, treino, planos) renderizam
+// em AJUSTES desde a v1.17; antes moravam em Metas. Toda mutação deles tem que
+// re-renderizar a página ABERTA: a v1.21 chamava rGoals() fixo, então em
+// Ajustes o toggle GRAVAVA mas a tela não mudava (parecia morto) e o toque
+// seguinte desfazia. Bug pego pelo Gileno em 20/07 tentando ligar o Dejejum.
+function rerenderConfigHost() {
+    if (cPage === 'settings') rSettings();
+    else if (cPage === 'goals') rGoals();
+}
+
 // ========== CAMPOS DE REFEIÇÃO — CONFIG (CRUD + ordem) ==========
 function moveMealSlot(id, dir) {
     const arr = getMealSlots();
@@ -5436,7 +5446,7 @@ function moveMealSlot(id, dir) {
     if (i < 0 || j < 0 || j >= arr.length) return;
     const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
     save();
-    rGoals();
+    rerenderConfigHost();
 }
 
 function toggleMealSlotActive(id) {
@@ -5444,7 +5454,7 @@ function toggleMealSlotActive(id) {
     if (!s) return;
     s.ativo = (s.ativo === false); // desligado → ligado; ligado/indefinido → desligado
     save();
-    rGoals();
+    rerenderConfigHost();
     toast(s.ativo ? `✓ ${s.name} ligado` : `${s.name} desligado`);
 }
 
@@ -5462,7 +5472,7 @@ function deleteMealSlot(id) {
     if (!confirm(msg)) return;
     D.mealSlots = getMealSlots().filter(x => x.id !== id);
     save();
-    rGoals();
+    rerenderConfigHost();
     toast('Campo removido');
 }
 
@@ -5517,7 +5527,7 @@ function saveMealSlot(id) {
     save();
     const modal = document.querySelector('.modal-overlay');
     if (modal) modal.remove();
-    rGoals();
+    rerenderConfigHost();
     toast('Campo salvo');
 }
 
@@ -8310,7 +8320,7 @@ function toggleModule(name) {
     D.modules[name] = !isModuleEnabled(name);
     save();
     applyBottomNavVisibility();
-    rGoals();
+    rerenderConfigHost();
     const meta = MODULE_META[name];
     toast((D.modules[name] ? '✓ ' : '') + (meta ? meta.label : name) + (D.modules[name] ? ' ativado' : ' desativado'));
 }
@@ -8335,7 +8345,7 @@ function toggleTheme() {
     D.theme = D.theme === 'dark' ? 'light' : 'dark';
     document.body.classList.toggle('light', D.theme === 'light');
     save();
-    if (cPage === 'goals') rGoals();
+    rerenderConfigHost();
     if (cPage === 'dash') rDash();
 }
 
@@ -8350,7 +8360,7 @@ function toggleBPH() {
     D.bphEnabled = !D.bphEnabled;
     save();
     toast(D.bphEnabled ? '🔒 Bloqueio noturno ativado' : '🔓 Bloqueio noturno desativado');
-    if (cPage === 'goals') rGoals();
+    rerenderConfigHost();
     if (cPage === 'hydro') rHydro();
     if (cPage === 'dash') rDash();
 }

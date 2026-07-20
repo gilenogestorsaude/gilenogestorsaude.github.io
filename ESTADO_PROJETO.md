@@ -1,7 +1,7 @@
 # Estado do Projeto — Gestão Saúde
 
-**Última atualização:** 2026-07-19 (parte 11)
-**Versão atual em produção:** v1.22.0 (prints do Apple Watch na análise por IA; serviço v2.1 reiniciado na VPS ANTES do push, na ordem certa, em 19/07 ~19:55)
+**Última atualização:** 2026-07-20 (parte 12)
+**Versão atual em produção:** v1.22.1 (fix: config em Ajustes re-renderiza; v1.22.0 = prints do Apple Watch na análise por IA, serviço v2.1 na VPS)
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
@@ -64,6 +64,30 @@ desenho v1 tinha um token só e um teto global.
 **Custo por assinante, com a regra de 1 por semana:** R$ 0,24 × 4 a 5 por mês = **cerca de R$ 1,10 por assinante por mês**, e no pior caso (todo mundo retificando toda semana) R$ 2,20. Esse é o piso do preço da Pro.
 
 ⚠️ **Não liberar para a esposa antes de (a).** Enquanto o token for compartilhado, dar acesso a ela é dar a chave do endpoint pago.
+
+---
+
+## Resumo da sessão 2026-07-20 (parte 12): v1.22.1 — fix: config em Ajustes não re-renderizava
+
+Bug pego pelo Gileno na manhã de 20/07 validando a v1.22.0 no iPhone: o toggle
+do Dejejum em Ajustes → Campos de refeição "não ativava". Causa: TODA mutação
+dos blocos de config que migraram de Metas pra Ajustes na v1.17 (campos de
+refeição: ligar/mover/editar/excluir; módulos; treino: descanso padrão e passo
+da carga; planos: importar/desvincular; tema; BPH) ainda chamava `rGoals()`
+fixo. Em Ajustes a mudança GRAVAVA mas a tela não re-renderizava: o toggle
+parecia morto e o toque seguinte desfazia. Pré/Pós "funcionavam" porque já
+estavam configurados de antes do redesign.
+
+Fix: helper `rerenderConfigHost()` (re-renderiza `rSettings` OU `rGoals`
+conforme a página aberta) substituindo o `rGoals()` fixo nos 12 mutadores.
+LIÇÃO: ao MOVER um bloco de UI de página, caçar os `rGoals()`/`rX()` fixos de
+TODOS os handlers dele; o gate JSC não pega porque o estado grava certo, o que
+quebra é só o re-render da página nova.
+
+**Verificação:** JSC 8/8 (`verify_confighost.js`: cenário exato do bug com o
+Dejejum, rSettings em Ajustes, rGoals em Metas, sem re-render fora delas, e
+getDaySlots num dia de descanso mostrando Dejejum ligado + escondendo
+Pré-treino) + regressão prints 14/14 + sintaxe do bundle.
 
 ---
 
