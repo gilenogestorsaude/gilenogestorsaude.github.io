@@ -564,7 +564,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.22.1';
+const APP_VERSION = '1.23.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -4372,8 +4372,15 @@ function collectWeekReport(startIso) {
              notes: (D.weeklyNotes && D.weeklyNotes[startIso]) || '' };
 }
 
-// ---- Gráficos SVG (inline, cores via CSS vars — seguem o tema) ----
-function svgLineChart(points, unit) {
+// ---- Gráficos SVG (inline) ----
+// As cores entram por PARÂMETRO porque estes mesmos gráficos vão pro documento
+// EXPORTADO, que não carrega as CSS vars do tema: lá `var(--green)` não resolve
+// e o SVG cai pro preto. Na tela usa as vars (segue o tema), no PDF usa hex de
+// papel branco. Sem isso, o PDF saía sem gráfico nenhum (achado de 26/07/2026).
+const CHART_PAL = { linha: 'var(--green)', txt: 'var(--text3)', grade: 'var(--border)' };
+const CHART_PAL_PDF = { linha: '#10b981', txt: '#64748b', grade: '#cbd5e1' };
+
+function svgLineChart(points, unit, pal = CHART_PAL) {
     // points: [{i(0-6), val}] — linha com marcadores, rótulos min/max
     if (!points || points.length < 2) return '';
     const W = 320, H = 110, PX = 26, PY = 16;
@@ -4383,17 +4390,17 @@ function svgLineChart(points, unit) {
     const x = i => PX + (W - 2 * PX) * (i / 6);
     const y = v => H - PY - (H - 2 * PY) * ((v - min) / (max - min));
     const path = points.map((p, k) => (k ? 'L' : 'M') + x(p.i).toFixed(1) + ' ' + y(p.val).toFixed(1)).join(' ');
-    const dots = points.map(p => `<circle cx="${x(p.i).toFixed(1)}" cy="${y(p.val).toFixed(1)}" r="3" fill="var(--green)"/>`).join('');
-    const labels = DOW_ABBR.map((n, i) => `<text x="${x(i).toFixed(1)}" y="${H - 2}" font-size="8" fill="var(--text3)" text-anchor="middle">${n}</text>`).join('');
+    const dots = points.map(p => `<circle cx="${x(p.i).toFixed(1)}" cy="${y(p.val).toFixed(1)}" r="3" fill="${pal.linha}"/>`).join('');
+    const labels = DOW_ABBR.map((n, i) => `<text x="${x(i).toFixed(1)}" y="${H - 2}" font-size="8" fill="${pal.txt}" text-anchor="middle">${n}</text>`).join('');
     return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img">
-        <text x="2" y="${(y(max) + 3).toFixed(1)}" font-size="8" fill="var(--text3)">${fmt(max)}</text>
-        <text x="2" y="${(y(min) + 3).toFixed(1)}" font-size="8" fill="var(--text3)">${fmt(min)}</text>
-        <line x1="${PX}" y1="${y(min)}" x2="${W - PX}" y2="${y(min)}" stroke="var(--border)" stroke-width="1"/>
-        <path d="${path}" fill="none" stroke="var(--green)" stroke-width="2"/>${dots}${labels}
-        <text x="${W - 2}" y="10" font-size="8" fill="var(--text3)" text-anchor="end">${unit}</text>
+        <text x="2" y="${(y(max) + 3).toFixed(1)}" font-size="8" fill="${pal.txt}">${fmt(max)}</text>
+        <text x="2" y="${(y(min) + 3).toFixed(1)}" font-size="8" fill="${pal.txt}">${fmt(min)}</text>
+        <line x1="${PX}" y1="${y(min)}" x2="${W - PX}" y2="${y(min)}" stroke="${pal.grade}" stroke-width="1"/>
+        <path d="${path}" fill="none" stroke="${pal.linha}" stroke-width="2"/>${dots}${labels}
+        <text x="${W - 2}" y="10" font-size="8" fill="${pal.txt}" text-anchor="end">${unit}</text>
     </svg>`;
 }
-function svgPctBars(items, color) {
+function svgPctBars(items, color, pal = CHART_PAL) {
     // items: [{i(0-6), pct|null}] — barras % da meta, linha tracejada nos 100%
     if (!items || !items.some(it => it.pct != null)) return '';
     const W = 320, H = 110, PX = 26, PY = 16;
@@ -4402,11 +4409,11 @@ function svgPctBars(items, color) {
     const bw = (W - 2 * PX) / 7 - 8;
     const y = p => H - PY - (H - 2 * PY) * (p / maxPct);
     const bars = items.map(it => it.pct == null ? '' :
-        `<rect x="${x(it.i).toFixed(1)}" y="${y(it.pct).toFixed(1)}" width="${bw.toFixed(1)}" height="${(H - PY - y(it.pct)).toFixed(1)}" rx="2" fill="${it.pct >= 100 ? 'var(--green)' : color}" opacity="${it.pct >= 100 ? 1 : 0.75}"/>`).join('');
-    const labels = DOW_ABBR.map((n, i) => `<text x="${(x(i) + bw / 2).toFixed(1)}" y="${H - 2}" font-size="8" fill="var(--text3)" text-anchor="middle">${n}</text>`).join('');
+        `<rect x="${x(it.i).toFixed(1)}" y="${y(it.pct).toFixed(1)}" width="${bw.toFixed(1)}" height="${(H - PY - y(it.pct)).toFixed(1)}" rx="2" fill="${it.pct >= 100 ? pal.linha : color}" opacity="${it.pct >= 100 ? 1 : 0.75}"/>`).join('');
+    const labels = DOW_ABBR.map((n, i) => `<text x="${(x(i) + bw / 2).toFixed(1)}" y="${H - 2}" font-size="8" fill="${pal.txt}" text-anchor="middle">${n}</text>`).join('');
     return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img">
-        <line x1="${PX}" y1="${y(100).toFixed(1)}" x2="${W - PX}" y2="${y(100).toFixed(1)}" stroke="var(--text3)" stroke-width="1" stroke-dasharray="4 3"/>
-        <text x="2" y="${(y(100) + 3).toFixed(1)}" font-size="8" fill="var(--text3)">100%</text>
+        <line x1="${PX}" y1="${y(100).toFixed(1)}" x2="${W - PX}" y2="${y(100).toFixed(1)}" stroke="${pal.txt}" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="2" y="${(y(100) + 3).toFixed(1)}" font-size="8" fill="${pal.txt}">100%</text>
         ${bars}${labels}
     </svg>`;
 }
@@ -4959,6 +4966,16 @@ body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#0f172a;margin:0
 h1{font-size:20px;margin:0 0 2px}h2{font-size:14px;margin:18px 0 4px;border-bottom:2px solid #10b981;padding-bottom:3px}
 .sub{color:#64748b;font-size:12px}.foot{margin-top:24px;padding-top:10px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:10px;text-align:center}
 .alert{padding:6px 10px;border-radius:6px;margin:4px 0;font-size:12px;background:#f8fafc;border-left:3px solid #cbd5e1}
+.chart{max-width:420px;margin:8px 0 2px}
+.chart-cap{font-size:10px;color:#94a3b8;margin-top:8px}
+/* Impressão: nada de bloco cortado no meio pela quebra de página, título nunca
+   fica órfão no pé, e as cores (barras, fundos de alerta) saem no papel: por
+   padrão o navegador descarta fundo na impressão. */
+@media print{
+  body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .alert,table,tr,svg,.chart{page-break-inside:avoid;break-inside:avoid}
+  h2{page-break-after:avoid;break-after:avoid}
+}
 </style></head><body>
 ${exportDocChrome()}
 <h1>Gileno Gestão · SAÚDE</h1>
@@ -4983,7 +5000,8 @@ ${rep.alerts.length ? `<h2>🚦 Alertas da semana</h2>${rep.alerts.map(al =>
 ${rep.past.some(d => d.hasVitals) ? `<h2>⚖️ Métricas corporais</h2>
 <table style="${tbl}"><tr><th style="${th}">Dia</th><th style="${th}">Peso (kg)</th><th style="${th}">PA</th><th style="${th}">FC (bpm)</th><th style="${th}">Sono</th></tr>
 ${rep.days.filter(d => !d.future).map(d => `<tr><td style="${td}">${DOW_ABBR[d.i]} ${fmtDM(d.dt)}</td><td style="${td}">${d.v.peso != null ? fmt(d.v.peso) : '—'}</td><td style="${td}">${escHtml(d.v.pa || '—')}</td><td style="${td}">${d.v.fc || '—'}</td><td style="${td}">${d.sono != null ? formatSleepDuration(d.sono) : '—'}</td></tr>`).join('')}</table>
-${rep.pesoVar != null ? `<div class="sub" style="margin-top:4px">Variação líquida na semana: <strong>${(rep.pesoVar > 0 ? '+' : '') + rep.pesoVar.toFixed(1).replace('.', ',')} kg</strong></div>` : ''}` : ''}
+${rep.pesoVar != null ? `<div class="sub" style="margin-top:4px">Variação líquida na semana: <strong>${(rep.pesoVar > 0 ? '+' : '') + rep.pesoVar.toFixed(1).replace('.', ',')} kg</strong>${rep.sonoAvg != null ? ` · Sono médio: <strong>${formatSleepDuration(Math.round(rep.sonoAvg))}</strong>` : ''}</div>` : ''}
+${rep.pesoSerie.length >= 2 ? `<div class="chart-cap">Peso ao longo da semana:</div><div class="chart">${svgLineChart(rep.pesoSerie.map(p => ({ i: p.i, val: p.peso })), 'kg', CHART_PAL_PDF)}</div>` : ''}` : ''}
 
 ${n.dias ? `<h2>🍽 Resumo nutricional <span class="sub">(${n.dias} dia(s) com registro)</span></h2>
 <table style="${tbl}"><tr><th style="${th}">Métrica</th><th style="${th}">Média/dia</th><th style="${th}">Meta atingida</th></tr>
@@ -4991,7 +5009,8 @@ ${n.dias ? `<h2>🍽 Resumo nutricional <span class="sub">(${n.dias} dia(s) com 
 <tr><td style="${td}">Proteína</td><td style="${td}">${fmt(n.avgProt)} g</td><td style="${td}">${n.diasProtOk} / ${n.dias} dias</td></tr>
 <tr><td style="${td}">Carboidrato</td><td style="${td}">${fmt(n.avgCarbo)} g</td><td style="${td}">—</td></tr>
 <tr><td style="${td}">Gordura</td><td style="${td}">${fmt(n.avgGord)} g</td><td style="${td}">${n.temMetaGord ? n.diasGordOk + ' / ' + n.dias + ' dentro do teto' : '—'}</td></tr></table>
-${n.melhorProt ? `<div class="sub" style="margin-top:4px">Melhor dia de proteína: ${DOW_ABBR[n.melhorProt.i]} (${fmt(n.melhorProt.meals.prot)}g) · Pior: ${DOW_ABBR[n.piorProt.i]} (${fmt(n.piorProt.meals.prot)}g)</div>` : ''}` : ''}
+${n.melhorProt ? `<div class="sub" style="margin-top:4px">Melhor dia de proteína: ${DOW_ABBR[n.melhorProt.i]} (${fmt(n.melhorProt.meals.prot)}g) · Pior: ${DOW_ABBR[n.piorProt.i]} (${fmt(n.piorProt.meals.prot)}g)</div>` : ''}
+<div class="chart-cap">Proteína — % da meta por dia:</div><div class="chart">${svgPctBars(rep.days.map(d => ({ i: d.i, pct: (!d.future && d.hasMeals) ? Math.round(d.meals.prot / d.goals.prot * 100) : null })), '#f59e0b', CHART_PAL_PDF)}</div>` : ''}
 
 ${isModuleEnabled('treino') && (t.sessoes || rep.past.length >= 4) ? `<h2>🏋️ Treinos</h2>
 <div class="sub" style="margin-top:4px"><strong>${t.sessoes} de ${t.meta}</strong> sessões na semana${t.minutos ? ` · ${fmtN(t.minutos)} min` : ''}${t.volume ? ` · ${fmtN(t.volume)}kg de volume total` : ''}</div>
@@ -4999,7 +5018,8 @@ ${rep.treinos.length ? `<table style="${tbl}"><tr><th style="${th}">Dia</th><th 
 ${rep.treinos.map(tr => { const st = treinoStats(tr); const di = rep.days.findIndex(d => d.dt === tr.data); return `<tr><td style="${td}">${DOW_ABBR[Math.max(0, di)]} ${fmtDM(tr.data)}</td><td style="${td}">${escHtml(tr.nome || 'Treino')}</td><td style="${td}">${tr.duracao ? tr.duracao + ' min' : '—'}</td><td style="${td}">${st.series}</td><td style="${td}">${fmtN(st.volume)} kg</td></tr>`; }).join('')}</table>` : ''}` : ''}
 
 ${a.dias ? `<h2>💧 Hidratação</h2>
-<div class="sub" style="margin-top:4px">Média: <strong>${fmtN(a.avg)} ml/dia</strong> · Meta atingida em ${a.diasMeta} de ${a.dias} dias com registro${a.pior ? ` · Pior dia: ${DOW_ABBR[a.pior.i]} (${fmtN(a.pior.water)}ml)` : ''}</div>` : ''}
+<div class="sub" style="margin-top:4px">Média: <strong>${fmtN(a.avg)} ml/dia</strong> · Meta atingida em ${a.diasMeta} de ${a.dias} dias com registro${a.pior ? ` · Pior dia: ${DOW_ABBR[a.pior.i]} (${fmtN(a.pior.water)}ml)` : ''}</div>
+<div class="chart-cap">Água — % da meta por dia:</div><div class="chart">${svgPctBars(rep.days.map(d => ({ i: d.i, pct: (!d.future && d.hasWater) ? Math.round(d.water / d.goals.water * 100) : null })), '#3b82f6', CHART_PAL_PDF)}</div>` : ''}
 
 ${m.temMeds && m.pct != null ? `<h2>💊 Medicação e suplementos</h2>
 <div class="sub" style="margin-top:4px">Adesão: <strong>${m.pct}%</strong> (${m.tom} de ${m.prev} doses nos ${m.diasReg} dia(s) com registro)${m.diasSemReg ? ` · ${m.diasSemReg} dia(s) sem registro` : ''}</div>` : ''}
