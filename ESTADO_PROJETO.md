@@ -1,7 +1,7 @@
 # Estado do Projeto — Gestão Saúde
 
-**Última atualização:** 2026-07-20 (parte 12)
-**Versão atual em produção:** v1.22.1 (fix: config em Ajustes re-renderiza; v1.22.0 = prints do Apple Watch na análise por IA, serviço v2.1 na VPS)
+**Última atualização:** 2026-07-26 (parte 13)
+**Versão atual em produção:** v1.23.0 (gráficos no PDF exportado; v1.22.1 = fix da config em Ajustes; v1.22.0 = prints do Apple Watch na análise por IA, serviço **v2.2** na VPS)
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
@@ -19,11 +19,10 @@ CORS com `authorization`). Push do app em seguida (commit `1ba2b55`).
 **⚠️ Achado do deploy: o `relatorio.env` estava com dono root** (criado pela
 janela root de manhã), o `cc` nem lia; corrigido com `chown cc:cc` na janela root.
 
-**Falta:**
-1. **Apagar a senha órfã do iCloud Keychain** (iPhone: Ajustes → Senhas →
-   relatorio.srv1534583.hstgr.cloud): era o token v1 salvo como "senha de site";
-   com a v2 no ar virou lixo.
-2. **Liberar a esposa** (agora é seguro): pegar o uid dela no console do
+**Falta (situação em 26/07: só o item 2):**
+1. ~~**Apagar a senha órfã do iCloud Keychain**~~ FEITO 19/07 (era o token v1
+   salvo como "senha de site"; com a v2 no ar virou lixo).
+2. **Liberar a esposa** (agora é seguro; o Gileno avisa quando for): pegar o uid dela no console do
    Firebase (Authentication → Users), acrescentar em `REL_UIDS` separado por
    vírgula e `docker compose up -d` (NUNCA `restart`, não relê o env).
 3. ~~Validar no iPhone~~ FEITO 19/07 (análise real da v2 + PDF). Falta só conferir a v1.21.0: forçar
@@ -64,6 +63,65 @@ desenho v1 tinha um token só e um teto global.
 **Custo por assinante, com a regra de 1 por semana:** R$ 0,24 × 4 a 5 por mês = **cerca de R$ 1,10 por assinante por mês**, e no pior caso (todo mundo retificando toda semana) R$ 2,20. Esse é o piso do preço da Pro.
 
 ⚠️ **Não liberar para a esposa antes de (a).** Enquanto o token for compartilhado, dar acesso a ela é dar a chave do endpoint pago.
+
+---
+
+## Resumo da sessão 2026-07-26 (parte 13): 1º ciclo real dos prints + serviço v2.2 + v1.23.0 (gráficos no PDF)
+
+Domingo de manhã, o primeiro uso real dos prints do Apple Watch. Três coisas
+aconteceram, nesta ordem.
+
+**1) A análise foi gerada e se perdeu no caminho (05:49).** O Gileno clicou em
+"Analisar esta semana" (19-25/07, 10 prints anexados) e levou
+`Não consegui gerar: os numeros desta semana nao mudaram desde a ultima analise`.
+Diagnóstico: o servidor foi até o fim (`[rel] ok in=13638 out=2506`, ~R$ 0,72) e
+mandou o 200, mas a resposta **nunca chegou no iPhone** (~2 MB de prints subindo
++ geração demorada; basta a tela apagar, o PWA ir pro fundo ou trocar a rede que
+o Safari mata o fetch). O app não gravou a prosa nem apagou os prints, e o retry
+com payload byte-a-byte idêntico batia no 409 `sem_mudanca`: semana sem análise,
+com a cota queimada e o dinheiro gasto.
+
+**Como diagnosticar isso sem o log** (o usuário `cc` não tem docker; só a janela
+root lê `docker logs`): se o `uso.json` tem a reserva DE PÉ, `gerar_prosa` não
+levantou exceção, porque qualquer falha da chamada paga cai no `_uso_devolver`.
+Reserva viva + app sem prosa = resposta perdida no caminho, não erro do serviço.
+
+**2) Serviço v2.2 na VPS (correção da raiz).** A prosa gerada passa a ficar
+**45 min na memória** do serviço, indexada por `(uid, semana, sha256 do payload)`:
+retry idêntico na janela recebe a MESMA prosa com `recuperada: true`, sem chamar
+a API e sem consumir cota; passada a janela, o 409 volta a valer. NÃO vai pro
+disco de propósito (`uso.json` é contador, não prontuário). O app não precisou
+mudar. A linha de boot agora traz a versão (`[rel] v2.2 no ar … recup=45min`),
+que é o único jeito de conferir no log QUAL código subiu. Detalhes e testes (46
+checks) em `Operacoes_VPS/relatorio_ia_service/`.
+
+**3) v1.23.0: gráficos no PDF exportado.** Reclamação do Gileno: a parte de
+baixo do relatório sai capenga no PDF. Causa real: os gráficos **nunca estiveram
+lá**. O documento exportado é montado por `buildReportHtml`, função SEPARADA da
+tela, que só tinha as tabelas. E copiar como estava não bastava: os gráficos
+pintam com `var(--green)`/`var(--text3)` e o documento exportado é autocontido,
+sem o `:root` do app, então o SVG cairia pro **preto**. Por isso
+`svgLineChart`/`svgPctBars` passaram a receber a paleta por parâmetro
+(`CHART_PAL` com as vars na tela, `CHART_PAL_PDF` com hex no papel). O exportado
+ganhou 3 gráficos (peso na semana, proteína e água em % da meta) e CSS de
+impressão: `break-inside: avoid` em alerta/tabela/gráfico (o alerta vinha
+cortado ao meio na virada da página), título nunca órfão no pé e
+`print-color-adjust: exact` pro navegador não descartar as cores de fundo.
+
+⚠️ **`@media print` continua PROIBIDO no app** (incidente da tela preta de
+24/06): esse CSS vive só dentro do documento exportado, que abre em janela
+própria e autocontida.
+
+**Verificação:** app carregado no navegador com os números reais da semana
+injetados, documento exportado gerado pelo código de produção: 3 SVGs de 420 px,
+cores resolvidas em `#10b981`/`#f59e0b`/`#3b82f6` e **zero** `var(--` no HTML
+(era exatamente isso que viraria preto); tela conferida ainda usando as CSS vars,
+sem hex fixo. Sem erro no console.
+
+**Resultado do ciclo, validado pelo Gileno ("ficou ótimo"):** a análise cruzou os
+prints com os registros e achou o que só o Watch sabia, 5 caminhadas de esteira
+(~63 min) fora dos 255 min contabilizados pelo app, e a sessão longa e leve de
+sexta (1h02 a 109 bpm). Custo real com 10 prints: ~R$ 0,72, dentro do previsto.
 
 ---
 
