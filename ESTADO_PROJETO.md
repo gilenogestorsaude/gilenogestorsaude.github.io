@@ -1,12 +1,79 @@
 # Estado do Projeto — Gestão Saúde
 
-**Última atualização:** 2026-07-26 (parte 13)
-**Versão atual em produção:** v1.23.0 (gráficos no PDF exportado; v1.22.1 = fix da config em Ajustes; v1.22.0 = prints do Apple Watch na análise por IA, serviço **v2.2** na VPS)
+**Última atualização:** 2026-09-02 (parte 14, sessão no Mac mini)
+**Versão atual em produção:** v1.23.0 (a v1.24.0 está commitada e aguarda o push do Gileno; v1.22.1 = fix da config em Ajustes; v1.22.0 = prints do Apple Watch na análise por IA, serviço **v2.2** na VPS)
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
 
 > Este documento é o **handoff vivo** do projeto. Qualquer nova sessão de trabalho começa lendo este arquivo pra entender estado atual, decisões já tomadas, e próximos passos.
+
+---
+
+## Resumo da sessão 2026-09-02 (parte 14): v1.24.0, aulas com o personal + treino Set/Out/Nov
+
+Sessão no **Mac mini** (a primeira deste app fora do MacBook). Pedido do Gileno: trocar o
+treino do app pelo novo trimestre do Rodolfo e criar um controle de frequência das aulas
+com o personal, dentro do app, com 1 toque ao fim de cada treino.
+
+**1) Treino novo (Set/Out/Nov 2026, RB Personal Fit, PDF de 31/08).** Upper/Lower 4x:
+A Superior Push (7 ex.), B Inferior Quadríceps (6), C Superior Pull (7), D Inferior
+Posterior (7). JSON concierge em `treino-rodolfo-2026-09.plan.json` (gitignored, dado
+pessoal), com `metodo` curto (pirâmide, bi-set, drop-set) e `notas` completas (intervalo,
+cadência, RPE, observação técnica). Foto do catálogo por `match` em 25 dos 27 (face pull
+e o desenvolvimento articulado ficam no emoji do grupo).
+
+**2) Import: substituir o plano anterior.** `processWorkoutImport(parsed, {substituir})`
+aposenta as fichas do plano ANTERIOR (só as de `workoutPlan.templateIds`) que não
+voltaram no novo; fichas criadas à mão e o histórico ficam. Liga pela caixinha nova do
+modal (marcada por padrão quando já há plano) ou por `meta.substituirAnterior` no JSON.
+Sem isso, o trimestre novo empilhava sobre o antigo (9 fichas na tela).
+
+**3) Aulas com o personal (`D.personalPlan`, Ajustes › Treino).** Acordo do Gileno com o
+Rodolfo (02/09): R$ 540 no dia 1 = 12 aulas; aula acima do disponível = extra R$ 45 no
+fim do mês; aula paga e não dada vira BANCO pro mês seguinte (a mensalidade não muda); o
+banco é consumido antes de contar extra. Implementação:
+- `finishExecution(personal)`: com o controle ligado, abre `openPersonalChoice()` ANTES
+  de gravar (🏋️ Com Personal / 🏠 Sem Personal, 1 toque; o × volta pro treino sem
+  gravar). A sessão ganha `personal: true|false`. Plano desligado = comportamento antigo.
+- `personalLedger(d, ateYm)` (pura, testável): mês a mês desde `inicio`, com bancoIn,
+  disponíveis, aulas (sessões marcadas + `avulsas`), extras, valorExtras, bancoOut e
+  as marcações de pagamento (`pagos[ym].mensalidade/extras`).
+- Página nova `personal` (card do mês em curso + extrato mês a mês expansível + toggles
+  de pagamento + `+ Aula avulsa` pra aula sem sessão no app + 📄 Extrato por mês pelo
+  mesmo `openExportedDoc` do treino). Card na aba Treino abre a página. Chip 🏋️ no
+  histórico, linha com/sem personal na sessão selada (corrige com 1 toque), toggle no
+  editor manual, marca no PDF da sessão.
+- Bônus: a execução agora mostra `ex.notas` sob o nome do exercício (antes só o `metodo`),
+  então cadência/RPE/bi-set do Rodolfo aparecem na hora do treino.
+
+**Verificação:** harness JSC novo (`verify_personal.js`, jsc do sistema + shim de DOM e
+Firebase): **147 checks, 0 falhas** (sintaxe do arquivo inteiro, normalização do plano,
+ledger em 4 meses com banco/extras/avulsas/banco inicial, import com e sem substituição
+e reimport idempotente, fluxo do modal nos 4 estados do plano, sessão vazia com 1
+confirm só, card, página, avulsa, pagamentos, sessão selada, histórico, editor, extrato
+sem `var(--`, ajustes com validação, migração legada). **Bench visual** no navegador
+(Firebase stubado, seed com o JSON real, viewport mobile, escuro): aba Treino com o card
+"4 de 12 aulas · 8 pro banco", página do personal, execução com as notas do Rodolfo,
+modal Com/Sem Personal e gravação com `personal: true`; zero erro de console.
+⚠️ Gotcha do harness: `const` do eval não vira global (APP_VERSION, fmtBRL, today...):
+exportar pela ponte `globalThis.x = x` no fim do script.
+
+**Fora do código, entregue na pasta Academia:** `Contrato_Personal_2026/` (PDF via
+fitz.Story + DOCX OOXML à mão, fontes em `_fontes/`), com cláusulas padrão e as
+específicas do acordo (Cláusulas 4ª e 5ª espelham o app; Anexo II = exemplo numérico
+igual ao `personalLedger`). ☠️ fitz.Story travou com 4 `<p>` de assinatura caindo
+exatamente na virada de página (`place()` devolveu `more=0` com o resto do documento
+"colado" além da página): assinaturas viraram `<table>` e cada anexo é uma Story própria.
+
+**Pendências ao retomar:** (1) Gileno dá o `git push` (regra da casa: push é dele);
+(2) no iPhone: forçar atualização do PWA, Ajustes › Treino › ligar "Aulas com o
+personal" (nome Rodolfo, valores já vêm 540/12/45, mês inicial 2026-09), colar o JSON
+novo com a caixinha "Substituir o treino anterior" marcada; (3) preencher no contrato os
+dados do Rodolfo (CREF, CPF, endereço, PIX) e decidir 3 pontos que eu assumi: duração de
+60 min por aula (2.1), suspensão da mensalidade se o personal sumir 30+ dias (4.9) e
+o acerto do banco na rescisão (9.4); (4) fotos do catálogo pro face pull e
+desenvolvimento articulado, se ele quiser.
 
 ---
 
@@ -699,6 +766,7 @@ D = {
   medsTaken: { 'YYYY-MM-DD': {medId: {'HH:MM_prescrito': 'HH:MM_real'}} },   // dict prescrito→real (migrado de array)
   treinos: [{id, data, nome, exercicios[{id, nome, series[{reps, carga}]}], notas?, duracao?, createdAt}],
   workoutTemplates: [{id, nome, exercicios[...], notas?, createdAt}],   // Treino A/B/C reutilizáveis
+  personalPlan: {ativo, nome, mensalidade, aulasMes, valorExtra, inicio:'YYYY-MM', bancoInicial, avulsas[{id,data,nota}], pagos:{'YYYY-MM':{mensalidade,extras}}} | null,   // v1.24.0 aulas com o personal; sessão de D.treinos ganha personal:true|false
   consultas: [{id, data, medico, especialidade, local?, queixa, conduta, prescricao?, proximaConsulta?, notas?, createdAt}],
   clinicos: [{id, tipo:'doenca'|'medtemp'|'exame', titulo, detalhe?, inicio, fim?, situacao:'aberto'|'fechado', notas?, createdAt}],  // v1.18.0: período+situação, separado de consultas
   modules: { refeicao, hidratacao, medicamentos, treino, vitais, consultas },   // ligar/desligar áreas

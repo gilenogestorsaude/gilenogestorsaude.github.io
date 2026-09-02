@@ -397,6 +397,19 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
     <div class="page-body" id="treino-session-body"></div>
 </div>
 
+<!-- ========== PAGE: AULAS COM O PERSONAL (frequência, banco e extras, v1.24.0) ========== -->
+<div id="page-personal" class="page">
+    <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+        <button class="btn-icon btn-outline" onclick="showPage('treino')" style="width:36px;height:36px">←</button>
+        <div style="flex:1;min-width:0">
+            <div style="font-size:16px;font-weight:700">📅 Aulas com o personal</div>
+            <div style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="personal-subtitle">Frequência, banco de aulas e extras</div>
+        </div>
+        <button class="btn-icon btn-outline" onclick="openPersonalSettings()" title="Ajustes do acordo" style="width:36px;height:36px;font-size:16px">⚙️</button>
+    </div>
+    <div class="page-body" id="personal-body"></div>
+</div>
+
 <!-- ========== PAGE: SINAIS VITAIS ========== -->
 <div id="page-vitais" class="page">
     <div style="background:var(--surface);padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
@@ -564,7 +577,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.23.0';
+const APP_VERSION = '1.24.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -765,6 +778,9 @@ function defaultD() {
         dietPlan: null,
         // Plano de treino (prescrição do personal) — espelha dietPlan; preenchido na versão Pro.
         workoutPlan: null,
+        // Aulas com o personal (v1.24.0): acordo mensal (mensalidade = N aulas, extra, banco), aulas avulsas
+        // e marcação de pagamento. null até o usuário ligar em Ajustes › Treino; ver defaultPersonalPlan().
+        personalPlan: null,
         // Modo Pro (preview) — destrava import de PDF (em construção) só pro tester via gesto secreto.
         proPreview: false,
         // Relatório Semanal (Pro) — anotações livres por semana (chave = domingo ISO) + config
@@ -1013,6 +1029,7 @@ async function load() {
             if (!Array.isArray(D.clinicos)) D.clinicos = []; // v1.18.0
             if (typeof D.dietPlan === 'undefined') D.dietPlan = null;
             if (typeof D.workoutPlan === 'undefined') D.workoutPlan = null; // reservado: plano do personal (espelha dietPlan)
+            if (D.personalPlan != null) D.personalPlan = normalizePersonalPlan(D.personalPlan); // v1.24.0 (null = nunca ligou)
             if (typeof D.proPreview !== 'boolean') D.proPreview = false;
             if (!D.weeklyNotes || typeof D.weeklyNotes !== 'object') D.weeklyNotes = {}; // v1.11.0
             if (!D.reportCfg || typeof D.reportCfg !== 'object') D.reportCfg = {};
@@ -1295,7 +1312,7 @@ function showPage(name) {
 
     // Páginas que moram DENTRO do hub mantêm o item "Mais" aceso (v1.17.0)
     const MORE_CHILDREN = ['more','settings','goals','meds','treino','vitais','consultas','report','tutorial','install','admin',
-        'template-editor','treino-execute','treino-history','treino-editor','treino-session'];
+        'template-editor','treino-execute','treino-history','treino-editor','treino-session','personal'];
     const navName = MORE_CHILDREN.indexOf(name) !== -1 ? 'more' : name;
     document.querySelectorAll('.nav-item').forEach(n => {
         n.classList.toggle('active', n.dataset.page === navName);
@@ -1312,6 +1329,7 @@ function showPage(name) {
     else if (name === 'treino-history') rTreinoHistory();
     else if (name === 'treino-session') rTreinoSession();
     else if (name === 'treino-editor') rTreinoEditor();
+    else if (name === 'personal') rPersonal();
     else if (name === 'consultas') rConsultas();
     else if (name === 'vitais') rVitais();
     else if (name === 'goals') rGoals();
@@ -3652,10 +3670,16 @@ function clearDietPlan() {
 
 // Processa o treino colado (objeto já parseado). Muta D.workoutTemplates/workoutPlan.
 // Separado do I/O pra ser testável. Retorna { ok, addedTemplates, updatedTemplates, totalEx, error }.
-function processWorkoutImport(parsed) {
+function processWorkoutImport(parsed, opts) {
     if (!parsed || typeof parsed !== 'object') return { ok: false, error: 'JSON inválido' };
     if (!Array.isArray(parsed.templates) || parsed.templates.length === 0) return { ok: false, error: 'Treino sem fichas (campo "templates")' };
     if (!Array.isArray(D.workoutTemplates)) D.workoutTemplates = [];
+    opts = opts || {};
+    // v1.24.0: plano novo (ex.: trimestre seguinte) pode APOSENTAR as fichas do plano anterior que não
+    // voltaram no novo. Só mexe nas fichas vinculadas ao plano anterior (templateIds); ficha criada à mão
+    // e histórico de sessões ficam intactos. Liga pela caixinha do modal ou por meta.substituirAnterior.
+    const substituir = !!(opts.substituir || (parsed.meta && parsed.meta.substituirAnterior));
+    const idsAnteriores = (D.workoutPlan && Array.isArray(D.workoutPlan.templateIds)) ? D.workoutPlan.templateIds.slice() : [];
 
     let addedTemplates = 0, updatedTemplates = 0, totalEx = 0;
     const planIds = []; // ids das fichas deste plano → vínculo autoritativo (quem é do personal)
@@ -3706,12 +3730,19 @@ function processWorkoutImport(parsed) {
 
     if (addedTemplates === 0 && updatedTemplates === 0) return { ok: false, error: 'Nenhuma ficha válida (cada uma precisa de "nome" e "exercicios")' };
 
+    let removedTemplates = 0;
+    if (substituir && idsAnteriores.length) {
+        const antes = D.workoutTemplates.length;
+        D.workoutTemplates = D.workoutTemplates.filter(t => planIds.indexOf(t.id) >= 0 || idsAnteriores.indexOf(t.id) < 0);
+        removedTemplates = antes - D.workoutTemplates.length;
+    }
+
     // Provenance: meta (nome do plano + profissional) + templateIds = vínculo autoritativo das fichas.
     const meta = Object.assign({}, parsed.meta || {});
     meta.importedAt = today();
     D.workoutPlan = { meta: meta, templateIds: planIds };
 
-    return { ok: true, addedTemplates: addedTemplates, updatedTemplates: updatedTemplates, totalEx: totalEx };
+    return { ok: true, addedTemplates: addedTemplates, updatedTemplates: updatedTemplates, removedTemplates: removedTemplates, totalEx: totalEx };
 }
 
 // Reconcilia quais fichas são do personal (origem='personal'). Roda na carga, idempotente.
@@ -3741,8 +3772,13 @@ function openWorkoutImport() {
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
-    const cur = (D.workoutPlan && D.workoutPlan.meta)
-        ? `<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Treino atual: <strong style="color:var(--text)">${D.workoutPlan.meta.name || '—'}</strong>. Importar de novo atualiza as fichas de mesmo nome (seu histórico de sessões não é afetado).</div>`
+    const temPlano = !!(D.workoutPlan && D.workoutPlan.meta);
+    const cur = temPlano
+        ? `<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Treino atual: <strong style="color:var(--text)">${D.workoutPlan.meta.name || '—'}</strong>. Importar de novo atualiza as fichas de mesmo nome (seu histórico de sessões não é afetado).</div>
+           <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--text2);margin-bottom:12px;cursor:pointer">
+               <input type="checkbox" id="workout-import-replace" checked style="margin-top:2px;width:18px;height:18px;flex-shrink:0">
+               <span>Substituir o treino anterior: as fichas do personal que não estiverem no plano novo são removidas (fichas suas e o histórico ficam).</span>
+           </label>`
         : '';
     overlay.innerHTML = `
         <div class="modal-box">
@@ -3769,13 +3805,15 @@ function doWorkoutImport() {
     let parsed;
     try { parsed = JSON.parse(txt); }
     catch (e) { return toast('JSON inválido — verifique o texto colado', true); }
-    const res = processWorkoutImport(parsed);
+    const chk = $('workout-import-replace');
+    const res = processWorkoutImport(parsed, { substituir: !!(chk && chk.checked) });
     if (!res.ok) return toast(res.error || 'Falha ao importar', true);
     save();
     const ov = document.querySelector('.modal-overlay'); if (ov) ov.remove();
     const partes = [];
     if (res.addedTemplates) partes.push(`${res.addedTemplates} ficha(s) nova(s)`);
     if (res.updatedTemplates) partes.push(`${res.updatedTemplates} atualizada(s)`);
+    if (res.removedTemplates) partes.push(`${res.removedTemplates} antiga(s) removida(s)`);
     toast(`✓ Treino importado · ${partes.join(', ')} · ${res.totalEx} exercício(s)`);
     rerenderConfigHost();
     if (cPage === 'treino') rTreino();
@@ -3787,6 +3825,370 @@ function clearWorkoutPlan() {
     save();
     toast('Vínculo do treino removido');
     rerenderConfigHost();
+}
+
+
+// ========== AULAS COM O PERSONAL — frequência, banco de aulas e acerto mensal (v1.24.0) ==========
+// Acordo do Gileno com o personal (02/09/2026): mensalidade fixa paga no dia 1 cobre N aulas
+// (12 × R$ 45 = R$ 540). Aula acima do disponível no mês = extra a R$ 45, acertada no fim do mês.
+// Aula paga e não dada NÃO reduz a mensalidade: vira BANCO (crédito) pro mês seguinte, e o banco é
+// consumido antes de cobrar extra. Fonte da contagem = sessões de D.treinos com personal=true (marcadas
+// com 1 toque ao finalizar) + aulas avulsas (aula sem sessão no app). Config e avulsas em D.personalPlan.
+function defaultPersonalPlan() {
+    return { ativo: false, nome: '', mensalidade: 540, aulasMes: 12, valorExtra: 45, inicio: today().slice(0, 7), bancoInicial: 0, avulsas: [], pagos: {} };
+}
+function normalizePersonalPlan(p) {
+    const d = defaultPersonalPlan();
+    if (!p || typeof p !== 'object') return d;
+    const o = Object.assign(d, p);
+    o.ativo = !!o.ativo;
+    o.nome = String(o.nome || '');
+    const dd = defaultPersonalPlan();
+    ['mensalidade', 'aulasMes', 'valorExtra', 'bancoInicial'].forEach(k => { const n = parseFloat(o[k]); o[k] = (isNaN(n) || n < 0) ? dd[k] : n; });
+    o.aulasMes = Math.round(o.aulasMes);
+    o.bancoInicial = Math.round(o.bancoInicial);
+    if (!/^\d{4}-\d{2}$/.test(String(o.inicio || ''))) o.inicio = dd.inicio;
+    if (!Array.isArray(o.avulsas)) o.avulsas = [];
+    if (!o.pagos || typeof o.pagos !== 'object') o.pagos = {};
+    return o;
+}
+function personalAtivo() { return !!(D && D.personalPlan && D.personalPlan.ativo); }
+const fmtBRL = v => 'R$ ' + (Math.round((Number(v) || 0) * 100) / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const MESES_PT = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+function ymLabel(ym) { const p = String(ym || '').split('-'); const m = parseInt(p[1]) - 1; return (MESES_PT[m] || ym) + ' ' + (p[0] || ''); }
+function ymAdd(ym, n) { const p = String(ym).split('-'); let y = parseInt(p[0]), m = parseInt(p[1]) - 1 + n; y += Math.floor(m / 12); m = ((m % 12) + 12) % 12; return y + '-' + String(m + 1).padStart(2, '0'); }
+
+// Aulas do mês (sessões marcadas + avulsas), mais recente primeiro. Lê de `d` (testável), não de D.
+function personalAulasDoMes(d, ym) {
+    const out = [];
+    (d.treinos || []).forEach(t => { if (t.personal === true && String(t.data || '').slice(0, 7) === ym) out.push({ id: t.id, data: t.data, nome: t.nome || 'Sessão', tipo: 'sessao' }); });
+    ((d.personalPlan && d.personalPlan.avulsas) || []).forEach(a => { if (String(a.data || '').slice(0, 7) === ym) out.push({ id: a.id, data: a.data, nome: a.nota || 'Aula avulsa', tipo: 'avulsa' }); });
+    return out.sort((a, b) => String(b.data).localeCompare(String(a.data)));
+}
+// Extrato mês a mês do início do acordo até `ateYm` (inclusive). O banco entra, as aulas consomem
+// primeiro o banco e depois as do mês; o que sobra vira banco do mês seguinte; o que passa é extra.
+function personalLedger(d, ateYm) {
+    const p = normalizePersonalPlan(d.personalPlan);
+    const rows = [];
+    let banco = p.bancoInicial;
+    let ym = p.inicio;
+    const fim = (ateYm && ateYm > p.inicio) ? ateYm : p.inicio;
+    let guard = 0;
+    while (ym <= fim && guard++ < 240) {
+        const lista = personalAulasDoMes(d, ym);
+        const aulas = lista.length;
+        const disponiveis = p.aulasMes + banco;
+        const extras = Math.max(0, aulas - disponiveis);
+        const bancoOut = Math.max(0, disponiveis - aulas);
+        const pg = p.pagos[ym] || {};
+        rows.push({ ym: ym, aulas: aulas, aulasApp: lista.filter(a => a.tipo === 'sessao').length, avulsas: lista.filter(a => a.tipo === 'avulsa').length,
+            bancoIn: banco, disponiveis: disponiveis, cobertas: Math.min(aulas, disponiveis), extras: extras, valorExtras: extras * p.valorExtra, bancoOut: bancoOut,
+            mensalidade: p.mensalidade, mensalidadePaga: !!pg.mensalidade, extrasPagos: !!pg.extras, lista: lista });
+        banco = bancoOut;
+        ym = ymAdd(ym, 1);
+    }
+    return rows;
+}
+function personalMesAtual(d) { const rows = personalLedger(d, today().slice(0, 7)); return rows[rows.length - 1]; }
+
+function rerenderPersonalHost() {
+    if (cPage === 'personal') rPersonal();
+    else if (cPage === 'treino') rTreino();
+    else if (cPage === 'treino-session') rTreinoSession();
+    else if (cPage === 'treino-history') rTreinoHistory();
+    else if (cPage === 'settings') rSettings();
+    else if (cPage === 'dash') rDash();
+}
+function setTreinoPersonal(id, flag) {
+    const t = (D.treinos || []).find(x => x.id === id);
+    if (!t) return;
+    t.personal = !!flag;
+    save();
+    toast(flag ? '🏋️ Marcada como aula com o personal' : '🏠 Marcada como treino sem o personal');
+    rerenderPersonalHost();
+}
+function togglePersonalAtivo() {
+    D.personalPlan = normalizePersonalPlan(D.personalPlan);
+    D.personalPlan.ativo = !D.personalPlan.ativo;
+    save();
+    toast(D.personalPlan.ativo ? '🏋️ Controle de aulas com o personal ligado' : 'Controle do personal desligado');
+    rerenderPersonalHost();
+}
+function personalCfgSet(campo, valor) {
+    D.personalPlan = normalizePersonalPlan(D.personalPlan);
+    if (campo === 'nome') D.personalPlan.nome = String(valor || '').trim();
+    else if (campo === 'inicio') { if (!/^\d{4}-\d{2}$/.test(String(valor || ''))) return; D.personalPlan.inicio = valor; }
+    else {
+        const n = parseFloat(String(valor == null ? '' : valor).replace(',', '.'));
+        if (isNaN(n) || n < 0) return;
+        D.personalPlan[campo] = (campo === 'aulasMes' || campo === 'bancoInicial') ? Math.round(n) : n;
+    }
+    save();
+}
+function togglePersonalPago(ym, campo) {
+    D.personalPlan = normalizePersonalPlan(D.personalPlan);
+    const pg = D.personalPlan.pagos[ym] || (D.personalPlan.pagos[ym] = {});
+    pg[campo] = !pg[campo];
+    save();
+    rerenderPersonalHost();
+}
+function openPersonalAvulsa() {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = `
+        <div class="modal-box">
+            <div class="modal-header"><h3>Aula avulsa com o personal</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
+            <div style="font-size:12px;color:var(--text2);line-height:1.5;margin-bottom:12px">Use quando a aula aconteceu mas a sessão não foi registrada no app. Conta nas aulas do mês igual às outras.</div>
+            <div class="form-group"><label class="form-label">Data</label><input type="date" id="personal-avulsa-data" class="form-input" value="${today()}"></div>
+            <div class="form-group"><label class="form-label">Observação (opcional)</label><input type="text" id="personal-avulsa-nota" class="form-input" placeholder="Ex.: pernas, sem registrar no app"></div>
+            <div class="modal-actions">
+                <button class="btn btn-outline" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+                <button class="btn btn-primary" style="flex:1" onclick="savePersonalAvulsa()">Registrar aula</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+}
+function savePersonalAvulsa() {
+    const data = (($('personal-avulsa-data') || {}).value || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return toast('Informe a data da aula', true);
+    const nota = (($('personal-avulsa-nota') || {}).value || '').trim();
+    D.personalPlan = normalizePersonalPlan(D.personalPlan);
+    D.personalPlan.avulsas.push({ id: uid(), data: data, nota: nota, createdAt: Date.now() });
+    save();
+    const ov = document.querySelector('.modal-overlay'); if (ov) ov.remove();
+    toast('🏋️ Aula avulsa registrada');
+    rerenderPersonalHost();
+}
+function removePersonalAvulsa(id) {
+    if (!D.personalPlan) return;
+    const a = (D.personalPlan.avulsas || []).find(x => x.id === id);
+    if (!a) return;
+    if (!confirm(`Remover a aula avulsa de ${formatDataTreino(a.data)}?`)) return;
+    D.personalPlan.avulsas = D.personalPlan.avulsas.filter(x => x.id !== id);
+    save();
+    toast('Aula avulsa removida');
+    rerenderPersonalHost();
+}
+
+// Pergunta de 1 toque ao finalizar o treino (só com o controle ligado). Não fecha ao tocar fora:
+// a resposta faz parte do registro; o × volta pro treino sem gravar nada.
+function openPersonalChoice() {
+    if (document.getElementById('personal-choice')) return;
+    const p = normalizePersonalPlan(D.personalPlan);
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'personal-choice';
+    overlay.innerHTML = `
+        <div class="modal-box">
+            <div class="modal-header"><h3>Essa sessão foi com ${p.nome ? escHtml(p.nome) : 'o personal'}?</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button></div>
+            <div style="font-size:12px;color:var(--text2);line-height:1.5;margin-bottom:14px">Um toque e o treino é registrado. "Com Personal" conta nas ${p.aulasMes} aulas do mês (banco ou extras).</div>
+            <button class="btn btn-primary w-full" style="padding:16px;font-size:16px" onclick="personalChoice(true)">🏋️ Com Personal</button>
+            <button class="btn btn-outline w-full" style="padding:16px;font-size:16px;margin-top:10px" onclick="personalChoice(false)">🏠 Sem Personal</button>
+        </div>`;
+    document.body.appendChild(overlay);
+}
+function personalChoice(flag) {
+    const ov = document.getElementById('personal-choice'); if (ov) ov.remove();
+    finishExecution(!!flag);
+}
+
+// Card da aba Treino (mês em curso) — 1 toque abre a página do extrato
+function personalCardHtml() {
+    if (!personalAtivo()) return '';
+    const r = personalMesAtual(D);
+    if (!r) return '';
+    const p = normalizePersonalPlan(D.personalPlan);
+    const pct = r.disponiveis > 0 ? Math.min(100, Math.round(r.aulas / r.disponiveis * 100)) : (r.aulas ? 100 : 0);
+    const resumo = r.extras > 0
+        ? `${r.extras} extra${r.extras === 1 ? '' : 's'} · ${fmtBRL(r.valorExtras)} a pagar no fim do mês`
+        : `${r.bancoOut} pro banco se o mês fechar assim`;
+    return `
+        <div class="card mb-12" onclick="showPage('personal')" style="cursor:pointer;border-left:3px solid #7c3aed">
+            <div style="display:flex;align-items:center;gap:10px">
+                <span style="font-size:20px">📅</span>
+                <div style="flex:1;min-width:0">
+                    <div style="font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.5px">AULAS COM ${p.nome ? escHtml(p.nome.toUpperCase()) : 'O PERSONAL'} · ${ymLabel(r.ym).toUpperCase()}</div>
+                    <div style="font-size:14px;font-weight:700;color:var(--text)">${r.aulas} de ${r.disponiveis} aulas${r.bancoIn ? ` <span style="font-weight:500;color:var(--text3);font-size:12px">(${p.aulasMes} + ${r.bancoIn} do banco)</span>` : ''}</div>
+                    <div style="font-size:11px;color:var(--text2)">${resumo}</div>
+                </div>
+                <span style="font-size:13px;color:var(--text3);white-space:nowrap">extrato ›</span>
+            </div>
+            <div style="height:6px;background:var(--bg);border-radius:3px;margin-top:10px;overflow:hidden"><div style="width:${pct}%;height:100%;background:${r.extras > 0 ? '#f59e0b' : '#7c3aed'}"></div></div>
+        </div>`;
+}
+// Linha da sessão selada: mostra e permite corrigir a marcação
+function personalSessionToggleHtml(t) {
+    if (!personalAtivo()) return '';
+    const p = normalizePersonalPlan(D.personalPlan);
+    const on = t.personal === true;
+    return `
+        <div style="display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">
+            <span style="flex:1;font-size:12px;color:var(--text2)">${on ? '🏋️ Aula com ' + (p.nome ? escHtml(p.nome) : 'o personal') : '🏠 Treino sem o personal'}</span>
+            <button class="btn btn-outline btn-sm" onclick="setTreinoPersonal('${t.id}', ${on ? 'false' : 'true'})">${on ? 'Marcar sem personal' : 'Marcar com personal'}</button>
+        </div>`;
+}
+// Ajustes › Treino: liga/desliga e parâmetros do acordo
+function settingsPersonalHtml() {
+    const p = normalizePersonalPlan(D.personalPlan);
+    const on = p.ativo;
+    return `
+        <div class="card mb-12">
+            <div class="cfg-item" style="padding-top:0">
+                <div><div class="cfg-label">📅 Aulas com o personal</div><div class="cfg-desc">Ao finalizar um treino pergunta se foi com o personal; controla as aulas do mês, o banco e os extras</div></div>
+                <button class="toggle ${on ? 'on' : ''}" onclick="togglePersonalAtivo()"></button>
+            </div>
+            ${on ? `
+            <div class="form-group"><label class="form-label">Nome do personal</label><input type="text" class="form-input" value="${escHtml(p.nome)}" placeholder="Ex.: Rodolfo" onchange="personalCfgSet('nome', this.value)"></div>
+            <div style="display:flex;gap:8px">
+                <div class="form-group" style="flex:1"><label class="form-label">Mensalidade (R$)</label><input type="number" inputmode="decimal" class="form-input" value="${p.mensalidade}" min="0" step="1" onchange="personalCfgSet('mensalidade', this.value)"></div>
+                <div class="form-group" style="flex:1"><label class="form-label">Aulas incluídas</label><input type="number" inputmode="numeric" class="form-input" value="${p.aulasMes}" min="0" step="1" onchange="personalCfgSet('aulasMes', this.value)"></div>
+            </div>
+            <div style="display:flex;gap:8px">
+                <div class="form-group" style="flex:1"><label class="form-label">Aula extra (R$)</label><input type="number" inputmode="decimal" class="form-input" value="${p.valorExtra}" min="0" step="1" onchange="personalCfgSet('valorExtra', this.value)"></div>
+                <div class="form-group" style="flex:1"><label class="form-label">Banco inicial (aulas)</label><input type="number" inputmode="numeric" class="form-input" value="${p.bancoInicial}" min="0" step="1" onchange="personalCfgSet('bancoInicial', this.value)"></div>
+            </div>
+            <div class="form-group" style="margin-bottom:0"><label class="form-label">Primeiro mês do acordo</label><input type="month" class="form-input" value="${p.inicio}" onchange="personalCfgSet('inicio', this.value)"></div>
+            <div style="font-size:11px;color:var(--text3);line-height:1.5;margin-top:10px">Regra: a mensalidade paga no dia 1 cobre as aulas incluídas. Aula não dada vira banco pro mês seguinte (a mensalidade não muda). Aula acima do disponível é extra, acertada no fim do mês.</div>
+            <button class="btn btn-outline w-full" style="margin-top:10px" onclick="showPage('personal')">📅 Abrir o controle de aulas</button>` : ''}
+        </div>`;
+}
+function openPersonalSettings() {
+    if (!D._uiCollapsed) D._uiCollapsed = {};
+    D._uiCollapsed['set_treino'] = false; // seção aberta
+    showPage('settings');
+}
+
+// Página: mês atual em destaque + extrato mês a mês (toque expande as aulas e a marcação de pagamento)
+let personalOpenYm = null;
+function rPersonal() {
+    if (!D) return;
+    const body = $('personal-body');
+    if (!body) return;
+    const p = normalizePersonalPlan(D.personalPlan);
+    const subEl = $('personal-subtitle');
+    if (!p.ativo) {
+        if (subEl) subEl.textContent = 'Controle desligado';
+        body.innerHTML = `
+            <div class="card text-center" style="padding:32px 20px">
+                <div style="font-size:48px;margin-bottom:12px">📅</div>
+                <div style="font-size:16px;font-weight:700;margin-bottom:6px">Controle de aulas desligado</div>
+                <div style="font-size:13px;color:var(--text3);margin-bottom:20px">Ligue pra contar as aulas com o personal, o banco de aulas e os extras do mês. Os valores do acordo ficam em Ajustes › Treino.</div>
+                <button class="btn btn-primary w-full" onclick="togglePersonalAtivo()">Ligar agora</button>
+            </div>`;
+        return;
+    }
+    const hoje = today().slice(0, 7);
+    const rows = personalLedger(D, hoje);
+    const atual = rows[rows.length - 1];
+    if (subEl) subEl.textContent = `${p.nome ? p.nome + ' · ' : ''}${fmtBRL(p.mensalidade)} no dia 1 = ${p.aulasMes} aulas · extra ${fmtBRL(p.valorExtra)}`;
+    if (personalOpenYm == null || !rows.some(r => r.ym === personalOpenYm)) personalOpenYm = atual.ym;
+    const big = (v, label, color) => `<div style="flex:1;padding:10px 4px;background:var(--bg);border-radius:10px;text-align:center;min-width:0"><div style="font-size:22px;font-weight:800;color:${color || 'var(--text)'}">${v}</div><div style="font-size:10px;color:var(--text3);line-height:1.2">${label}</div></div>`;
+    const atualHtml = `
+        <div class="card mb-12" style="border-left:3px solid #7c3aed">
+            <div style="font-size:10px;font-weight:800;letter-spacing:.5px;color:#7c3aed">MÊS ATUAL · ${ymLabel(atual.ym).toUpperCase()}</div>
+            <div style="display:flex;gap:6px;margin-top:10px">
+                ${big(atual.aulas, 'aulas dadas', '#7c3aed')}
+                ${big(atual.disponiveis, atual.bancoIn ? `disponíveis<br>(${p.aulasMes}+${atual.bancoIn} banco)` : 'disponíveis')}
+                ${big(atual.extras, 'extras', atual.extras ? '#f59e0b' : undefined)}
+                ${big(atual.bancoOut, 'vão pro banco')}
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;font-size:12px;color:var(--text2)">
+                <span>A pagar no fim do mês (extras)</span><strong style="color:${atual.extras ? '#f59e0b' : 'var(--text)'};font-size:15px">${fmtBRL(atual.valorExtras)}</strong>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:12px">
+                <button class="btn btn-primary" style="flex:1" onclick="openPersonalAvulsa()">+ Aula avulsa</button>
+                <button class="btn btn-outline" style="flex:1" onclick="exportPersonalExtrato('${atual.ym}')">📄 Extrato</button>
+            </div>
+        </div>`;
+    const mesHtml = rows.slice().reverse().map(r => {
+        const open = r.ym === personalOpenYm;
+        const fechado = r.ym < hoje;
+        const lista = r.lista.map(a => `
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;background:var(--bg);margin-top:4px">
+                <span style="font-size:12px;color:var(--text2);width:74px;flex-shrink:0">${formatDataTreino(a.data)}</span>
+                <span style="flex:1;min-width:0;font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(a.nome)}${a.tipo === 'avulsa' ? ' <span style="font-size:10px;color:var(--text3)">avulsa</span>' : ''}</span>
+                ${a.tipo === 'avulsa'
+                    ? `<button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="removePersonalAvulsa('${a.id}')" title="Remover">🗑</button>`
+                    : `<button class="btn btn-outline btn-sm" onclick="openTreinoSession('${a.id}')" title="Abrir sessão">›</button>`}
+            </div>`).join('');
+        return `
+            <div class="card mb-8" style="padding:12px 14px">
+                <div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="togglePersonalMes('${r.ym}')">
+                    <div style="flex:1;min-width:0">
+                        <div style="font-size:14px;font-weight:700;color:var(--text)">${ymLabel(r.ym)} <span style="font-size:10px;font-weight:600;color:${fechado ? 'var(--text3)' : '#7c3aed'}">${fechado ? 'fechado' : 'em curso'}</span></div>
+                        <div style="font-size:11px;color:var(--text2)">${r.aulas} aula${r.aulas === 1 ? '' : 's'} · banco ${r.bancoIn} → ${r.bancoOut}${r.extras ? ` · <span style="color:#f59e0b;font-weight:700">${r.extras} extra${r.extras === 1 ? '' : 's'} = ${fmtBRL(r.valorExtras)}</span>` : ''}</div>
+                    </div>
+                    <span style="font-size:13px;color:var(--text3)">${open ? '▲' : '▼'}</span>
+                </div>
+                ${open ? `
+                <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">
+                    <div class="cfg-item" style="padding:8px 0">
+                        <div><div class="cfg-label" style="font-size:13px">Mensalidade paga (dia 1)</div><div class="cfg-desc">${fmtBRL(r.mensalidade)} · ${p.aulasMes} aulas</div></div>
+                        <button class="toggle ${r.mensalidadePaga ? 'on' : ''}" onclick="togglePersonalPago('${r.ym}','mensalidade')"></button>
+                    </div>
+                    ${r.extras ? `
+                    <div class="cfg-item" style="padding:8px 0">
+                        <div><div class="cfg-label" style="font-size:13px">Extras pagos</div><div class="cfg-desc">${r.extras} × ${fmtBRL(p.valorExtra)} = ${fmtBRL(r.valorExtras)}</div></div>
+                        <button class="toggle ${r.extrasPagos ? 'on' : ''}" onclick="togglePersonalPago('${r.ym}','extras')"></button>
+                    </div>` : ''}
+                    <div style="font-size:11px;color:var(--text3);font-weight:700;margin-top:6px">AULAS (${r.aulas})</div>
+                    ${lista || '<div style="font-size:12px;color:var(--text3);padding:6px 0">Nenhuma aula neste mês</div>'}
+                    <button class="btn btn-outline btn-sm w-full" style="margin-top:8px" onclick="exportPersonalExtrato('${r.ym}')">📄 Extrato de ${ymLabel(r.ym)}</button>
+                </div>` : ''}
+            </div>`;
+    }).join('');
+    body.innerHTML = `${atualHtml}
+        <div style="font-size:11px;color:var(--text3);line-height:1.5;margin:0 2px 10px">Como funciona: a mensalidade do dia 1 cobre ${p.aulasMes} aulas. O que não for dado vira banco pro mês seguinte (a mensalidade não muda). O banco é usado antes de contar extra; cada extra custa ${fmtBRL(p.valorExtra)} e é acertado no fim do mês.</div>
+        ${mesHtml}`;
+}
+function togglePersonalMes(ym) { personalOpenYm = (personalOpenYm === ym) ? null : ym; rPersonal(); }
+
+// Extrato do mês em documento autocontido (mesmo caminho seguro do registro de treino) — pra
+// conferir com o personal no fim do mês. Sem @media print no app (incidente 24/06); só no exportado.
+function buildPersonalExtratoHtml(ym) {
+    const p = normalizePersonalPlan(D.personalPlan);
+    const hoje = today().slice(0, 7);
+    const rows = personalLedger(D, ym > hoje ? ym : hoje);
+    const r = rows.find(x => x.ym === ym);
+    if (!r) return '';
+    const nome = escHtml(D.userName || '');
+    const tbl = 'width:100%;border-collapse:collapse;font-size:12px;margin-top:6px';
+    const th = 'text-align:left;padding:5px 8px;background:#f1f5f9;font-weight:700;border:1px solid #e2e8f0';
+    const td = 'padding:5px 8px;border:1px solid #e2e8f0';
+    const fechado = ym < hoje;
+    return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Aulas com o personal · ${ymLabel(ym)}</title>
+<style>
+body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#0f172a;margin:0;padding:20px;max-width:760px;margin:0 auto;background:#fff}
+h1{font-size:20px;margin:0 0 2px}h2{font-size:14px;margin:18px 0 4px;border-bottom:2px solid #7c3aed;padding-bottom:3px}
+.sub{color:#64748b;font-size:12px}.tot{font-size:14px;font-weight:700;margin-top:10px}.foot{margin-top:24px;padding-top:10px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:10px;text-align:center}
+</style></head><body>
+${exportDocChrome()}
+<h1>Gileno Gestão · SAÚDE</h1>
+<div class="sub">Extrato de aulas com o personal${p.nome ? ' · ' + escHtml(p.nome) : ''}${nome ? ' · aluno: ' + nome : ''} · ${ymLabel(ym)}${fechado ? '' : ' (mês em curso)'}</div>
+<h2>Resumo do mês</h2>
+<table style="${tbl}">
+<tr><td style="${td}">Mensalidade (dia 1)</td><td style="${td}">${fmtBRL(r.mensalidade)} = ${p.aulasMes} aulas${r.mensalidadePaga ? ' · paga' : ''}</td></tr>
+<tr><td style="${td}">Banco que entrou do mês anterior</td><td style="${td}">${r.bancoIn} aula(s)</td></tr>
+<tr><td style="${td}">Aulas disponíveis no mês</td><td style="${td}">${r.disponiveis}</td></tr>
+<tr><td style="${td}">Aulas dadas</td><td style="${td}">${r.aulas} (${r.aulasApp} pelo app${r.avulsas ? ' + ' + r.avulsas + ' avulsa(s)' : ''})</td></tr>
+<tr><td style="${td}">Aulas extras</td><td style="${td}">${r.extras} × ${fmtBRL(p.valorExtra)} = <strong>${fmtBRL(r.valorExtras)}</strong>${(r.extras && r.extrasPagos) ? ' · pagas' : ''}</td></tr>
+<tr><td style="${td}">Banco que segue pro mês seguinte</td><td style="${td}">${r.bancoOut} aula(s)</td></tr>
+</table>
+<div class="tot">Valor a acertar no fim do mês: ${fmtBRL(r.valorExtras)}</div>
+<h2>Aulas do mês (${r.aulas})</h2>
+<table style="${tbl}"><tr><th style="${th}">Data</th><th style="${th}">Sessão</th><th style="${th}">Origem</th></tr>
+${r.lista.slice().reverse().map(a => `<tr><td style="${td}">${formatDataTreino(a.data)}</td><td style="${td}">${escHtml(a.nome)}</td><td style="${td}">${a.tipo === 'avulsa' ? 'avulsa' : 'registro do app'}</td></tr>`).join('') || `<tr><td style="${td}" colspan="3">Nenhuma aula neste mês</td></tr>`}
+</table>
+<div class="foot">Gileno Gestão Saúde · extrato gerado pelo app em ${formatDataTreino(today())} · base de conferência entre aluno e personal</div>
+</body></html>`;
+}
+function exportPersonalExtrato(ym) {
+    const html = buildPersonalExtratoHtml(ym);
+    if (!html) return toast('Mês fora do acordo', true);
+    openExportedDoc(html, 'aulas-personal-' + ym + '.html');
 }
 
 // Config do treino (Configurações) — ponto de partida; o ajuste fino é no dedo durante a execução.
@@ -5237,7 +5639,7 @@ function rSettings() {
     $('settings-body').innerHTML = `
         ${settingsSectionHtml('modulos', '🧩', 'Módulos do app', 'Ligue ou desligue áreas que você não usa', settingsModulesHtml())}
         ${isModuleEnabled('refeicao') ? settingsSectionHtml('slots', '🍽', 'Campos de refeição', 'Renomear, horário previsto, ordem e ativar', settingsMealSlotsHtml()) : ''}
-        ${isModuleEnabled('treino') ? settingsSectionHtml('treino', '🏋️', 'Treino', 'Descanso padrão e passo da carga', settingsTreinoHtml()) : ''}
+        ${isModuleEnabled('treino') ? settingsSectionHtml('treino', '🏋️', 'Treino', 'Descanso, passo da carga e aulas com o personal', settingsTreinoHtml()) : ''}
         ${settingsSectionHtml('planos', '📋', 'Planos do profissional', 'Importar dieta da nutri e treino do personal', settingsImportHtml())}
         ${D.proPreview ? settingsSectionHtml('ia', '🧠', 'Relatório por IA', 'Serviço que comenta a semana (acesso pelo seu login)', settingsIAHtml()) : ''}
         ${settingsSectionHtml('conta', '⚙️', 'Configurações e conta', 'Tema, versão, privacidade, exportar e sair', settingsContaHtml())}
@@ -5355,7 +5757,8 @@ function settingsTreinoHtml() {
                     <button class="btn btn-outline btn-sm" style="width:34px" onclick="adjustCargaStep(1)">+</button>
                 </div>
             </div>
-        </div>`}`;
+        </div>
+        ${settingsPersonalHtml()}`}`;
 }
 
 function settingsMealSlotsHtml() {
@@ -5955,6 +6358,7 @@ function rTreino() {
     $('treino-body').innerHTML = `
         ${execBannerHtml()}
         ${planBannerHtml}
+        ${personalCardHtml()}
         ${lastSessionHtml}
         ${listHtml}
         <button class="btn btn-outline" style="width:100%;margin-top:8px;border-style:dashed;color:var(--primary);font-weight:700" onclick="openTemplateEditor()">+ Novo treino</button>
@@ -6444,6 +6848,7 @@ function rTreinoExecute() {
                     <div style="flex:1;min-width:0">
                         <div style="font-size:14px;font-weight:700;color:var(--text);${ex.feito ? 'text-decoration:line-through' : ''}">${ex.nome}</div>
                         <div style="font-size:11px;color:${grupo.color};font-weight:600">${grupo.label}${ex.metodo ? ' • ' + ex.metodo : ''}</div>
+                        ${ex.notas ? `<div style="font-size:10.5px;color:var(--text3);line-height:1.35;margin-top:2px">${escHtml(ex.notas)}</div>` : ''}
                         ${ex.cargaRef != null ? `<div style="font-size:11px;color:#f59e0b;font-weight:700;margin-top:2px">📈 última vez: ${fmtCarga(ex.cargaRef)} kg</div>` : ''}
                     </div>
                     <span style="font-size:12px;font-weight:800;color:${doneCount === total ? 'var(--primary)' : 'var(--text3)'};flex-shrink:0">${doneCount}/${total}</span>
@@ -6607,8 +7012,10 @@ function cancelExecution() {
     showPage('treino');
 }
 
-function finishExecution() {
+function finishExecution(personal) {
     if (!activeExecution) return;
+    // v1.24.0: com o controle do personal ligado, a resposta Com/Sem Personal vem ANTES de gravar (1 toque)
+    if (personalAtivo() && typeof personal !== 'boolean') return openPersonalChoice();
     const feitos = activeExecution.exercicios.filter(e => e.sets.some(s => s.done));
     if (feitos.length === 0) {
         if (!confirm('Nenhuma série marcada como feita. Salvar mesmo assim?')) return;
@@ -6634,6 +7041,7 @@ function finishExecution() {
         templateId: activeExecution.templateId,
         createdAt: Date.now()
     };
+    if (typeof personal === 'boolean') sessao.personal = personal; // v1.24.0: conta nas aulas do mês
     if (!D.treinos) D.treinos = [];
     D.treinos.push(sessao);
     stopExecTimer();
@@ -6768,6 +7176,7 @@ function rTreinoSession() {
                 <div style="flex:1;padding:8px;background:var(--bg);border-radius:8px"><div style="font-size:18px;font-weight:800;color:var(--primary)">${fmtN(stat.volume)}</div><div style="font-size:10px;color:var(--text3)">kg volume</div></div>
             </div>
             ${t.notas ? `<div style="font-size:12px;color:var(--text2);margin-top:10px;padding-top:8px;border-top:1px solid var(--border);white-space:pre-wrap">📝 ${escHtml(t.notas)}</div>` : ''}
+            ${personalSessionToggleHtml(t)}
         </div>
         ${exHtml}
         <div style="display:flex;flex-direction:column;gap:8px;margin-top:14px;margin-bottom:24px">
@@ -6804,7 +7213,7 @@ ${exportDocChrome()}
 <h1>Gileno Gestão · SAÚDE</h1>
 <div class="sub">Registro de treino${nome ? ' · ' + nome : ''} · ${formatDataTreino(t.data)}</div>
 <h2>🏋️ ${escHtml(t.nome || 'Sessão')}</h2>
-<div class="sub">${stat.exercicios} exercício(s) · ${stat.series} série(s) · ${fmtN(stat.volume)} kg de volume${t.duracao ? ' · ' + t.duracao + ' min' : ''}</div>
+<div class="sub">${stat.exercicios} exercício(s) · ${stat.series} série(s) · ${fmtN(stat.volume)} kg de volume${t.duracao ? ' · ' + t.duracao + ' min' : ''}${t.personal === true ? ' · aula com o personal' : ''}</div>
 <table style="${tbl}"><tr><th style="${th}">Exercício</th><th style="${th}">Série</th><th style="${th}">Reps</th><th style="${th}">Carga (kg)</th></tr>
 ${(t.exercicios || []).map(ex => (ex.series || []).map((s, i) => `<tr>${i === 0 ? `<td style="${td}" rowspan="${ex.series.length}">${escHtml(ex.nome || '—')}</td>` : ''}<td style="${td}">${i + 1}</td><td style="${td}">${s.reps || 0}</td><td style="${td}">${fmtCarga(s.carga)}</td></tr>`).join('')).join('')}
 </table>
@@ -6886,6 +7295,7 @@ function rTreinoHistory() {
         const pr = isTreinoPR(t);
         const chipsHtml = groups.map(g => `<span style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;background:${g.color}22;color:${g.color}">${g.label}</span>`).join(' ');
         const prChip = pr ? `<span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(251,191,36,.18);color:#f59e0b">🏆 PR</span>` : '';
+        const persoChip = t.personal === true ? `<span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(124,58,237,.16);color:#7c3aed">🏋️ personal</span>` : '';
         const exNomes = t.exercicios.slice(0, 3).map(e => e.nome).filter(Boolean).join(', ') + (t.exercicios.length > 3 ? '…' : '');
         listHtml += `
             <div class="card mb-8" onclick="openTreinoSession('${t.id}')" style="cursor:pointer${pr ? ';border-left:3px solid #f59e0b' : ''}">
@@ -6896,7 +7306,7 @@ function rTreinoHistory() {
                     </div>
                     <button class="btn btn-outline btn-sm" onclick="event.stopPropagation();duplicateTreino('${t.id}')" title="Duplicar pra hoje">📋</button>
                 </div>
-                ${(chipsHtml || prChip) ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px">${chipsHtml}${prChip}</div>` : ''}
+                ${(chipsHtml || prChip || persoChip) ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px">${chipsHtml}${prChip}${persoChip}</div>` : ''}
                 <div style="font-size:11px;color:var(--text2);margin-bottom:4px">${exNomes || '—'}</div>
                 <div style="font-size:11px;color:var(--text3)">
                     ${stat.exercicios} ex • ${stat.series} séries • ${fmtN(stat.volume)}kg volume
@@ -7003,6 +7413,11 @@ function rTreinoEditor() {
                 <input type="text" id="treino-nome" class="form-input" value="${editingTreino.nome}" placeholder="Ex: Peito/Tríceps, Pernas, Treino A"
                        oninput="editingTreino.nome = this.value">
             </div>
+            ${personalAtivo() ? `
+            <div class="cfg-item" style="padding:10px 0 0;border:none">
+                <div><div class="cfg-label">🏋️ Aula com o personal</div><div class="cfg-desc">Conta nas aulas do mês</div></div>
+                <button class="toggle ${editingTreino.personal === true ? 'on' : ''}" onclick="editingTreino.personal = !(editingTreino.personal === true); rTreinoEditor()"></button>
+            </div>` : ''}
         </div>
 
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
