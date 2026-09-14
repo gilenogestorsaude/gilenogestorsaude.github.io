@@ -1,12 +1,32 @@
 # Estado do Projeto — Gestão Saúde
 
-**Última atualização:** 2026-09-14 (parte 16, sessão no Mac mini)
-**Versão atual em produção:** v1.25.0, no ar desde 14/09 08h07 (a v1.25.1 foi commitada no Mac mini em 14/09 e aguarda o push, que por enquanto sai pelo MacBook; v1.24.0 = aulas com o personal; v1.22.0 = prints do Apple Watch na análise por IA, serviço **v2.2** na VPS)
+**Última atualização:** 2026-09-14 (parte 17, sessão no Mac mini)
+**Versão atual em produção:** v1.25.1, no ar desde 14/09 09h07 (a v1.25.2 foi commitada no Mac mini em 14/09 e aguarda o push, que por enquanto sai pelo MacBook; v1.24.0 = aulas com o personal; v1.22.0 = prints do Apple Watch na análise por IA, serviço **v2.2** na VPS)
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
 
 > Este documento é o **handoff vivo** do projeto. Qualquer nova sessão de trabalho começa lendo este arquivo pra entender estado atual, decisões já tomadas, e próximos passos.
+
+---
+
+## Resumo da sessão 2026-09-14 (parte 17): v1.25.2, porções iguais num bloco só
+
+Pedido do Gileno ao ver o almoço no aparelho: "Arroz branco cozido ficou repetido". Não era erro: a prescrição traz 2 porções de
+carboidrato que podem ser iguais ou diferentes, e o gerador numerou "Carboidrato 1/2" com a mesma lista. O mesmo acontecia em
+"3 recheios" e "2 frutas".
+
+**O que mudou (`planCardHtml`):** linhas de escolha seguidas com a mesma lista de opções (conjunto exato por `JSON.stringify([foodId, grams])`)
+viram um bloco: título "<rótulo> · N porções", dica, uma linha por porção (toque, Enter ou espaço escolhe qual editar, estado de tela
+`planPorcaoAtiva`) e UMA fileira de pílulas; a pílula aponta para o índice da porção em edição (a ordem das opções muda entre porções),
+marca "×N" quando várias porções usam a mesma opção e "usada" quando outra porção a escolheu. A caixinha de registro ganhou
+`event.stopPropagation()`. `clearDietPlan` passou a chamar `rerenderConfigHost()` (o quadro de Ajustes seguia mostrando o plano
+removido) e o `rGoals` duplicado saiu dele e do `doDietImport`.
+
+**Verificação:** auditoria técnica independente APROVADA COM RESSALVAS (chave do bloco × índice da pílula, rótulo misto, contraste da
+porção ativa no tema claro, acessibilidade por teclado, desenho duplo, testes frouxos), todas curadas antes do commit. Baterias: porções
+26/26, plano 81/81, catálogo 27/27, cura 13/13, escape 10/10, auditor da v1.25.1 44/44; auditor da v1.25.2 36/37 (a falha restante é
+o texto exato do rótulo, que agora junta rótulos diferentes com "ou"; o escape segue provado no check vizinho).
 
 ---
 

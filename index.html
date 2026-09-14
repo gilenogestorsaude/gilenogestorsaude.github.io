@@ -266,6 +266,17 @@ body:not(.light) .plan-ver.active,body:not(.light) .plan-opt.active{background:v
 .plan-label{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--text3);margin-bottom:4px}
 .plan-notes summary{cursor:pointer;font-size:12px;font-weight:600;color:var(--primary);padding:6px 0}
 .plan-notes div{font-size:12px;color:var(--text2);line-height:1.55;white-space:pre-line}
+/* v1.25.2: porções iguais num bloco só (uma linha por porção + uma fileira de pílulas) */
+.plan-hint{font-size:11px;color:var(--text3);margin:-2px 0 6px}
+.plan-porcao{display:flex;align-items:center;gap:8px;padding:6px 8px;margin:0 -8px 2px;border-radius:8px;cursor:pointer;border:1px solid transparent}
+.plan-porcao.active{background:var(--primary-light);border-color:var(--primary)}
+body:not(.light) .plan-porcao.active{background:var(--green-bg);border-color:var(--green)}
+.plan-porcao-n{font-size:10px;font-weight:700;color:var(--text3);min-width:20px}
+.plan-opt.usada{border-color:var(--primary);color:var(--text)}
+.plan-porcao.active .plan-porcao-n{color:var(--primary-dark)}
+body:not(.light) .plan-porcao.active .plan-porcao-n{color:var(--green)}
+.plan-porcao.active span span{color:var(--text2)}
+.plan-porcao.active button[aria-pressed="false"]{background:var(--surface)!important;border-color:var(--text3)!important}
 .added-total{display:flex;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:2px solid var(--primary);font-weight:700;font-size:13px}
 </style>
 </head>
@@ -594,7 +605,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.25.1';
+const APP_VERSION = '1.25.2';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -3520,6 +3531,13 @@ function logWholePlanMeal(slotId) {
     if (cPage === 'meal') rMeal();
 }
 
+// Porção em edição dentro de um bloco de porções iguais (v1.25.2; estado de tela, não salva)
+let planPorcaoAtiva = {};
+function setPlanPorcao(chave, lineIdx) {
+    planPorcaoAtiva[chave] = lineIdx;
+    if (cPage === 'meal') rMeal();
+}
+
 // Card do plano dentro da refeição: versões (cartões) + montagem (pílulas por linha) +
 // registro de 1 toque + aderência (Plano × Comido) + previsto do dia com as escolhas.
 function planCardHtml(slotId) {
@@ -3534,7 +3552,7 @@ function planCardHtml(slotId) {
     const logged = slotLoggedFoodIds(slotId);
     const btn = (foodId, grams) => {
         const feito = !!logged[foodId];
-        return `<button onclick="openAddFood(${escHtml(JSON.stringify(String(foodId)))},${Number(grams) || 0})"
+        return `<button onclick="event.stopPropagation();openAddFood(${escHtml(JSON.stringify(String(foodId)))},${Number(grams) || 0})"
             title="${feito ? 'Já registrado nesta refeição. Toque pra registrar outra porção.' : 'Registrar (você ajusta a quantidade antes de confirmar)'}"
             aria-pressed="${feito}"
             style="flex-shrink:0;width:26px;height:26px;border-radius:7px;cursor:pointer;font-size:14px;font-weight:700;line-height:1;
@@ -3554,29 +3572,68 @@ function planCardHtml(slotId) {
             <div class="plan-scroll">${cards}</div>`;
     }
 
-    // 2) Linhas da montagem: fixa = nome + caixinha; com substituição = escolhida + pílulas
-    let linesHtml = '';
-    pk.items.forEach(it => {
-        const ln = version.lines[it.lineIdx];
+    // 2) Linhas da montagem: fixa = nome + caixinha; com substituição = escolhida + pílulas.
+    // v1.25.2: linhas de escolha SEGUIDAS com a mesma lista de opções ("2 porções de carboidrato",
+    // "3 recheios") viram um bloco só: uma linha por porção (o toque escolhe qual trocar) e UMA fileira
+    // de pílulas. A ordem das opções muda de uma porção para outra, então a pílula aponta para o índice
+    // da própria porção em edição.
+    const sid = escHtml(JSON.stringify(slotId));
+    // chave exata por opção (tipo e texto preservados): a MESMA regra decide o bloco e o índice da pílula
+    const chaveOpcao = o => JSON.stringify(o ? [o.foodId, o.grams] : null);
+    const chaveOpcoes = ln => (ln && Array.isArray(ln.options) && ln.options.length > 1)
+        ? JSON.stringify(ln.options.map(chaveOpcao).sort()) : null;
+    const textoItem = it => {
         const m = planLineMacros(it.foodId, it.grams);
-        const row = `<div style="display:flex;align-items:center;gap:8px">
-                <span style="flex:1;min-width:0;font-size:13px;color:var(--text)">${escHtml(m.name)} <span style="color:var(--text3)">${fmt(it.grams)}g · ${fmtN(m.kcal)}kcal · ${fmt(m.prot)}g prot</span></span>
-                ${btn(it.foodId, it.grams)}
-            </div>`;
-        if (!ln.options || ln.options.length < 2) {
-            linesHtml += `<div class="plan-line">${row}</div>`;
-            return;
+        return `<span style="flex:1;min-width:0;font-size:13px;color:var(--text)">${escHtml(m.name)} <span style="color:var(--text3)">${fmt(it.grams)}g · ${fmtN(m.kcal)}kcal · ${fmt(m.prot)}g prot</span></span>`;
+    };
+    const pilula = (o, ativo, usada, onclick, sufixo) => {
+        const f = D.foods.find(x => x.id === o.foodId);
+        return `<button class="plan-opt ${ativo ? 'active' : ''}${usada ? ' usada' : ''}" onclick="${onclick}">${escHtml(f ? f.name : o.foodId)} ${fmt(o.grams)}g${sufixo || ''}</button>`;
+    };
+    let linesHtml = '';
+    const itens = pk.items;
+    for (let i = 0; i < itens.length;) {
+        const it = itens[i];
+        const ln = version.lines[it.lineIdx];
+        const chave = chaveOpcoes(ln);
+        if (!chave) {
+            linesHtml += `<div class="plan-line"><div style="display:flex;align-items:center;gap:8px">${textoItem(it)}${btn(it.foodId, it.grams)}</div></div>`;
+            i++;
+            continue;
         }
-        const pills = ln.options.map((o, oi) => {
-            const f = D.foods.find(x => x.id === o.foodId);
-            return `<button class="plan-opt ${oi === it.optIdx ? 'active' : ''}" onclick="pickPlan(${escHtml(JSON.stringify(slotId))},${pk.v},${it.lineIdx},${oi})">${escHtml(f ? f.name : o.foodId)} ${fmt(o.grams)}g</button>`;
-        }).join('');
-        linesHtml += `<div class="plan-line">
+        let j = i + 1;
+        while (j < itens.length && itens[j].lineIdx === itens[j - 1].lineIdx + 1 && chaveOpcoes(version.lines[itens[j].lineIdx]) === chave) j++;
+        const grupo = itens.slice(i, j);
+        if (grupo.length === 1) {
+            const pills = ln.options.map((o, oi) => pilula(o, oi === it.optIdx, false, `pickPlan(${sid},${pk.v},${it.lineIdx},${oi})`)).join('');
+            linesHtml += `<div class="plan-line">
                 <div class="plan-label">${escHtml(ln.label || 'Escolha uma')} · ${ln.options.length} opções</div>
-                ${row}
+                <div style="display:flex;align-items:center;gap:8px">${textoItem(it)}${btn(it.foodId, it.grams)}</div>
                 <div class="plan-scroll" style="margin-top:6px">${pills}</div>
             </div>`;
-    });
+        } else {
+            const chaveAtiva = slotId + '.' + pk.v + '.' + grupo[0].lineIdx;
+            const ativa = grupo.some(g => g.lineIdx === planPorcaoAtiva[chaveAtiva]) ? planPorcaoAtiva[chaveAtiva] : grupo[0].lineIdx;
+            const itAtivo = grupo.find(g => g.lineIdx === ativa);
+            const lnAtiva = version.lines[ativa];
+            const porcoes = grupo.map((g, k) => `<div class="plan-porcao ${g.lineIdx === ativa ? 'active' : ''}" role="button" tabindex="0" aria-pressed="${g.lineIdx === ativa}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}" onclick="setPlanPorcao(${escHtml(JSON.stringify(chaveAtiva))},${g.lineIdx})">
+                    <span class="plan-porcao-n">${k + 1}ª</span>${textoItem(g)}${btn(g.foodId, g.grams)}
+                </div>`).join('');
+            const pills = ln.options.map(o => {
+                const oi = lnAtiva.options.findIndex(x => chaveOpcao(x) === chaveOpcao(o));
+                const usos = grupo.filter(g => chaveOpcao(g) === chaveOpcao(o)).length;
+                const ativo = chaveOpcao(itAtivo) === chaveOpcao(o);
+                return pilula(o, ativo, usos > 0 && !ativo, `pickPlan(${sid},${pk.v},${ativa},${oi})`, usos > 1 ? ` ×${usos}` : '');
+            }).join('');
+            linesHtml += `<div class="plan-line">
+                <div class="plan-label">${escHtml(grupo.map(g => String(version.lines[g.lineIdx].label || 'Escolha').replace(/\s+\d+$/, '')).filter((b, k, arr) => arr.indexOf(b) === k).join(' ou '))} · ${grupo.length} porções · ${ln.options.length} opções</div>
+                <div class="plan-hint">Podem ser iguais ou diferentes: toque na porção e escolha abaixo.</div>
+                ${porcoes}
+                <div class="plan-scroll" style="margin-top:6px">${pills}</div>
+            </div>`;
+        }
+        i = j;
+    }
     const livres = (version.free || []).filter(Boolean);
     if (livres.length) {
         linesHtml += `<div class="plan-line" style="font-size:12px;color:var(--text3)">À vontade, fora da conta: ${escHtml(livres.join(', '))}</div>`;
@@ -3804,9 +3861,8 @@ function doDietImport() {
     if (res.deactivated.length) partes.push(`desligado(s): ${res.deactivated.join(', ')}`);
     if (res.goalsApplied) partes.push('metas atualizadas');
     toast('✓ Plano importado · ' + partes.join(' · '));
-    rerenderConfigHost();
+    rerenderConfigHost(); // já cobre Ajustes e a tela de metas
     if (cPage === 'meal') rMeal();
-    if (cPage === 'goals') rGoals();
 }
 
 // Contato clicável do profissional vinculado ao plano (camada profissional — semente).
@@ -3926,7 +3982,7 @@ function clearDietPlan() {
     D.planPicks = {};
     save();
     toast('Plano removido');
-    if (cPage === 'goals') rGoals();
+    rerenderConfigHost(); // v1.25.2: o quadro de Ajustes seguia mostrando o plano removido (já cobre a tela de metas)
     if (cPage === 'meal') rMeal();
 }
 
