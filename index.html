@@ -249,6 +249,19 @@ body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);bord
 .modal-actions{display:flex;gap:8px;margin-top:4px}
 .modal-body{margin-top:4px}
 .plan-card{border-left:3px solid var(--primary)}
+/* v1.25.0: plano com várias versões por refeição + "monte o seu" (substituição em pílulas) */
+.plan-scroll{position:relative;display:flex;gap:6px;overflow-x:auto;padding:2px 0 6px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.plan-scroll::-webkit-scrollbar{display:none}
+.plan-ver{flex-shrink:0;text-align:left;padding:7px 11px;border-radius:12px;border:1px solid var(--border);background:var(--bg);color:var(--text2);font-size:12px;font-weight:600;cursor:pointer;max-width:180px;line-height:1.25}
+.plan-ver small{display:block;font-size:10px;font-weight:500;color:var(--text3);margin-top:2px;white-space:nowrap}
+.plan-opt{flex-shrink:0;padding:5px 10px;border-radius:16px;border:1px solid var(--border);background:transparent;color:var(--text2);font-size:11px;cursor:pointer;white-space:nowrap;max-width:230px;overflow:hidden;text-overflow:ellipsis}
+.plan-ver.active,.plan-opt.active{background:var(--primary-light);color:var(--primary-dark);border-color:var(--primary)}
+body:not(.light) .plan-ver.active,body:not(.light) .plan-opt.active{background:var(--green-bg);color:var(--green);border-color:var(--green)}
+.plan-ver.active small{color:inherit}
+.plan-line{padding:8px 0;border-bottom:1px solid var(--border)}
+.plan-label{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--text3);margin-bottom:4px}
+.plan-notes summary{cursor:pointer;font-size:12px;font-weight:600;color:var(--primary);padding:6px 0}
+.plan-notes div{font-size:12px;color:var(--text2);line-height:1.55;white-space:pre-line}
 .added-total{display:flex;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:2px solid var(--primary);font-weight:700;font-size:13px}
 </style>
 </head>
@@ -577,7 +590,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.24.0';
+const APP_VERSION = '1.25.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -776,6 +789,8 @@ function defaultD() {
         // meta.professional (opcional): { name, role, council, phone, instagram } — semente da camada
         // profissional (nutri/personal/médico). Futuro: indicação/contato e, na versão Pro, espaço pago.
         dietPlan: null,
+        // Montagem escolhida do plano por dia (v1.25.0): { 'AAAA-MM-DD': { slotId: { v, o } } }. Estado de tela.
+        planPicks: {},
         // Plano de treino (prescrição do personal) — espelha dietPlan; preenchido na versão Pro.
         workoutPlan: null,
         // Aulas com o personal (v1.24.0): acordo mensal (mensalidade = N aulas, extra, banco), aulas avulsas
@@ -1028,6 +1043,7 @@ async function load() {
             if (!D.consultas) D.consultas = [];
             if (!Array.isArray(D.clinicos)) D.clinicos = []; // v1.18.0
             if (typeof D.dietPlan === 'undefined') D.dietPlan = null;
+            if (!D.planPicks || typeof D.planPicks !== 'object') D.planPicks = {}; // v1.25.0
             if (typeof D.workoutPlan === 'undefined') D.workoutPlan = null; // reservado: plano do personal (espelha dietPlan)
             if (D.personalPlan != null) D.personalPlan = normalizePersonalPlan(D.personalPlan); // v1.24.0 (null = nunca ligou)
             if (typeof D.proPreview !== 'boolean') D.proPreview = false;
@@ -2773,6 +2789,7 @@ function rMeal() {
         </div>`
         : `<button class="btn btn-primary w-full" style="padding:15px;font-size:15px" onclick="toggleFoodCatalog()">＋ Adicionar alimento em ${curSlotCfg.name}</button>`}
     `;
+    restorePlanScroll();
 }
 
 function foodItemHtml(f) {
@@ -3299,14 +3316,26 @@ function saveMeal() {
 
 // ========== PLANO ALIMENTAR (dieta da nutri = SUGESTÃO) ==========
 // D.dietPlan é a prescrição, SEPARADA da execução (D.days[].slots). Estrutura:
-// { meta:{name,source,date,kcalTarget,waterTargetMl,note,importedAt},
-//   slots:[ { slotId, name, time, lines:[ {foodId,grams} | {label,options:[{foodId,grams}]} ] } ] }
+// { meta:{name,source,date,kcalTarget,waterTargetMl,goals?,note,importedAt},
+//   slots:[ { slotId, name, time, lines:[...], versions?:[ {name, lines, free?:[texto], note?} ] } ] }
+// linha = {foodId,grams} (fixa) | {label,options:[{foodId,grams}]} (escolha uma; a 1ª é a prescrita)
+// v1.25.0: uma refeição pode ter VÁRIAS versões (receitas) prescritas. "lines" continua sendo a
+// 1ª versão, então plano antigo (sem versions) segue funcionando como versão única.
+// A montagem escolhida (versão + opção de cada linha) é estado de tela por dia em D.planPicks:
+// { 'AAAA-MM-DD': { slotId: { v: 0, o: { 'versão.linha': opção } } } }. Nunca é registro de consumo.
 
 // Plano do slot selecionado (ou null)
 function getPlanSlot(slotId) {
     const p = D && D.dietPlan;
     if (!p || !Array.isArray(p.slots)) return null;
     return p.slots.find(s => s.slotId === slotId) || null;
+}
+
+// Versões de um slot do plano (plano sem versions = 1 versão sem nome)
+function planVersions(ps) {
+    if (!ps) return [];
+    if (Array.isArray(ps.versions) && ps.versions.length) return ps.versions;
+    return [{ name: '', lines: ps.lines || [], free: [], note: '' }];
 }
 
 // Macros de uma linha do plano (foodId + gramas), lendo do banco D.foods
@@ -3317,16 +3346,81 @@ function planLineMacros(foodId, grams) {
     return { name: f.name, kcal: f.kcal * r, prot: f.prot * r, carbo: (f.carbo || 0) * r, gord: (f.gord || 0) * r };
 }
 
-// Subtotal previsto de um slot do plano (substituições contam pela 1ª opção)
-function planSlotSubtotal(planSlot) {
-    let k = 0, p = 0;
-    (planSlot.lines || []).forEach(ln => {
-        const ref = ln.options ? ln.options[0] : ln;
-        if (!ref) return;
-        const m = planLineMacros(ref.foodId, ref.grams);
-        k += m.kcal; p += m.prot;
+// Montagem escolhida numa refeição. Sem escolha no dia, herda a última montagem usada nesta
+// refeição (quem monta o café costuma repetir); sem nenhuma, 1ª versão com as 1ªs opções.
+function getPlanPick(slotId, dt) {
+    dt = dt || curDate();
+    const picks = (D && D.planPicks && typeof D.planPicks === 'object') ? D.planPicks : {};
+    if (picks[dt] && picks[dt][slotId]) return picks[dt][slotId];
+    const anteriores = Object.keys(picks).filter(d => d < dt && picks[d] && picks[d][slotId]).sort();
+    if (anteriores.length) return picks[anteriores[anteriores.length - 1]][slotId];
+    return { v: 0, o: {} };
+}
+
+function setPlanPick(slotId, v, lineIdx, optIdx) {
+    const dt = curDate();
+    if (!D.planPicks || typeof D.planPicks !== 'object') D.planPicks = {};
+    const base = getPlanPick(slotId, dt);
+    const pick = { v: v, o: Object.assign({}, base.o || {}) };
+    if (lineIdx != null) pick.o[v + '.' + lineIdx] = optIdx;
+    if (!D.planPicks[dt]) D.planPicks[dt] = {};
+    D.planPicks[dt][slotId] = pick;
+    // estado de tela: guarda só as 60 datas mais recentes
+    const datas = Object.keys(D.planPicks).sort();
+    datas.slice(0, Math.max(0, datas.length - 60)).forEach(d => { delete D.planPicks[d]; });
+}
+
+// Toque num cartão de versão ou numa pílula do "monte o seu"
+function pickPlan(slotId, v, lineIdx, optIdx) {
+    setPlanPick(slotId, v, lineIdx, optIdx);
+    save();
+    if (cPage === 'meal') rMeal();
+}
+
+// Itens da montagem, cada linha já resolvida no alimento escolhido.
+// vForce calcula outra versão (os cartões de versão mostram o total de cada uma).
+function planPickedItems(slotId, dt, vForce) {
+    const vers = planVersions(getPlanSlot(slotId));
+    if (!vers.length) return { v: 0, version: null, items: [] };
+    const pick = getPlanPick(slotId, dt);
+    const vRaw = vForce != null ? vForce : pick.v;
+    const v = Math.min(Math.max(0, parseInt(vRaw, 10) || 0), vers.length - 1);
+    const version = vers[v];
+    const items = [];
+    (version.lines || []).forEach((ln, i) => {
+        if (!ln) return;
+        if (!ln.options) { items.push({ lineIdx: i, foodId: ln.foodId, grams: ln.grams }); return; }
+        if (!ln.options.length) return;
+        const k = pick.o ? pick.o[v + '.' + i] : undefined;
+        const oi = (k != null && ln.options[k]) ? k : 0;
+        items.push({ lineIdx: i, optIdx: oi, foodId: ln.options[oi].foodId, grams: ln.options[oi].grams });
     });
-    return { kcal: k, prot: p };
+    return { v: v, version: version, items: items };
+}
+
+function planItemsTotals(items) {
+    const t = { kcal: 0, prot: 0, carbo: 0, gord: 0, missing: 0 };
+    items.forEach(it => {
+        const m = planLineMacros(it.foodId, it.grams);
+        if (m.missing) t.missing++;
+        t.kcal += m.kcal; t.prot += m.prot; t.carbo += m.carbo; t.gord += m.gord;
+    });
+    return t;
+}
+
+// Previsto do DIA pelo plano: soma a montagem escolhida de cada refeição visível no dia
+function planDayProjection(dt) {
+    dt = dt || curDate();
+    const p = D && D.dietPlan;
+    if (!p || !Array.isArray(p.slots)) return null;
+    const visiveis = new Set(getDaySlots(dt).map(s => s.id));
+    const t = { kcal: 0, prot: 0, carbo: 0, gord: 0, refeicoes: 0 };
+    p.slots.forEach(ps => {
+        if (!visiveis.has(ps.slotId)) return;
+        const tt = planItemsTotals(planPickedItems(ps.slotId, dt).items);
+        t.kcal += tt.kcal; t.prot += tt.prot; t.carbo += tt.carbo; t.gord += tt.gord; t.refeicoes++;
+    });
+    return t;
 }
 
 // Adiciona um item à execução de um slot, a partir de foodId+gramas (sem I/O de modal).
@@ -3371,33 +3465,36 @@ function slotRealTotals(slotId) {
     return { kcal: k, prot: p };
 }
 
-// Registro de item do plano (v1.9.7): o ✓ de cada linha abre openAddFood(foodId, grams) —
+// Registro de item do plano (v1.9.7): a caixinha de cada linha abre openAddFood(foodId, grams),
 // modal com a quantidade do plano PRÉ-PREENCHIDA e EDITÁVEL + cálculo de macros ao vivo.
-// (A antiga logPlanLine, que registrava direto sem ajuste, foi removida.) "Comi tudo" abaixo
-// é o único registro em lote, sem ajuste por item, usando a 1ª opção das substituições.
+// "Comi tudo" abaixo é o único registro em lote e usa a montagem escolhida (v1.25.0).
 
-// "✓ Comi tudo" → registra a refeição inteira conforme o plano (substituição usa a 1ª opção)
+// "✓ Comi tudo" → registra a MONTAGEM escolhida (versão + opção de cada linha; sem escolha = 1ª opção)
 function logWholePlanMeal(slotId) {
-    const ps = getPlanSlot(slotId);
-    if (!ps) return;
+    const pk = planPickedItems(slotId);
+    if (!pk.items.length) return toast('Nada para registrar', true);
+    const slot = getDayData(curDate()).slots[slotId];
+    const ja = (slot && slot.items) ? slot.items.length : 0;
+    if (ja > 0 && !confirm(`Esta refeição já tem ${ja} ${ja > 1 ? 'itens registrados' : 'item registrado'}.\n\nRegistrar a montagem inteira mesmo assim?`)) return;
     let n = 0;
-    (ps.lines || []).forEach(ln => {
-        const ref = ln.options ? ln.options[0] : ln;
-        if (ref && addMealItemToSlot(slotId, ref.foodId, ref.grams)) n++;
-    });
+    pk.items.forEach(it => { if (addMealItemToSlot(slotId, it.foodId, it.grams)) n++; });
     if (n === 0) return toast('Nada para registrar', true);
     save();
     toast(`✓ ${n} ${n > 1 ? 'itens registrados' : 'item registrado'} conforme o plano`);
     if (cPage === 'meal') rMeal();
 }
 
-// Card do plano dentro da refeição: sugestão (read) + registro de 1 toque + aderência (Plano × Comido)
+// Card do plano dentro da refeição: versões (cartões) + montagem (pílulas por linha) +
+// registro de 1 toque + aderência (Plano × Comido) + previsto do dia com as escolhas.
 function planCardHtml(slotId) {
     const ps = getPlanSlot(slotId);
     if (!ps) return '';
+    const vers = planVersions(ps);
+    const pk = planPickedItems(slotId);
+    const version = pk.version;
+    if (!version) return '';
     // v1.18.1: a caixinha nasce VAZIA (é o que você tem a fazer) e só vira ✓ verde
-    // depois que o item foi mesmo registrado. Antes ela já vinha com o check cheio,
-    // que lia como "confirmado" quando ainda era só o botão de confirmar.
+    // depois que o item foi mesmo registrado.
     const logged = slotLoggedFoodIds(slotId);
     const btn = (foodId, grams) => {
         const feito = !!logged[foodId];
@@ -3409,48 +3506,104 @@ function planCardHtml(slotId) {
                    color:${feito ? 'var(--green)' : 'transparent'};
                    border:${feito ? '1px solid var(--green)' : '1.5px solid var(--border)'}">${feito ? '✓' : ''}</button>`;
     };
+
+    // 1) Cartões de versão (só quando a refeição tem mais de uma receita prescrita)
+    let versHtml = '';
+    if (vers.length > 1) {
+        const cards = vers.map((vv, i) => {
+            const t = planItemsTotals(planPickedItems(slotId, null, i).items);
+            return `<button class="plan-ver ${i === pk.v ? 'active' : ''}" onclick="pickPlan('${slotId}',${i})">${escHtml(vv.name || ('Opção ' + (i + 1)))}<small>${fmtN(t.kcal)} kcal · ${fmt(t.prot)}g prot</small></button>`;
+        }).join('');
+        versHtml = `<div class="plan-label">${vers.length} opções prescritas · toque para escolher</div>
+            <div class="plan-scroll">${cards}</div>`;
+    }
+
+    // 2) Linhas da montagem: fixa = nome + caixinha; com substituição = escolhida + pílulas
     let linesHtml = '';
-    (ps.lines || []).forEach(ln => {
-        if (ln.options) {
-            const opts = ln.options.map((o, idx) => {
-                const m = planLineMacros(o.foodId, o.grams);
-                const pref = idx === 0 ? '▸ ' : '<span style="color:var(--text3)">ou </span>';
-                return `<div style="display:flex;align-items:center;gap:8px;padding:3px 0 3px 10px">
-                    <span style="flex:1;min-width:0;font-size:12px;color:var(--text2)">${pref}${m.name} <span style="color:var(--text3)">${fmt(o.grams)}g · ${fmtN(m.kcal)}kcal · ${fmt(m.prot)}g prot</span></span>
-                    ${btn(o.foodId, o.grams)}
-                </div>`;
-            }).join('');
-            linesHtml += `<div style="padding:6px 0;border-bottom:1px solid var(--border)"><div style="font-size:12px;font-weight:700;color:var(--text)">${ln.label || 'Escolha'} — escolha uma:</div>${opts}</div>`;
-        } else {
-            const m = planLineMacros(ln.foodId, ln.grams);
-            linesHtml += `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
-                <span style="flex:1;min-width:0;font-size:13px;color:var(--text)">${m.name} <span style="color:var(--text3)">${fmt(ln.grams)}g · ${fmtN(m.kcal)}kcal · ${fmt(m.prot)}g</span></span>
-                ${btn(ln.foodId, ln.grams)}
+    pk.items.forEach(it => {
+        const ln = version.lines[it.lineIdx];
+        const m = planLineMacros(it.foodId, it.grams);
+        const row = `<div style="display:flex;align-items:center;gap:8px">
+                <span style="flex:1;min-width:0;font-size:13px;color:var(--text)">${escHtml(m.name)} <span style="color:var(--text3)">${fmt(it.grams)}g · ${fmtN(m.kcal)}kcal · ${fmt(m.prot)}g prot</span></span>
+                ${btn(it.foodId, it.grams)}
             </div>`;
+        if (!ln.options || ln.options.length < 2) {
+            linesHtml += `<div class="plan-line">${row}</div>`;
+            return;
         }
+        const pills = ln.options.map((o, oi) => {
+            const f = D.foods.find(x => x.id === o.foodId);
+            return `<button class="plan-opt ${oi === it.optIdx ? 'active' : ''}" onclick="pickPlan('${slotId}',${pk.v},${it.lineIdx},${oi})">${escHtml(f ? f.name : o.foodId)} ${fmt(o.grams)}g</button>`;
+        }).join('');
+        linesHtml += `<div class="plan-line">
+                <div class="plan-label">${escHtml(ln.label || 'Escolha uma')} · ${ln.options.length} opções</div>
+                ${row}
+                <div class="plan-scroll" style="margin-top:6px">${pills}</div>
+            </div>`;
     });
-    const sub = planSlotSubtotal(ps);
+    const livres = (version.free || []).filter(Boolean);
+    if (livres.length) {
+        linesHtml += `<div class="plan-line" style="font-size:12px;color:var(--text3)">À vontade, fora da conta: ${escHtml(livres.join(', '))}</div>`;
+    }
+
+    // 3) Rodapé: montagem × comido × dia
+    const t = planItemsTotals(pk.items);
     const real = slotRealTotals(slotId);
-    const pctK = sub.kcal > 0 ? Math.round(real.kcal / sub.kcal * 100) : 0;
+    const pctK = t.kcal > 0 ? Math.round(real.kcal / t.kcal * 100) : 0;
+    const dia = planDayProjection();
+    const g = getGoals(curDate());
+    const note = String(version.note || '').trim();
     return `
         <div class="card mb-12 plan-card">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px">
                 <span class="card-title" style="margin:0">📋 Plano da nutri</span>
-                <button class="btn btn-primary btn-sm" style="flex-shrink:0" onclick="logWholePlanMeal('${slotId}')" title="Registrar a refeição inteira conforme o plano (substituições usam a 1ª opção)">✓ Comi tudo</button>
+                <button class="btn btn-primary btn-sm" style="flex-shrink:0" onclick="logWholePlanMeal('${slotId}')" title="Registrar a montagem escolhida inteira (depois dá pra ajustar ou remover item por item)">✓ Comi tudo</button>
             </div>
-            <div style="font-size:11px;margin-bottom:10px;color:var(--text3);line-height:1.5">
-                Previsto <strong style="color:var(--text)">${fmtN(sub.kcal)} kcal · ${fmt(sub.prot)}g prot</strong><br>
-                Comido <strong style="color:${real.kcal > 0 ? 'var(--primary)' : 'var(--text3)'}">${fmtN(real.kcal)} kcal · ${fmt(real.prot)}g prot</strong>${sub.kcal > 0 ? ` <span style="color:var(--text3)">(${pctK}% das kcal)</span>` : ''}
-            </div>
+            ${versHtml}
+            ${vers.length > 1 && version.name ? `<div style="font-size:14px;font-weight:700;color:var(--text);margin:8px 0 2px">${escHtml(version.name)}</div>` : ''}
             ${linesHtml}
+            <div style="font-size:11px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);color:var(--text3);line-height:1.6">
+                ${vers.length > 1 || pk.items.some(i => i.optIdx != null) ? 'Esta montagem' : 'Previsto'} <strong style="color:var(--text)">${fmtN(t.kcal)} kcal · ${fmt(t.prot)}g prot · ${fmt(t.carbo)}g carb · ${fmt(t.gord)}g gord</strong><br>
+                Comido <strong style="color:${real.kcal > 0 ? 'var(--primary)' : 'var(--text3)'}">${fmtN(real.kcal)} kcal · ${fmt(real.prot)}g prot</strong>${t.kcal > 0 ? ` (${pctK}% das kcal)` : ''}
+                ${dia && dia.refeicoes > 1 ? `<br>Dia pelo plano, com suas escolhas <strong style="color:var(--text)">${fmtN(dia.kcal)} kcal · ${fmt(dia.prot)}g prot</strong>${g && g.prot ? ` (meta ${fmtN(g.prot)}g)` : ''}` : ''}
+                ${t.missing ? `<br><span style="color:var(--red)">⚠ ${t.missing} alimento(s) do plano sem cadastro contam zero</span>` : ''}
+            </div>
+            ${note ? `<details class="plan-notes"><summary>Observações da nutri${/modo de preparo/i.test(note) ? ' e modo de preparo' : ''}</summary><div>${escHtml(note)}</div></details>` : ''}
         </div>`;
 }
 
-// Processa o plano colado (objeto já parseado). Muta D.foods/mealSlots/dietPlan.
-// Separado do I/O pra ser testável. Retorna { ok, addedFoods, createdSlots, error }.
-function processDietImport(parsed) {
+// Re-render zera a rolagem horizontal das pílulas: devolve a opção escolhida para a vista
+function restorePlanScroll() {
+    if (typeof document === 'undefined' || !document.querySelectorAll) return;
+    document.querySelectorAll('#meal-body .plan-scroll').forEach(row => {
+        const a = row.querySelector('.active');
+        if (a && a.offsetLeft + a.offsetWidth > row.clientWidth) row.scrollLeft = a.offsetLeft - 12;
+    });
+}
+
+// Processa o plano colado (objeto já parseado). Muta D.foods/mealSlots/dietPlan (e metas, se pedido).
+// Separado do I/O pra ser testável. Retorna { ok, addedFoods, createdSlots, versions, deactivated, goalsApplied, error }.
+// opts.substituir: refeições do plano ANTERIOR que não voltaram no novo são desligadas (histórico fica).
+// opts.aplicarMetas: copia meta.goals {kcal,prot,carbo,gord,water} para os dias de treino e de descanso.
+function processDietImport(parsed, opts) {
+    opts = opts || {};
     if (!parsed || typeof parsed !== 'object') return { ok: false, error: 'JSON inválido' };
     if (!Array.isArray(parsed.slots) || parsed.slots.length === 0) return { ok: false, error: 'Plano sem refeições (campo "slots")' };
+
+    // 0) Trava ANTES de mexer em qualquer coisa: todo alimento citado precisa existir no banco ou
+    //    vir em newFoods. Alimento sem cadastro contaria 0 kcal calado na tela do plano.
+    const conhecidos = new Set(D.foods.map(f => f.id));
+    (parsed.newFoods || []).forEach(f => { if (f && f.id && f.name) conhecidos.add(f.id); });
+    const faltam = new Set();
+    const vistoria = lines => (lines || []).forEach(ln => (ln && ln.options ? ln.options : [ln]).forEach(o => {
+        if (!o || !o.foodId || !conhecidos.has(o.foodId)) faltam.add((o && o.foodId) || '(linha sem foodId)');
+    }));
+    parsed.slots.forEach(ps => {
+        if (!ps) return;
+        vistoria(ps.lines);
+        (Array.isArray(ps.versions) ? ps.versions : []).forEach(v => vistoria(v && v.lines));
+    });
+    if (faltam.size) return { ok: false, error: 'Alimento sem cadastro no plano: ' + Array.from(faltam).slice(0, 5).join(', ') };
 
     // 1) Alimentos novos — adiciona só os que não existem (preserva edições do usuário)
     let addedFoods = 0;
@@ -3467,10 +3620,11 @@ function processDietImport(parsed) {
 
     // 2) Resolve cada slot do plano → campo real (por id, depois por nome); cria se faltar.
     //    Novos campos entram logo após o último resolvido, preservando a ordem do plano.
-    let createdSlots = 0;
+    let createdSlots = 0, totalVersions = 0;
     const resolvedSlots = [];
     let cursor = -1;
     parsed.slots.forEach(ps => {
+        if (!ps) return;
         const wantName = normalizeStr(ps.name);
         let idx = ps.match ? D.mealSlots.findIndex(s => s.id === ps.match) : -1;
         if (idx < 0) idx = D.mealSlots.findIndex(s => normalizeStr(s.name) === wantName);
@@ -3487,15 +3641,46 @@ function processDietImport(parsed) {
             cursor = at;
             createdSlots++;
         }
-        resolvedSlots.push({ slotId: slotId, name: ps.name, time: ps.time || '', lines: ps.lines || [] });
+        const versions = (Array.isArray(ps.versions) ? ps.versions : [])
+            .filter(v => v && Array.isArray(v.lines))
+            .map(v => ({ name: v.name || '', lines: v.lines, free: Array.isArray(v.free) ? v.free : [], note: v.note || '' }));
+        const rs = { slotId: slotId, name: ps.name, time: ps.time || '', lines: versions.length ? versions[0].lines : (ps.lines || []) };
+        if (versions.length) rs.versions = versions;
+        totalVersions += versions.length || 1;
+        resolvedSlots.push(rs);
     });
 
-    // 3) Guarda o plano (substitui qualquer anterior)
+    // 3) Substituir o anterior: desliga as refeições do plano velho que não voltaram no novo.
+    //    Só desliga (ativo=false): dia com registro no campo continua mostrando o campo.
+    const deactivated = [];
+    if (opts.substituir && D.dietPlan && Array.isArray(D.dietPlan.slots)) {
+        const novos = new Set(resolvedSlots.map(s => s.slotId));
+        D.dietPlan.slots.forEach(old => {
+            if (!old || novos.has(old.slotId)) return;
+            const cfg = D.mealSlots.find(s => s.id === old.slotId);
+            if (cfg && cfg.ativo !== false) { cfg.ativo = false; deactivated.push(cfg.name); }
+        });
+    }
+
+    // 4) Metas do plano: só com pedido explícito (caixinha do modal)
+    let goalsApplied = false;
+    const mg = parsed.meta && parsed.meta.goals;
+    if (opts.aplicarMetas && mg && typeof mg === 'object') {
+        if (!D.goals || typeof D.goals !== 'object') D.goals = defaultD().goals;
+        ['treino', 'descanso'].forEach(tipo => {
+            if (!D.goals[tipo]) D.goals[tipo] = {};
+            ['kcal', 'prot', 'carbo', 'gord', 'water'].forEach(k => { if (+mg[k] > 0) D.goals[tipo][k] = +mg[k]; });
+        });
+        goalsApplied = true;
+    }
+
+    // 5) Guarda o plano (substitui qualquer anterior); montagens do plano velho não valem mais
     const meta = Object.assign({}, parsed.meta || {});
     meta.importedAt = today();
     D.dietPlan = { meta: meta, slots: resolvedSlots };
+    D.planPicks = {};
 
-    return { ok: true, addedFoods: addedFoods, createdSlots: createdSlots };
+    return { ok: true, addedFoods: addedFoods, createdSlots: createdSlots, versions: totalVersions, deactivated: deactivated, goalsApplied: goalsApplied };
 }
 
 function openDietImport() {
@@ -3503,8 +3688,9 @@ function openDietImport() {
     overlay.className = 'modal-overlay';
     overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
     const cur = D.dietPlan
-        ? `<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Plano atual: <strong style="color:var(--text)">${(D.dietPlan.meta || {}).name || '—'}</strong>. Importar de novo substitui o plano (seus registros do dia não são afetados).</div>`
+        ? `<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Plano atual: <strong style="color:var(--text)">${escHtml((D.dietPlan.meta || {}).name || '—')}</strong>. Importar de novo substitui o plano (seus registros de refeição não são afetados).</div>`
         : '';
+    const chkStyle = 'display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--text2);margin-bottom:10px;cursor:pointer';
     overlay.innerHTML = `
         <div class="modal-box">
             <div class="modal-header">
@@ -3516,6 +3702,15 @@ function openDietImport() {
                 <label class="form-label">Cole o plano (JSON enviado pelo assistente)</label>
                 <textarea id="diet-import-text" class="form-input" style="min-height:140px;font-family:monospace;font-size:12px" placeholder='{ "meta": {...}, "newFoods": [...], "slots": [...] }'></textarea>
             </div>
+            ${D.dietPlan ? `
+            <label style="${chkStyle}">
+                <input type="checkbox" id="diet-import-replace" checked style="margin-top:2px;width:18px;height:18px;flex-shrink:0">
+                <span>Substituir o plano anterior: as refeições dele que não estiverem no plano novo são desligadas (o histórico fica, e dá pra religar em Campos de refeição).</span>
+            </label>` : ''}
+            <label style="${chkStyle}">
+                <input type="checkbox" id="diet-import-goals" style="margin-top:2px;width:18px;height:18px;flex-shrink:0">
+                <span>Aplicar as metas do plano (kcal, proteína, carbo, gordura e água) aos dias de treino e de descanso. Desmarcado, suas metas ficam como estão.</span>
+            </label>
             <div class="modal-actions">
                 <button class="btn btn-outline" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
                 <button class="btn btn-primary" style="flex:1" onclick="doDietImport()">Importar</button>
@@ -3530,11 +3725,19 @@ function doDietImport() {
     let parsed;
     try { parsed = JSON.parse(txt); }
     catch (e) { return toast('JSON inválido — verifique o texto colado', true); }
-    const res = processDietImport(parsed);
+    const chkR = $('diet-import-replace');
+    const chkG = $('diet-import-goals');
+    const res = processDietImport(parsed, { substituir: !!(chkR && chkR.checked), aplicarMetas: !!(chkG && chkG.checked) });
     if (!res.ok) return toast(res.error || 'Falha ao importar', true);
     save();
     const ov = document.querySelector('.modal-overlay'); if (ov) ov.remove();
-    toast(`✓ Plano importado · ${res.addedFoods} alimento(s) novo(s), ${res.createdSlots} campo(s) novo(s)`);
+    const partes = [`${res.versions} opção(ões) de refeição`];
+    if (res.addedFoods) partes.push(`${res.addedFoods} alimento(s) novo(s)`);
+    if (res.createdSlots) partes.push(`${res.createdSlots} campo(s) novo(s)`);
+    if (res.deactivated.length) partes.push(`desligado(s): ${res.deactivated.join(', ')}`);
+    if (res.goalsApplied) partes.push('metas atualizadas');
+    toast('✓ Plano importado · ' + partes.join(' · '));
+    rerenderConfigHost();
     if (cPage === 'meal') rMeal();
     if (cPage === 'goals') rGoals();
 }
@@ -3653,6 +3856,7 @@ function openProFeature(kind) {
 function clearDietPlan() {
     if (!confirm('Remover o plano alimentar?\n\nSeus registros de refeições NÃO são afetados — some apenas a sugestão. Campos criados pelo plano (ex.: Sobremesa) permanecem e podem ser removidos em "Campos de refeição".')) return;
     D.dietPlan = null;
+    D.planPicks = {};
     save();
     toast('Plano removido');
     if (cPage === 'goals') rGoals();
@@ -5719,7 +5923,7 @@ function settingsImportHtml() {
             </button>
             ${D.dietPlan ? `
             <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
-                <div style="font-size:11px;color:var(--text3)">Plano ativo: <strong style="color:var(--text)">${(D.dietPlan.meta || {}).name || '—'}</strong> · ${fmtN((D.dietPlan.meta || {}).kcalTarget || 0)} kcal/dia</div>
+                <div style="font-size:11px;color:var(--text3)">Plano ativo: <strong style="color:var(--text)">${escHtml((D.dietPlan.meta || {}).name || '—')}</strong> · ${fmtN((D.dietPlan.meta || {}).kcalTarget || 0)} kcal/dia · ${(D.dietPlan.slots || []).reduce((n, s) => n + planVersions(s).length, 0)} opções de refeição</div>
                 ${planProfessionalHtml(D.dietPlan.meta)}
                 <button class="btn btn-outline btn-sm" style="margin-top:8px;color:var(--red)" onclick="clearDietPlan()">Remover plano</button>
             </div>` : ''}

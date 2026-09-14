@@ -1,12 +1,48 @@
 # Estado do Projeto — Gestão Saúde
 
-**Última atualização:** 2026-09-02 (parte 14, sessão no Mac mini)
-**Versão atual em produção:** v1.23.0 (a v1.24.0 está commitada e aguarda o push do Gileno; v1.22.1 = fix da config em Ajustes; v1.22.0 = prints do Apple Watch na análise por IA, serviço **v2.2** na VPS)
+**Última atualização:** 2026-09-14 (parte 15, sessão no Mac mini)
+**Versão atual em produção:** v1.24.0 (a v1.25.0 foi commitada no Mac mini em 14/09 e aguarda o push, que por enquanto sai pelo MacBook; v1.24.0 = aulas com o personal; v1.22.0 = prints do Apple Watch na análise por IA, serviço **v2.2** na VPS)
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
 
 > Este documento é o **handoff vivo** do projeto. Qualquer nova sessão de trabalho começa lendo este arquivo pra entender estado atual, decisões já tomadas, e próximos passos.
+
+---
+
+## Resumo da sessão 2026-09-14 (parte 15): v1.25.0, plano da nutri com várias versões por refeição + "monte o seu"
+
+Sessão no **Mac mini**. Pedido do Gileno: trocar o plano alimentar antigo pelo novo da nutricionista
+e facilitar as refeições "monte o seu". O plano novo tem **várias receitas por refeição** (até 12 no
+jantar) e refeições em que a pessoa escolhe os recheios de uma lista; o `D.dietPlan` só guardava uma
+versão por refeição, e as substituições apareciam como lista corrida.
+
+**O que mudou no código (tudo dentro do bloco PLANO ALIMENTAR do `index.html`):**
+- `dietPlan.slots[].versions[] = {name, lines, free, note}`. `lines` continua sendo a 1ª versão, então
+  plano antigo (sem `versions`) funciona como versão única, sem migração.
+- `D.planPicks[data][slotId] = {v, o:{'versão.linha': opção}}`: a montagem escolhida é **estado de tela
+  por dia**, nunca registro de consumo. Sem escolha no dia, herda a última montagem da refeição. Guarda
+  60 datas. Reimportar zera.
+- Card "📋 Plano da nutri": cartões de versão com kcal e proteína de cada uma, rolagem horizontal; cada
+  linha com substituição vira a opção escolhida + **pílulas** (toque troca); "À vontade" fora da conta;
+  observações e modo de preparo recolhidos em `<details>`; rodapé com montagem, comido e **dia pelo
+  plano com as escolhas** contra a meta de proteína. `restorePlanScroll()` devolve a pílula ativa à vista
+  depois do re-render.
+- "✓ Comi tudo" registra a **montagem escolhida** (antes: 1ª opção) e pede confirmação se a refeição já
+  tem itens.
+- `processDietImport(parsed, opts)`: **trava antes de mutar** (alimento citado sem cadastro recusa o
+  import inteiro; antes contava 0 kcal calado); `opts.substituir` desliga (`ativo=false`) as refeições do
+  plano anterior que não voltaram (histórico fica); `opts.aplicarMetas` copia `meta.goals` para treino e
+  descanso. As duas saem de caixinhas no modal; metas vêm **desmarcadas** (decisão de maio: import não
+  mexe em meta sem pedido).
+
+**Verificação:** harness jsc com o `<script>` real (81 checks: plano antigo, import por cima com
+substituir, trava sem mutação, idempotência, metas, pílulas, herança e poda de montagem, escape de
+HTML, Comi tudo com confirmação, previsto do dia em treino e descanso, `rMeal`, Ajustes, modal e
+`doDietImport`) e bancada visual a 375 px com Firebase simulado (sem rolagem horizontal da página).
+
+**Import (concierge, igual ao treino):** JSON `*.plan.json` (gitignored, repo público) → Modo Pro →
+Ajustes › Planos › 🥗 → colar → "Substituir o plano anterior" marcada → metas conforme decisão do Gileno.
 
 ---
 
