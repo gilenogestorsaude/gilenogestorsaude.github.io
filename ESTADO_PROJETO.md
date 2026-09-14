@@ -35,6 +35,21 @@ dado virando 0, alimento em "un", nota TACO velha, `ref` inválida no import); c
 (parcial perto do limite neutro, meta com decimal ou unidade) curadas antes do commit. Baterias: v1.26.0 79/79, reauditoria 27/27,
 porções 26/26, plano 81/81, catálogo 27/27, cura 13/13, escape 10/10.
 
+**Gordura como limite (decisão do Gileno, 14/09 tarde, ainda dentro da v1.26.0).** Gordura deixa de ser meta (ficava verde ao passar)
+e vira limite, como o sódio. Regra única `estadoLimite(val, meta)`: consumo e limite arredondados como a tela mostra; `acima` = passou,
+`perto` = 90% ou mais; limite que arredonda para 0 conta como sem limite. Usada no card do Resumo (barra vermelha com "⚠ acima do limite",
+amarela com "perto do limite", roxa dentro), no anel do Início (arco colorido; número na cor do texto, com ⚠ só quando acima; legenda
+"N / L g" em grama inteiro com "· acima" ou "· perto" em `--text2` peso 700, 4,83:1 no claro e 6,58:1 no escuro), na leitura do histórico
+(`pctLimite`: nunca passa de 100% sem estar acima, vale também para o sódio) e no `diasGordOk`/`temMetaGord` do relatório semanal.
+Metas com "limite opcional" e valor no formato da tela, `editGoal` e toast "Limite atualizado" para gordura e sódio, modal de import
+"metas do plano (kcal, proteína, carbo e água) e os limites (gordura e sódio)".
+Auditoria independente: APROVADO COM RESSALVAS (limite decimal dava "33 / 33 g · acima", "perto" só por cor no anel, contraste do número,
+relatório com outra régua), tudo curado. Reauditoria: APROVADO COM RESSALVAS (limite 0,4 em Metas, relatório e histórico; histórico com
+101% em dia "perto"; contraste da legenda), tudo curado; as falhas restantes do script do auditor foram julgadas expectativa antiga.
+Defeito ANTIGO, fora do escopo (já existe em 8463fe8): item com `gord` em texto concatena em `getDayMeals` ("040") e o histórico diz
+"Sem registros". Baterias: v1.26.0 111/111, reauditoria do sódio 27/27, porções 26/26, plano 81/81, catálogo 27/27, cura 13/13,
+escape 10/10, auditor v1.25.1 44/44; prints no bench nos três estados, claro e escuro, e medição a 375 px sem transbordar.
+
 ---
 
 ## Resumo da sessão 2026-09-14 (parte 17): v1.25.2, porções iguais num bloco só

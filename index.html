@@ -843,7 +843,7 @@ function defaultD() {
         cargaStep: 1,    // passo do +/- da carga (kg) — pesos redondos (1,2,3...)
         // Water by date: { '2026-03-01': [ { time: '05:15', vol: 500, source: 'Dexilant', auto: true }, ... ] }
         water: {},
-        // Goals — kcal/prot/water sempre setados; carbo/gord opcionais (0 = sem meta, so mostra valor)
+        // Goals — kcal/prot/water sempre setados; carbo (meta) e gord (limite desde a v1.26.0) opcionais (0 = sem, so mostra valor)
         goals: {
             treino:   { kcal: 2000, prot: 180, water: 4750, carbo: 0, gord: 0 },
             descanso: { kcal: 1450, prot: 160, water: 4250, carbo: 0, gord: 0 }
@@ -1104,7 +1104,7 @@ async function load() {
                     if (typeof f.gord !== 'number') f.gord = 0;
                 });
             }
-            // v1.1.2 — adiciona metaCarbo/metaGord opcionais (0 = sem meta, so mostra valor no dashboard)
+            // v1.1.2 — adiciona metaCarbo/metaGord opcionais (0 = sem meta, so mostra valor no dashboard); gord vira limite na v1.26.0
             ['treino', 'descanso'].forEach(t => {
                 if (D.goals[t] && typeof D.goals[t].carbo !== 'number') D.goals[t].carbo = 0;
                 if (D.goals[t] && typeof D.goals[t].gord !== 'number') D.goals[t].gord = 0;
@@ -2209,7 +2209,7 @@ function rDash() {
     const kcalPctRaw = goals.kcal > 0 ? totalKcal / goals.kcal * 100 : 0;
     const protPctRaw = goals.prot > 0 ? totalProt / goals.prot * 100 : 0;
     const waterPctRaw = goals.water > 0 ? totalWater / goals.water * 100 : 0;
-    const carboHasMeta = goals.carbo > 0, gordHasMeta = goals.gord > 0;
+    const carboHasMeta = goals.carbo > 0, gordHasMeta = Math.round(goals.gord) > 0; // gordura é limite e decide em grama inteiro (estadoLimite)
     const carboPctRaw = carboHasMeta ? totalCarbo / goals.carbo * 100 : 0;
     const gordPctRaw = gordHasMeta ? totalGord / goals.gord * 100 : 0;
     const sonoMin = calcSleepDuration(vitals.dormir, vitals.acordar);
@@ -2226,6 +2226,16 @@ function rDash() {
         if (has === false) return '—';
         const r = Math.round(raw);
         return raw >= 100 ? `<span style="color:var(--green);font-weight:800">${r}%</span>` : (r + '%');
+    };
+    // Gordura é LIMITE (v1.26.0, decisão do usuário): perto do teto amarelo, acima vermelho com ⚠; nunca verde por passar.
+    // Quem decide é estadoLimite(), a mesma regra do card do Resumo, para as duas telas nunca discordarem.
+    const gordEstado = estadoLimite(totalGord, goals.gord);
+    // O número fica sempre na cor do texto (vermelho e amarelo sobre branco não dão contraste de texto):
+    // o estado vai no arco, no ⚠ e na legenda escrita "· perto" / "· acima".
+    const ringPctLimite = (raw, has, est) => {
+        if (has === false) return '—';
+        const r = Math.round(raw);
+        return est === 'acima' ? '⚠' + Math.max(r, 101) + '%' : Math.min(r, 100) + '%';
     };
     const sonoColor = sonoMin == null ? 'var(--border)' : (sonoMin < 360 ? '#f59e0b' : '#6366f1');
 
@@ -2437,11 +2447,11 @@ function rDash() {
                 </div>
                 <div class="pring-item">
                     <div class="pring-wrap">
-                        <svg class="pring" viewBox="0 0 80 80"><circle class="pring-track" cx="40" cy="40" r="34"/><circle class="pring-arc" cx="40" cy="40" r="34" stroke="${gordHasMeta ? '#a855f7' : 'var(--border)'}" stroke-dasharray="213.6" stroke-dashoffset="${(213.6 * (1 - gordPct / 100)).toFixed(1)}"/></svg>
-                        <span class="pring-pct">${ringPct(gordPctRaw, gordHasMeta)}</span>
+                        <svg class="pring" viewBox="0 0 80 80"><circle class="pring-track" cx="40" cy="40" r="34"/><circle class="pring-arc" cx="40" cy="40" r="34" stroke="${!gordHasMeta ? 'var(--border)' : gordEstado === 'acima' ? 'var(--red)' : gordEstado === 'perto' ? 'var(--yellow)' : '#a855f7'}" stroke-dasharray="213.6" stroke-dashoffset="${(213.6 * (1 - gordPct / 100)).toFixed(1)}"/></svg>
+                        <span class="pring-pct">${ringPctLimite(gordPctRaw, gordHasMeta, gordEstado)}</span>
                     </div>
                     <div class="pring-lbl">Gordura</div>
-                    <div class="pring-sub">${gordHasMeta ? fmt(totalGord) + ' / ' + goals.gord + ' g' : 'sem meta'}</div>
+                    <div class="pring-sub">${gordHasMeta ? fmtN(totalGord) + ' / ' + fmtN(goals.gord) + ' g' + (gordEstado ? ' <span style="color:var(--text2);font-weight:700">· ' + gordEstado + '</span>' : '') : 'sem limite'}</div>
                 </div>
                 <div class="pring-item" onclick="openVitalEditor()" style="cursor:pointer">
                     <div class="pring-wrap">
@@ -2715,21 +2725,43 @@ function openMealSlot(slotId) {
 
 // ===== Refeições — resumo do dia em 4 macros (redesign v1.16.0, molde do mockup) =====
 // A página só mostrava o total da refeição selecionada; o panorama do dia ficava só no Início.
+// Regra única de limite (gordura no Início e no Resumo), a mesma do sódio: decide o número arredondado que a tela mostra.
+// '' = dentro (ou sem limite), 'perto' = 90% ou mais, 'acima' = passou.
+function estadoLimite(val, meta) {
+    meta = Number(meta);
+    if (!(meta > 0)) return '';
+    // consumo E limite arredondados, como a tela mostra: limite 32,5 com 32,5 g não pode sair "33 / 33 g · acima"
+    const r = Math.round(Number(val) || 0), lim = Math.round(meta);
+    if (!(lim > 0)) return '';
+    return r > lim ? 'acima' : r >= lim * 0.9 ? 'perto' : '';
+}
+
+// Percentual de leitura: em medida de limite segue estadoLimite (nunca passa de 100% sem estar "acima").
+function pctLimite(v, meta, limite) {
+    const p = Math.round(v / meta * 100);
+    if (!limite) return p;
+    return estadoLimite(v, meta) === 'acima' ? Math.max(p, 101) : Math.min(p, 100);
+}
+
 function dayMacroCardsHtml(dt) {
     const g = getGoals(dt);
     const m = getDayMeals(dt);
-    const card = (label, val, meta, unit, color) => {
-        const has = meta > 0;
+    // limite = teto (gordura, v1.26.0): passar fica vermelho com ⚠, perto (90%+) amarelo, nunca verde por passar
+    const card = (label, val, meta, unit, color, limite) => {
+        const has = limite ? Math.round(meta) > 0 : meta > 0; // limite decide em grama inteiro: 0,4 g = sem limite
         const pct = has ? Math.min(val / meta * 100, 100) : 0;
-        const hit = has && val >= meta;
+        const est = limite ? estadoLimite(val, meta) : '';
+        const hit = !limite && has && val >= meta;
+        const barra = est === 'acima' ? 'var(--red)' : est === 'perto' ? 'var(--yellow)' : hit ? 'var(--green)' : color;
+        const estado = est === 'acima' ? ' <span style="font-weight:600">· ⚠ acima do limite</span>' : est === 'perto' ? ' <span style="font-weight:600">· perto do limite</span>' : '';
         return `
         <div class="card" style="padding:12px;margin:0">
-            <div style="font-size:12px;color:var(--text2);font-weight:700">${label}</div>
+            <div style="font-size:12px;color:var(--text2);font-weight:700">${label}${estado}</div>
             <div style="margin:2px 0 8px;white-space:nowrap">
                 <span style="font-size:21px;font-weight:800;color:${hit ? 'var(--green)' : 'var(--text)'}">${fmtN(val)}</span>
                 <span style="font-size:12px;color:var(--text3)"> / ${has ? fmtN(meta) + unit : '—'}</span>
             </div>
-            <div class="progress-bar" style="height:6px"><div class="progress-fill" style="width:${pct}%;background:${hit ? 'var(--green)' : color}"></div></div>
+            <div class="progress-bar" style="height:6px"><div class="progress-fill" style="width:${pct}%;background:${barra}"></div></div>
         </div>`;
     };
     return `
@@ -2738,7 +2770,7 @@ function dayMacroCardsHtml(dt) {
         ${card('Calorias', m.totalKcal, g.kcal, '', 'var(--primary)')}
         ${card('Proteína', m.totalProt, g.prot, ' g', 'var(--accent)')}
         ${card('Carboidratos', m.totalCarbo, g.carbo, ' g', '#3b82f6')}
-        ${card('Gorduras', m.totalGord, g.gord, ' g', '#a855f7')}
+        ${card('Gorduras', m.totalGord, g.gord, ' g', '#a855f7', true)}
         ${sodioCardHtml(m, g)}
     </div>`;
 }
@@ -2787,7 +2819,7 @@ const HIST_MEDIDAS = [
     { key: 'kcal',  label: 'Calorias',     unit: 'kcal', cor: 'var(--hist-kcal)',  val: m => m.totalKcal,  meta: g => +g.kcal || 0 },
     { key: 'prot',  label: 'Proteína',     unit: 'g',    cor: 'var(--hist-prot)',  val: m => m.totalProt,  meta: g => +g.prot || 0 },
     { key: 'carbo', label: 'Carboidratos', unit: 'g',    cor: 'var(--hist-carbo)', val: m => m.totalCarbo, meta: g => +g.carbo || 0 },
-    { key: 'gord',  label: 'Gorduras',     unit: 'g',    cor: 'var(--hist-gord)',  val: m => m.totalGord,  meta: g => +g.gord || 0 },
+    { key: 'gord',  label: 'Gorduras',     unit: 'g',    cor: 'var(--hist-gord)',  val: m => m.totalGord,  meta: g => Math.round(+g.gord) > 0 ? +g.gord : 0, limite: true },
     // sódio: dia sem nenhum item com sódio conhecido = sem dado (null), nunca 0
     { key: 'sodio', label: 'Sódio',        unit: 'mg',   cor: 'var(--hist-sodio)', val: m => m.sodioItens > 0 ? m.totalSodio : null, meta: g => +g.sodio > 0 ? +g.sodio : 0, limite: true }
 ];
@@ -2835,7 +2867,7 @@ function hist7Html(dt) {
             const v = vals[i], meta = metas[i];
             const vazio = !x.com ? 'sem registro' : 'sem sódio cadastrado';
             return rotulo(x.d) + ': ' + (v == null ? vazio : (parciais[i] ? 'pelo menos ' : '') + fmtN(v) + ' ' + md.unit)
-                + (meta > 0 ? ' · ' + (md.limite ? 'limite ' : 'meta ') + fmtN(meta) + ' ' + md.unit + (v != null ? ' (' + Math.round(v / meta * 100) + '%)' : '') : '')
+                + (meta > 0 ? ' · ' + (md.limite ? 'limite ' : 'meta ') + fmtN(meta) + ' ' + md.unit + (v != null ? ' (' + pctLimite(v, meta, md.limite) + '%)' : '') : '')
                 + (parciais[i] ? ' · parcial, o real é maior' : '');
         });
         let marcas = `<line x1="${PL}" x2="${W - PR}" y1="${base}" y2="${base}" stroke="var(--border)" stroke-width="1"/>`;
@@ -2873,7 +2905,7 @@ function hist7Html(dt) {
         </div>${temSodio ? '<div class="hist-cap" style="margin-top:6px">* sódio parcial: há item sem sódio cadastrado, o real é maior. Barra vazada (só contorno) = dia parcial.</div>' : ''}</details>`;
     return `<div class="hist7">${botao}
         <div class="hist-body">
-            <div class="hist-cap">Colunas = consumo do dia. Traço = meta do dia (no sódio, limite), com as metas de hoje. Toque numa coluna para ler o valor.${temSodio ? ' Sódio: só alimentos com sódio cadastrado, sem o sal do preparo.' : ''}</div>
+            <div class="hist-cap">Colunas = consumo do dia. Traço = meta do dia (em gorduras e sódio, limite), com as metas de hoje. Toque numa coluna para ler o valor.${temSodio ? ' Sódio: só alimentos com sódio cadastrado, sem o sal do preparo.' : ''}</div>
             ${medidas.map(grafico).join('')}
             ${tabela}
         </div>
@@ -4072,7 +4104,7 @@ function openDietImport() {
             </label>` : ''}
             <label style="${chkStyle}">
                 <input type="checkbox" id="diet-import-goals" style="margin-top:2px;width:18px;height:18px;flex-shrink:0">
-                <span>Aplicar as metas do plano (kcal, proteína, carbo, gordura e água) aos dias de treino e de descanso. Desmarcado, suas metas ficam como estão.</span>
+                <span>Aplicar as metas do plano (kcal, proteína, carbo e água) e os limites (gordura e sódio) aos dias de treino e de descanso. Desmarcado, suas metas ficam como estão.</span>
             </label>
             <div class="modal-actions">
                 <button class="btn btn-outline" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
@@ -5265,8 +5297,8 @@ function collectWeekReport(startIso) {
         avgGord: avg(nutriDays, d => d.meals.gord),
         diasProtOk: nutriDays.filter(d => d.meals.prot >= d.goals.prot).length,
         diasKcalOk: nutriDays.filter(d => Math.abs(d.meals.kcal - d.goals.kcal) <= d.goals.kcal * 0.10).length,
-        diasGordOk: nutriDays.filter(d => !(d.goals.gord > 0) || d.meals.gord <= d.goals.gord).length,
-        temMetaGord: nutriDays.some(d => d.goals.gord > 0),
+        diasGordOk: nutriDays.filter(d => estadoLimite(d.meals.gord, d.goals.gord) !== 'acima').length, // mesma régua do Resumo e do Início
+        temMetaGord: nutriDays.some(d => Math.round(d.goals.gord) > 0),
         melhorProt: null, piorProt: null
     };
     if (nutriDays.length) {
@@ -6081,7 +6113,7 @@ function rGoals() {
             </div>
             <div class="goal-card">
                 <div class="goal-icon" style="background:rgba(168,85,247,0.12);color:#a855f7">🥑</div>
-                <div style="flex:1"><div class="goal-label">Gordura total — opcional</div><div class="goal-value">${D.goals[dayType].gord > 0 ? D.goals[dayType].gord + 'g' : '<span style="font-size:13px;color:var(--text3);font-weight:400">sem meta</span>'}</div></div>
+                <div style="flex:1"><div class="goal-label">Gordura total — limite opcional</div><div class="goal-value">${Math.round(D.goals[dayType].gord) > 0 ? fmt(D.goals[dayType].gord) + 'g' : '<span style="font-size:13px;color:var(--text3);font-weight:400">sem limite</span>'}</div></div>
                 <button class="btn btn-outline btn-sm" onclick="editGoal('gord','${dayType}')">Editar</button>
             </div>
             <div class="goal-card">
@@ -6413,7 +6445,7 @@ function settingsContaHtml() {
 
 
 function editGoal(field, dayType) {
-    const labels = { kcal: 'Calorias (kcal)', prot: 'Proteína (g)', water: 'Hidratação (ml)', carbo: 'Carboidrato (g) — 0 = sem meta', gord: 'Gordura total (g) — 0 = sem meta', sodio: 'Sódio (mg) — limite diário, 0 = sem limite' };
+    const labels = { kcal: 'Calorias (kcal)', prot: 'Proteína (g)', water: 'Hidratação (ml)', carbo: 'Carboidrato (g) — 0 = sem meta', gord: 'Gordura total (g) — limite diário, 0 = sem limite', sodio: 'Sódio (mg) — limite diário, 0 = sem limite' };
     const val = prompt(labels[field] + ':', D.goals[dayType][field] || 0);
     if (val === null) return;
     // confirmar sem mexer mantém o valor exato (o prompt vem com o número cru, que pode ter ponto decimal).
@@ -6429,7 +6461,7 @@ function editGoal(field, dayType) {
     D.goals[dayType][field] = num;
     save();
     rGoals();
-    toast('Meta atualizada');
+    toast(field === 'gord' || field === 'sodio' ? 'Limite atualizado' : 'Meta atualizada');
 }
 
 // Os blocos de config (módulos, campos de refeição, treino, planos) renderizam
