@@ -2692,7 +2692,7 @@ function rMeal() {
     // Chips
     let chipsHtml = '';
     daySlots.forEach(s => {
-        chipsHtml += `<button class="chip ${selectedMealSlot === s.id ? 'active' : ''}" onclick="selectedMealSlot='${s.id}';rMeal()">${s.name}</button>`;
+        chipsHtml += `<button class="chip ${selectedMealSlot === s.id ? 'active' : ''}" onclick="selectedMealSlot='${s.id}';rMeal()">${escHtml(s.name)}</button>`;
     });
 
     // Current items
@@ -3365,9 +3365,9 @@ function setPlanPick(slotId, v, lineIdx, optIdx) {
     if (lineIdx != null) pick.o[v + '.' + lineIdx] = optIdx;
     if (!D.planPicks[dt]) D.planPicks[dt] = {};
     D.planPicks[dt][slotId] = pick;
-    // estado de tela: guarda só as 60 datas mais recentes
-    const datas = Object.keys(D.planPicks).sort();
-    datas.slice(0, Math.max(0, datas.length - 60)).forEach(d => { delete D.planPicks[d]; });
+    // estado de tela: guarda só as 60 datas mais recentes, e a data recém-escolhida nunca sai
+    const datas = Object.keys(D.planPicks).filter(d => d !== dt).sort();
+    datas.slice(0, Math.max(0, datas.length - 59)).forEach(d => { delete D.planPicks[d]; });
 }
 
 // Toque num cartão de versão ou numa pílula do "monte o seu"
@@ -3391,9 +3391,12 @@ function planPickedItems(slotId, dt, vForce) {
         if (!ln) return;
         if (!ln.options) { items.push({ lineIdx: i, foodId: ln.foodId, grams: ln.grams }); return; }
         if (!ln.options.length) return;
+        // índice vem do Firestore: só vale inteiro dentro da faixa (dado corrompido cai na 1ª opção)
         const k = pick.o ? pick.o[v + '.' + i] : undefined;
-        const oi = (k != null && ln.options[k]) ? k : 0;
-        items.push({ lineIdx: i, optIdx: oi, foodId: ln.options[oi].foodId, grams: ln.options[oi].grams });
+        const oi = (Number.isInteger(k) && k >= 0 && k < ln.options.length) ? k : 0;
+        const o = ln.options[oi];
+        if (!o) return;
+        items.push({ lineIdx: i, optIdx: oi, foodId: o.foodId, grams: o.grams });
     });
     return { v: v, version: version, items: items };
 }
@@ -3498,7 +3501,7 @@ function planCardHtml(slotId) {
     const logged = slotLoggedFoodIds(slotId);
     const btn = (foodId, grams) => {
         const feito = !!logged[foodId];
-        return `<button onclick="openAddFood('${foodId}',${grams})"
+        return `<button onclick="openAddFood(${escHtml(JSON.stringify(String(foodId)))},${Number(grams) || 0})"
             title="${feito ? 'Já registrado nesta refeição. Toque pra registrar outra porção.' : 'Registrar (você ajusta a quantidade antes de confirmar)'}"
             aria-pressed="${feito}"
             style="flex-shrink:0;width:26px;height:26px;border-radius:7px;cursor:pointer;font-size:14px;font-weight:700;line-height:1;
@@ -3512,7 +3515,7 @@ function planCardHtml(slotId) {
     if (vers.length > 1) {
         const cards = vers.map((vv, i) => {
             const t = planItemsTotals(planPickedItems(slotId, null, i).items);
-            return `<button class="plan-ver ${i === pk.v ? 'active' : ''}" onclick="pickPlan('${slotId}',${i})">${escHtml(vv.name || ('Opção ' + (i + 1)))}<small>${fmtN(t.kcal)} kcal · ${fmt(t.prot)}g prot</small></button>`;
+            return `<button class="plan-ver ${i === pk.v ? 'active' : ''}" onclick="pickPlan(${escHtml(JSON.stringify(slotId))},${i})">${escHtml(vv.name || ('Opção ' + (i + 1)))}<small>${fmtN(t.kcal)} kcal · ${fmt(t.prot)}g prot</small></button>`;
         }).join('');
         versHtml = `<div class="plan-label">${vers.length} opções prescritas · toque para escolher</div>
             <div class="plan-scroll">${cards}</div>`;
@@ -3533,7 +3536,7 @@ function planCardHtml(slotId) {
         }
         const pills = ln.options.map((o, oi) => {
             const f = D.foods.find(x => x.id === o.foodId);
-            return `<button class="plan-opt ${oi === it.optIdx ? 'active' : ''}" onclick="pickPlan('${slotId}',${pk.v},${it.lineIdx},${oi})">${escHtml(f ? f.name : o.foodId)} ${fmt(o.grams)}g</button>`;
+            return `<button class="plan-opt ${oi === it.optIdx ? 'active' : ''}" onclick="pickPlan(${escHtml(JSON.stringify(slotId))},${pk.v},${it.lineIdx},${oi})">${escHtml(f ? f.name : o.foodId)} ${fmt(o.grams)}g</button>`;
         }).join('');
         linesHtml += `<div class="plan-line">
                 <div class="plan-label">${escHtml(ln.label || 'Escolha uma')} · ${ln.options.length} opções</div>
@@ -3557,7 +3560,7 @@ function planCardHtml(slotId) {
         <div class="card mb-12 plan-card">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px">
                 <span class="card-title" style="margin:0">📋 Plano da nutri</span>
-                <button class="btn btn-primary btn-sm" style="flex-shrink:0" onclick="logWholePlanMeal('${slotId}')" title="Registrar a montagem escolhida inteira (depois dá pra ajustar ou remover item por item)">✓ Comi tudo</button>
+                <button class="btn btn-primary btn-sm" style="flex-shrink:0" onclick="logWholePlanMeal(${escHtml(JSON.stringify(slotId))})" title="Registrar a montagem escolhida inteira (depois dá pra ajustar ou remover item por item)">✓ Comi tudo</button>
             </div>
             ${versHtml}
             ${vers.length > 1 && version.name ? `<div style="font-size:14px;font-weight:700;color:var(--text);margin:8px 0 2px">${escHtml(version.name)}</div>` : ''}
@@ -3589,6 +3592,33 @@ function processDietImport(parsed, opts) {
     opts = opts || {};
     if (!parsed || typeof parsed !== 'object') return { ok: false, error: 'JSON inválido' };
     if (!Array.isArray(parsed.slots) || parsed.slots.length === 0) return { ok: false, error: 'Plano sem refeições (campo "slots")' };
+
+    // Forma do JSON colado: refeição, versão, linha e opção com o tipo certo e gramas positivas.
+    // Erro volta como mensagem (antes lançava exceção e o modal ficava parado sem aviso).
+    const formaRuim = [];
+    const gramaOk = g => typeof g === 'number' && g > 0;
+    const linhasOk = (lines, onde) => {
+        if (!Array.isArray(lines)) { formaRuim.push(onde + ': linhas'); return; }
+        lines.forEach((ln, i) => {
+            const aqui = `${onde}, linha ${i + 1}`;
+            if (!ln || typeof ln !== 'object') { formaRuim.push(aqui); return; }
+            if (ln.options == null) { if (!gramaOk(ln.grams)) formaRuim.push(aqui + ': gramas'); return; }
+            if (!Array.isArray(ln.options) || !ln.options.length) { formaRuim.push(aqui + ': opções'); return; }
+            if (ln.options.some(o => !o || typeof o !== 'object' || !gramaOk(o.grams))) formaRuim.push(aqui + ': opção sem gramas');
+        });
+    };
+    parsed.slots.forEach((ps, i) => {
+        if (!ps || typeof ps !== 'object') { formaRuim.push(`refeição ${i + 1}`); return; }
+        const onde = ps.name || `refeição ${i + 1}`;
+        const temVersoes = Array.isArray(ps.versions) && ps.versions.length > 0;
+        if (ps.versions != null && !Array.isArray(ps.versions)) formaRuim.push(onde + ': versões');
+        if (ps.lines != null || !temVersoes) linhasOk(ps.lines, onde);
+        if (temVersoes) ps.versions.forEach((v, j) => {
+            if (!v || typeof v !== 'object') formaRuim.push(`${onde}, versão ${j + 1}`);
+            else linhasOk(v.lines, `${onde}, versão ${j + 1}`);
+        });
+    });
+    if (formaRuim.length) return { ok: false, error: 'Plano com formato inválido: ' + formaRuim.slice(0, 3).join('; ') };
 
     // 0) Trava ANTES de mexer em qualquer coisa: todo alimento citado precisa existir no banco ou
     //    vir em newFoods. Alimento sem cadastro contaria 0 kcal calado na tela do plano.
@@ -3622,6 +3652,7 @@ function processDietImport(parsed, opts) {
     //    Novos campos entram logo após o último resolvido, preservando a ordem do plano.
     let createdSlots = 0, totalVersions = 0;
     const resolvedSlots = [];
+    const reactivated = [];
     let cursor = -1;
     parsed.slots.forEach(ps => {
         if (!ps) return;
@@ -3632,6 +3663,8 @@ function processDietImport(parsed, opts) {
         if (idx >= 0) {
             slotId = D.mealSlots[idx].id;
             cursor = idx;
+            // refeição que o plano prescreve volta a aparecer, mesmo que um plano anterior a tenha desligado
+            if (D.mealSlots[idx].ativo === false) { D.mealSlots[idx].ativo = true; reactivated.push(D.mealSlots[idx].name); }
         } else {
             const base = normalizeStr(ps.name).replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').substr(0, 16) || 'refeicao';
             slotId = base + '_' + uid().substr(0, 4);
@@ -3680,7 +3713,7 @@ function processDietImport(parsed, opts) {
     D.dietPlan = { meta: meta, slots: resolvedSlots };
     D.planPicks = {};
 
-    return { ok: true, addedFoods: addedFoods, createdSlots: createdSlots, versions: totalVersions, deactivated: deactivated, goalsApplied: goalsApplied };
+    return { ok: true, addedFoods: addedFoods, createdSlots: createdSlots, versions: totalVersions, deactivated: deactivated, reactivated: reactivated, goalsApplied: goalsApplied };
 }
 
 function openDietImport() {
@@ -3734,6 +3767,7 @@ function doDietImport() {
     const partes = [`${res.versions} opção(ões) de refeição`];
     if (res.addedFoods) partes.push(`${res.addedFoods} alimento(s) novo(s)`);
     if (res.createdSlots) partes.push(`${res.createdSlots} campo(s) novo(s)`);
+    if (res.reactivated.length) partes.push(`religado(s): ${res.reactivated.join(', ')}`);
     if (res.deactivated.length) partes.push(`desligado(s): ${res.deactivated.join(', ')}`);
     if (res.goalsApplied) partes.push('metas atualizadas');
     toast('✓ Plano importado · ' + partes.join(' · '));
@@ -3747,19 +3781,19 @@ function doDietImport() {
 function planProfessionalHtml(meta) {
     if (!meta) return '';
     const pro = meta.professional;
-    if (!pro) return meta.source ? `<div style="font-size:11px;color:var(--text3);margin-top:4px">Por: ${meta.source}</div>` : '';
-    const titulo = [pro.name, pro.role].filter(Boolean).join(' · ');
-    const cons = pro.council ? ` <span style="color:var(--text3)">(${pro.council})</span>` : '';
+    if (!pro) return meta.source ? `<div style="font-size:11px;color:var(--text3);margin-top:4px">Por: ${escHtml(meta.source)}</div>` : '';
+    const titulo = escHtml([pro.name, pro.role].filter(Boolean).join(' · '));
+    const cons = pro.council ? ` <span style="color:var(--text3)">(${escHtml(pro.council)})</span>` : '';
     const digits = (pro.phone || '').replace(/[^0-9]/g, '');
     let contato = '';
     if (digits.length >= 10) {
         const intl = digits.length <= 11 ? '55' + digits : digits; // assume BR se vier sem DDI
         contato += `<a href="https://wa.me/${intl}" target="_blank" rel="noopener" style="color:var(--primary);font-weight:600">WhatsApp</a> · <a href="tel:+${intl}" style="color:var(--primary);font-weight:600">Ligar</a>`;
     } else if (pro.phone) {
-        contato += `<span style="color:var(--text2)">${pro.phone}</span>`;
+        contato += `<span style="color:var(--text2)">${escHtml(pro.phone)}</span>`;
     }
     if (pro.instagram) {
-        const ig = pro.instagram.replace(/^@/, '');
+        const ig = String(pro.instagram).replace(/^@/, '').replace(/[^\w.]/g, '');
         contato += `${contato ? ' · ' : ''}<a href="https://instagram.com/${ig}" target="_blank" rel="noopener" style="color:var(--primary);font-weight:600">@${ig}</a>`;
     }
     const pemoji = /personal|trein|coach|educ/i.test((pro.role || '') + ' ' + (pro.name || '')) ? '🏋️' : '👩‍⚕️';

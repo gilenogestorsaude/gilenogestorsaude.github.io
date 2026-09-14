@@ -41,6 +41,8 @@ substituir, trava sem mutação, idempotência, metas, pílulas, herança e poda
 HTML, Comi tudo com confirmação, previsto do dia em treino e descanso, `rMeal`, Ajustes, modal e
 `doDietImport`) e bancada visual a 375 px com Firebase simulado (sem rolagem horizontal da página).
 
+**Auditoria independente (antes de publicar):** técnica APROVADA COM RESSALVAS, 6 achados curados no mesmo dia: refeição prescrita que estava desligada volta a ligar no import; forma do JSON conferida (refeição, versão, linha e opção com tipo certo e gramas positivas) com erro devolvido em vez de exceção; onclick com id e gramas via `JSON.stringify` + `escHtml`; `planProfessionalHtml` e nome do chip escapados; poda que nunca apaga a data recém-escolhida; índice de opção só inteiro dentro da faixa. Prova: 45 dos 47 checks do auditor (as 2 falhas restantes são o JSON hostil dele agora recusado na porta), 10/10 de escape com JSON hostil válido, harness 81/81, compatibilidade com a v1.24.0 13/13.
+
 **Import (concierge, igual ao treino):** JSON `*.plan.json` (gitignored, repo público) → Modo Pro →
 Ajustes › Planos › 🥗 → colar → "Substituir o plano anterior" marcada → metas conforme decisão do Gileno.
 
