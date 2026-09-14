@@ -207,13 +207,17 @@ body:not(.light) .alert-warn .alert-text{color:#f59e0b}
 .search-box{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg);border-radius:var(--radius-sm);border:1px solid var(--border);margin-bottom:12px}
 .search-box svg{width:16px;height:16px;color:var(--text3);flex-shrink:0}
 .search-box input{border:none;background:transparent;outline:none;font-size:13px;color:var(--text);width:100%}
-.food-item{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer}
+.food-item{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);cursor:pointer}
 .food-item:last-child{border-bottom:none}
 .food-item:active{opacity:.7}
-.food-info{flex:1}
-.food-name{font-size:13px;font-weight:600;color:var(--text)}
-.food-detail{font-size:11px;color:var(--text3)}
-.food-add-btn{width:28px;height:28px;border-radius:7px;background:var(--primary-light);display:flex;align-items:center;justify-content:center;color:var(--primary);flex-shrink:0}
+.food-info{flex:1;min-width:40%}
+.food-name{font-size:13px;font-weight:600;color:var(--text);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.food-add-btn{width:24px;height:24px;border-radius:7px;background:var(--primary-light);display:flex;align-items:center;justify-content:center;color:var(--primary);flex-shrink:0}
+/* v1.25.1: catálogo compacto (linha única, recentes primeiro, "ver todos") */
+.food-row-kcal{font-size:11px;color:var(--text3);white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.food-section{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--text3);margin:2px 0 2px}
+.food-more{width:100%;margin-top:8px;padding:9px;border-radius:var(--radius-sm);border:1px dashed var(--border);background:transparent;color:var(--primary);font-size:12px;font-weight:600;cursor:pointer}
+.food-empty{font-size:12px;color:var(--text3);padding:10px 0}
 body:not(.light) .food-add-btn{background:var(--green-bg);color:var(--green)}
 
 /* ========== GOALS ========== */
@@ -590,7 +594,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.25.0';
+const APP_VERSION = '1.25.1';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -2711,7 +2715,7 @@ function rMeal() {
                 <div class="added-item">
                     <button class="added-remove" onclick="removeMealItem(${i})" title="Remover">×</button>
                     <div style="flex:1;min-width:0">
-                        <div style="font-size:13px;font-weight:600;color:var(--text)">${item.name}</div>
+                        <div style="font-size:13px;font-weight:600;color:var(--text)">${escHtml(item.name)}</div>
                         <div style="font-size:11px;color:var(--text3)">${fmt(item.grams)}g</div>
                     </div>
                     <div class="text-right" style="font-size:10px;line-height:1.4">
@@ -2728,11 +2732,8 @@ function rMeal() {
         window._slotGord  = totalGord;
     }
 
-    // Food list — ordem alfabética (cópia, não altera a ordem salva em D.foods)
-    let foodsHtml = '';
-    D.foods.slice().sort(byNameAsc).forEach(f => {
-        foodsHtml += foodItemHtml(f);
-    });
+    // Catálogo: recentes primeiro e "ver todos" (v1.25.1); a busca procura no banco inteiro
+    const foodsHtml = foodCatalogListHtml('');
 
     const hasItems = !!(slot.items && slot.items.length > 0);
     const catalogOpen = isFoodCatalogOpen(hasItems);
@@ -2744,7 +2745,7 @@ function rMeal() {
 
         <div class="card mb-12" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
             <div style="min-width:0">
-                <div style="font-size:11px;color:var(--text3)">🕐 Horário — ${curSlotCfg.name}</div>
+                <div style="font-size:11px;color:var(--text3)">🕐 Horário — ${escHtml(curSlotCfg.name)}</div>
                 <div style="font-size:14px;font-weight:600;color:var(--text);margin-top:2px">
                     <span style="color:var(--text3);font-weight:400">previsto ${tinfo.prev || '--:--'}</span>${tinfo.real ? ` · feito <span style="color:var(--primary)">${tinfo.real}</span>` : ''}
                 </div>
@@ -2757,7 +2758,7 @@ function rMeal() {
         ${slot.items && slot.items.length > 0 ? `
         <div class="card mb-12">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px">
-                <span class="card-title" style="margin:0">Itens — ${curSlotCfg.name}</span>
+                <span class="card-title" style="margin:0">Itens — ${escHtml(curSlotCfg.name)}</span>
                 <button class="btn btn-outline btn-sm" style="flex-shrink:0" onclick="openMoveMeal()" title="Mover todos para outra refeição">⇄ Mover</button>
             </div>
             ${itemsHtml}
@@ -2774,7 +2775,7 @@ function rMeal() {
         ${catalogOpen ? `
         <div class="card">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:6px">
-                <span class="card-title" style="margin:0">Adicionar em ${curSlotCfg.name}</span>
+                <span class="card-title" style="margin:0">Adicionar em ${escHtml(curSlotCfg.name)}</span>
                 <div style="display:flex;gap:6px">
                     <button class="btn btn-outline btn-sm" onclick="forceMigrateTACO()" title="Atualiza alimentos padrão para valores TACO oficiais">🔄 TACO</button>
                     <button class="btn btn-primary btn-sm" onclick="openFoodEditor()">+ Novo</button>
@@ -2787,37 +2788,65 @@ function rMeal() {
             </div>
             <div id="food-list">${foodsHtml}</div>
         </div>`
-        : `<button class="btn btn-primary w-full" style="padding:15px;font-size:15px" onclick="toggleFoodCatalog()">＋ Adicionar alimento em ${curSlotCfg.name}</button>`}
+        : `<button class="btn btn-primary w-full" style="padding:15px;font-size:15px" onclick="toggleFoodCatalog()">＋ Adicionar alimento em ${escHtml(curSlotCfg.name)}</button>`}
     `;
     restorePlanScroll();
 }
 
+// v1.25.1: linha compacta do catálogo (nome + kcal e proteína da porção de referência). O toque abre
+// o modal de adicionar; editar e excluir moraram para dentro do modal, fora da lista.
 function foodItemHtml(f) {
-    const carboStr = (f.carbo || f.carbo === 0) ? ` / ${fmt(f.carbo)}g carbo` : '';
-    const gordStr  = (f.gord  || f.gord  === 0) ? ` / ${fmt(f.gord)}g gord` : '';
+    // porção só quando a referência não é 100; unidade só se for curta (g, ml, un), porque unidade longa
+    // vinda de JSON importado espremia o nome até sumir
+    const ref = Number(f.ref), unidade = String(f.unit || 'g');
+    const porcao = (Number.isFinite(ref) && ref > 0 && ref !== 100) ? ` /${fmt(ref)}${unidade.length <= 3 ? escHtml(unidade) : ''}` : '';
     return `
-        <div class="food-item">
-            <div class="food-info" onclick="openAddFood('${f.id}')" style="cursor:pointer">
-                <div class="food-name">${f.name}</div>
-                <div class="food-detail">Ref: ${f.ref}${f.unit} • ${fmt(f.kcal)} kcal / ${fmt(f.prot)}g prot${carboStr}${gordStr}</div>
-            </div>
-            <button onclick="event.stopPropagation();openFoodEditor('${f.id}')" style="width:28px;height:28px;border-radius:7px;background:transparent;border:1px solid var(--border);color:var(--text3);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-right:6px" title="Editar">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-            </button>
-            <button onclick="event.stopPropagation();deleteFood('${f.id}')" style="width:28px;height:28px;border-radius:7px;background:transparent;border:1px solid var(--border);color:var(--red);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-right:6px" title="Excluir alimento">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-            </button>
-            <div class="food-add-btn" onclick="openAddFood('${f.id}')" style="cursor:pointer">+</div>
+        <div class="food-item" onclick="openAddFood(${escHtml(JSON.stringify(String(f.id)))})" title="${escHtml(f.name)}">
+            <div class="food-info"><div class="food-name">${escHtml(f.name)}</div></div>
+            <div class="food-row-kcal">${fmtN(Number(f.kcal) || 0)} kcal · ${fmt(Number(f.prot) || 0)}g prot${porcao}</div>
+            <div class="food-add-btn">+</div>
         </div>`;
 }
 
-function filterFoods() {
-    const q = $('food-search').value.toLowerCase();
-    let html = '';
-    D.foods.filter(f => f.name.toLowerCase().includes(q)).sort(byNameAsc).forEach(f => {
-        html += foodItemHtml(f);
+// Alimentos registrados por último (dia mais recente primeiro), para o catálogo abrir curto
+function recentFoodIds(limit) {
+    const ids = [], vistos = new Set();
+    const existe = new Set(D.foods.map(f => f.id));
+    Object.keys(D.days || {}).sort().reverse().some(dt => {
+        const slots = (D.days[dt] && D.days[dt].slots) || {};
+        Object.keys(slots).forEach(sid => (slots[sid] && Array.isArray(slots[sid].items) ? slots[sid].items : []).forEach(it => {
+            if (it && it.foodId && existe.has(it.foodId) && !vistos.has(it.foodId)) { vistos.add(it.foodId); ids.push(it.foodId); }
+        }));
+        return ids.length >= limit;
     });
-    $('food-list').innerHTML = html;
+    return ids.slice(0, limit);
+}
+
+let foodCatalogAll = false; // "ver todos" aberto no catálogo (estado de tela, não salva)
+
+// Corpo do catálogo: com busca, todo o banco (sem acento); sem busca, os recentes e o botão "ver todos".
+// Quem ainda não registrou nada vê a lista inteira, como antes.
+function foodCatalogListHtml(q) {
+    if (q) {
+        // filtra antes de ordenar: cada tecla da busca ordena só os achados
+        const nq = normalizeStr(q);
+        const achados = D.foods.filter(f => normalizeStr(f.name).includes(nq)).sort(byNameAsc);
+        return achados.length ? achados.map(foodItemHtml).join('') : `<div class="food-empty">Nenhum alimento com "${escHtml(q)}"</div>`;
+    }
+    const recentes = recentFoodIds(8).map(id => D.foods.find(f => f.id === id)).filter(Boolean);
+    if (recentes.length && !foodCatalogAll) {
+        return `<div class="food-section">Recentes</div>${recentes.map(foodItemHtml).join('')}
+        <button class="food-more" onclick="foodCatalogAll=true;filterFoods()">Ver todos os ${D.foods.length} alimentos ▾</button>`;
+    }
+    const todos = D.foods.slice().sort(byNameAsc);
+    if (!recentes.length) return todos.map(foodItemHtml).join('');
+    return `<div class="food-section">Todos · ${todos.length}</div>${todos.map(foodItemHtml).join('')}
+            <button class="food-more" onclick="foodCatalogAll=false;filterFoods()">Mostrar só os recentes ▲</button>`;
+}
+
+function filterFoods() {
+    const inp = $('food-search');
+    $('food-list').innerHTML = foodCatalogListHtml(inp ? inp.value.trim() : '');
 }
 
 function openAddFood(foodId, prefillGrams) {
@@ -2836,15 +2865,15 @@ function openAddFood(foodId, prefillGrams) {
     overlay.innerHTML = `
         <div class="modal-box">
             <div class="modal-header">
-                <h3>${food.name}</h3>
+                <h3>${escHtml(food.name)}</h3>
                 <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
             </div>
             <p style="font-size:12px;color:var(--text3);margin-bottom:12px">
-                Ref: ${food.ref}${food.unit} = ${fmt(food.kcal)} kcal / ${fmt(food.prot)}g prot / ${fmt(carbo)}g carb / ${fmt(gord)}g gord
+                Ref: ${escHtml(food.ref)}${escHtml(food.unit)} = ${fmt(food.kcal)} kcal / ${fmt(food.prot)}g prot / ${fmt(carbo)}g carb / ${fmt(gord)}g gord
             </p>
             <div class="form-group">
-                <label class="form-label">Quantidade (${food.unit || 'g'})</label>
-                <input type="number" id="food-grams" class="form-input" value="${initGrams}" inputmode="decimal" autofocus>
+                <label class="form-label">Quantidade (${escHtml(food.unit || 'g')})</label>
+                <input type="number" id="food-grams" class="form-input" value="${escHtml(initGrams)}" inputmode="decimal" autofocus>
             </div>
             <div id="food-calc" style="background:var(--bg);border-radius:8px;padding:10px 12px;margin-bottom:16px;font-size:13px;color:var(--text)">
                 <div style="display:flex;justify-content:space-between;margin-bottom:2px"><span style="color:var(--text2)">Calorias</span><span style="font-weight:600" id="calc-kcal">${fmt(food.kcal * r0)}</span></div>
@@ -2852,7 +2881,11 @@ function openAddFood(foodId, prefillGrams) {
                 <div style="display:flex;justify-content:space-between;margin-bottom:2px"><span style="color:var(--text2)">Carboidrato</span><span style="font-weight:600;color:#3b82f6" id="calc-carbo">${fmt(carbo * r0)}g</span></div>
                 <div style="display:flex;justify-content:space-between"><span style="color:var(--text2)">Gordura</span><span style="font-weight:600;color:#a855f7" id="calc-gord">${fmt(gord * r0)}g</span></div>
             </div>
-            <button class="btn btn-primary w-full" onclick="addFoodToMeal('${food.id}')">Adicionar</button>
+            <button class="btn btn-primary w-full" onclick="addFoodToMeal(${escHtml(JSON.stringify(String(food.id)))})">Adicionar</button>
+            <div style="display:flex;justify-content:space-between;gap:8px;margin-top:12px">
+                <button class="btn btn-outline btn-sm" onclick="this.closest('.modal-overlay').remove();openFoodEditor(${escHtml(JSON.stringify(String(food.id)))})">✎ Editar alimento</button>
+                <button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="deleteFood(${escHtml(JSON.stringify(String(food.id)))})">Excluir do banco</button>
+            </div>
         </div>
     `;
     document.body.appendChild(overlay);

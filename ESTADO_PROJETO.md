@@ -1,12 +1,35 @@
 # Estado do Projeto — Gestão Saúde
 
-**Última atualização:** 2026-09-14 (parte 15, sessão no Mac mini)
-**Versão atual em produção:** v1.24.0 (a v1.25.0 foi commitada no Mac mini em 14/09 e aguarda o push, que por enquanto sai pelo MacBook; v1.24.0 = aulas com o personal; v1.22.0 = prints do Apple Watch na análise por IA, serviço **v2.2** na VPS)
+**Última atualização:** 2026-09-14 (parte 16, sessão no Mac mini)
+**Versão atual em produção:** v1.25.0, no ar desde 14/09 08h07 (a v1.25.1 foi commitada no Mac mini em 14/09 e aguarda o push, que por enquanto sai pelo MacBook; v1.24.0 = aulas com o personal; v1.22.0 = prints do Apple Watch na análise por IA, serviço **v2.2** na VPS)
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
 
 > Este documento é o **handoff vivo** do projeto. Qualquer nova sessão de trabalho começa lendo este arquivo pra entender estado atual, decisões já tomadas, e próximos passos.
+
+---
+
+## Resumo da sessão 2026-09-14 (parte 16): v1.25.1, catálogo de alimentos compacto
+
+Sessão no **Mac mini**, logo depois da v1.25.0 ir ao ar (push pelo MacBook, `16392d7`). Pedido do Gileno:
+compactar a lista "Adicionar em <refeição>", que com o plano novo passou de 120 alimentos, cada linha com
+duas linhas de texto e três botões.
+
+**O que mudou (tela Refeição, bloco do catálogo do `index.html`):**
+- `foodItemHtml`: linha única (nome em até 2 linhas + "kcal · g prot" + porção quando `ref` ≠ 100 e a
+  unidade é curta). Editar e excluir saíram da linha e foram para o modal `openAddFood`.
+- `recentFoodIds(8)` + `foodCatalogListHtml(q)`: sem busca, o catálogo abre só com os recentes e o botão
+  "Ver todos" (`foodCatalogAll`, estado de tela); quem nunca registrou vê a lista inteira. Com busca, o banco
+  inteiro, sem acento (`normalizeStr`), filtrando antes de ordenar.
+- Escapes que faltavam em linhas vizinhas: unidade, porção e `value` do modal; nome do item no card "Itens";
+  nome da refeição nos títulos. `recentFoodIds` tolera dia com `items` corrompido.
+
+**Verificação:** auditoria técnica independente APROVADA COM RESSALVAS (nenhuma bloqueante; 2 escapes antigos,
+unidade longa espremendo o nome, NaN com número em texto, dia corrompido derrubando a tela, busca ordenando o
+banco inteiro), todas curadas antes do commit. Prova: checks do auditor 44/44, bateria da cura 13/13, catálogo
+27/27, plano 81/81, escape 10/10, auditor anterior 45/47 (as 2 falhas conhecidas do JSON hostil recusado);
+bancada a 360 px sem rolagem horizontal, nome longo em 2 linhas, unidade longa fora da linha.
 
 ---
 
