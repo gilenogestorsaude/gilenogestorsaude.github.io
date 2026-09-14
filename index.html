@@ -277,6 +277,26 @@ body:not(.light) .plan-porcao.active{background:var(--green-bg);border-color:var
 body:not(.light) .plan-porcao.active .plan-porcao-n{color:var(--green)}
 .plan-porcao.active span span{color:var(--text2)}
 .plan-porcao.active button[aria-pressed="false"]{background:var(--surface)!important;border-color:var(--text3)!important}
+/* v1.26.0: histórico de 7 dias (um gráfico pequeno por medida) */
+.hist7{margin:-6px 0 14px;--hist-kcal:#059669;--hist-prot:#d97706;--hist-carbo:#3b82f6;--hist-gord:#a855f7;--hist-sodio:#db2777}
+.hist-toggle{width:100%;display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--card);color:var(--text);font-size:13px;font-weight:700;cursor:pointer}
+.hist-toggle span{color:var(--text3);font-size:11px}
+.hist-body{margin-top:8px}
+.hist-cap{font-size:11px;color:var(--text2);margin:0 2px 8px;line-height:1.45}
+.hist-chart{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 10px 8px;margin-bottom:8px}
+.hist-head{display:flex;align-items:center;gap:6px;margin-bottom:2px}
+.hist-key{width:10px;height:10px;border-radius:3px;flex-shrink:0}
+.hist-title{font-size:12px;font-weight:700;color:var(--text)}
+.hist-avg{margin-left:auto;font-size:11px;color:var(--text3)}
+.hist-read{font-size:11px;color:var(--text2);min-height:15px}
+.hist-hit{cursor:pointer;outline:none}
+.hist-hit.sel,.hist-hit:focus{fill:var(--text3);fill-opacity:.16}
+.hist-hit:focus{stroke:var(--text2);stroke-width:1.5}
+.hist-tab summary{cursor:pointer;font-size:12px;font-weight:600;color:var(--primary);padding:4px 2px}
+.hist-tab table{width:100%;border-collapse:collapse;font-size:11px;font-variant-numeric:tabular-nums}
+.hist-tab th,.hist-tab td{padding:5px 4px;text-align:right;border-bottom:1px solid var(--border);color:var(--text2);white-space:nowrap}
+.hist-tab th:first-child,.hist-tab td:first-child{text-align:left}
+.hist-tab th{color:var(--text3);font-weight:600}
 .added-total{display:flex;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:2px solid var(--primary);font-weight:700;font-size:13px}
 </style>
 </head>
@@ -605,7 +625,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.25.2';
+const APP_VERSION = '1.26.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1279,8 +1299,10 @@ auth.onAuthStateChanged(async user => {
         $('bottom-nav').classList.remove('hidden');
         applyBottomNavVisibility();
         if (D && D.theme === 'light') document.body.classList.add('light');
-        // Carrega TACO em background (nao bloqueia render)
-        loadTACO();
+        // Carrega TACO em background (nao bloqueia render) e completa o sódio que faltar (v1.26.0)
+        loadTACO().then(taco => {
+            if (D && backfillSodioFromTaco(taco) > 0) { save(); if (cPage === 'meal') rMeal(); }
+        });
         // LGPD primeiro (gate); boas-vindas em seguida (acceptConsent encadeia)
         if (D && !D.consent) {
             setTimeout(openConsentModal, 400);
@@ -1877,6 +1899,7 @@ function getDaySlots(dt) {
 function getDayMeals(dt) {
     const day = getDayData(dt);
     let totalKcal = 0, totalProt = 0, totalCarbo = 0, totalGord = 0;
+    let totalSodio = 0, sodioItens = 0, itens = 0; // v1.26.0
     // Soma TODOS os slots com itens (não a config), pra que customizar/remover/esconder
     // campos nunca altere os totais de dias já registrados.
     Object.keys(day.slots).forEach(id => {
@@ -1887,10 +1910,55 @@ function getDayMeals(dt) {
                 totalProt  += item.prot  || 0;
                 totalCarbo += item.carbo || 0;
                 totalGord  += item.gord  || 0;
+                itens++;
+                const s = itemSodio(item);
+                if (s != null) { totalSodio += s; sodioItens++; }
             });
         }
     });
-    return { totalKcal, totalProt, totalCarbo, totalGord };
+    return { totalKcal, totalProt, totalCarbo, totalGord, totalSodio, sodioItens, itens };
+}
+
+// ========== SÓDIO (v1.26.0) ==========
+// O sódio mora no alimento (D.foods[].sodio, mg na porção de referência). O registro não guarda sódio:
+// o total do dia sai ao vivo de foodId + gramas, então corrigir o alimento corrige o histórico.
+// Alimento sem o campo = DESCONHECIDO, nunca zero: o dia fica parcial e a tela avisa.
+function itemSodio(item) {
+    if (!item || !item.foodId || !(Number(item.grams) > 0)) return null;
+    const f = D.foods.find(x => x && x.id === item.foodId);
+    // sódio NaN, negativo ou referência inválida = desconhecido (nunca vira zero nem desconta do total)
+    if (!f || !(Number.isFinite(f.sodio) && f.sodio >= 0) || !(Number(f.ref) > 0)) return null;
+    return f.sodio * Number(item.grams) / Number(f.ref);
+}
+
+// Completa o sódio de alimentos com "TACO #N" na nota que ainda não têm sódio NEM origem registrada
+// (sodioFonte: 'taco' | 'plano' | 'usuario' | 'vazio'; 'vazio' = o usuário apagou de propósito).
+// Só em gramas (a TACO é por 100 g) e só se a kcal por 100 g bate com a linha da TACO: nota antiga de
+// alimento trocado por outro não vale. Sódio vazio na TACO só conta como traço (0) nas categorias em que
+// o arquivo o deixa vazio (frutas e sucos, verduras e leguminosas cruas, bebidas, açucarados, fubá cru).
+const TACO_SODIO_TRACO = /Frutas|Verduras|Leguminosas|Bebidas|açucarados|Cereais/;
+function backfillSodioFromTaco(taco) {
+    if (!D || !Array.isArray(D.foods) || !Array.isArray(taco) || !taco.length) return 0;
+    let n = 0;
+    D.foods.forEach(f => {
+        if (!f || typeof f.sodio === 'number' || f.sodioFonte || (f.unit || 'g') !== 'g') return;
+        const ref = Number(f.ref);
+        if (!(ref > 0)) return;
+        const m = /TACO #(\d+)/.exec(f.nota || '');
+        if (!m) return;
+        const t = taco.find(x => x.id === +m[1]);
+        if (!t || !(t.kcal > 0)) return;
+        const kcal100 = Number(f.kcal) / ref * 100;
+        if (!(Math.abs(kcal100 - t.kcal) <= Math.max(5, t.kcal * 0.1))) return;
+        let s100;
+        if (typeof t.sodio === 'number') s100 = t.sodio;
+        else if (TACO_SODIO_TRACO.test(t.cat || '')) s100 = 0;
+        else return;
+        f.sodio = Math.round(s100 * ref / 100 * 10) / 10;
+        f.sodioFonte = 'taco';
+        n++;
+    });
+    return n;
 }
 
 function getDayWater(dt) {
@@ -2671,6 +2739,144 @@ function dayMacroCardsHtml(dt) {
         ${card('Proteína', m.totalProt, g.prot, ' g', 'var(--accent)')}
         ${card('Carboidratos', m.totalCarbo, g.carbo, ' g', '#3b82f6')}
         ${card('Gorduras', m.totalGord, g.gord, ' g', '#a855f7')}
+        ${sodioCardHtml(m, g)}
+    </div>`;
+}
+
+// Sódio é LIMITE (teto), não meta. Só afirma "dentro/perto do limite" com o dia COMPLETO (todo item com
+// sódio conhecido). Dia parcial fica neutro e diz "parcial", porque o real é maior; "acima do limite" vale
+// mesmo parcial. Dia com itens e nenhum sódio conhecido mostra "—", nunca zero.
+// Só aparece se algum item do dia tem sódio conhecido ou se há limite definido.
+function sodioCardHtml(m, g) {
+    const lim = Number((g || {}).sodio) > 0 ? Number(g.sodio) : 0;
+    const itens = m.itens || 0, conhecidos = m.sodioItens || 0;
+    if (!conhecidos && !lim) return '';
+    const val = Math.round(Number.isFinite(m.totalSodio) ? m.totalSodio : 0);
+    const faltam = itens - conhecidos;
+    const completo = itens > 0 && faltam === 0;
+    const pct = lim && conhecidos ? val / lim * 100 : 0;
+    let estado = '', cor = 'var(--text3)';
+    if (lim && conhecidos && val > lim) { estado = '⚠ acima do limite'; cor = 'var(--red)'; }
+    else if (itens && !conhecidos) estado = 'sem dado';
+    else if (conhecidos && !completo) {
+        // parcial perto do limite ainda alerta: o real é maior que o número mostrado
+        if (lim && pct >= 90) { estado = 'parcial, perto do limite'; cor = 'var(--yellow)'; } else estado = 'parcial';
+    }
+    else if (lim && completo) { estado = pct >= 90 ? 'perto do limite' : 'dentro do limite'; cor = pct >= 90 ? 'var(--yellow)' : 'var(--green)'; }
+    const aviso = faltam > 0
+        ? (conhecidos ? ` Parcial: ${faltam} de ${itens} ${itens > 1 ? 'itens' : 'item'} sem sódio cadastrado, o total real é maior.` : ' Nenhum item registrado tem sódio cadastrado.')
+        : '';
+    return `
+        <div class="card" style="padding:12px;margin:0;grid-column:1/-1">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+                <div style="font-size:12px;color:var(--text2);font-weight:700">Sódio${estado ? ` <span style="font-weight:600">· ${estado}</span>` : ''}</div>
+                <div style="white-space:nowrap"><span style="font-size:21px;font-weight:800;color:var(--text)">${conhecidos ? (completo ? '' : '≥ ') + fmtN(val) : '—'}</span><span style="font-size:12px;color:var(--text3)"> / ${lim ? fmtN(lim) + ' mg' : 'sem limite'}</span></div>
+            </div>
+            <div class="progress-bar" style="height:6px;margin-top:6px"><div class="progress-fill" style="width:${Math.min(pct, 100)}%;background:${cor}"></div></div>
+            <div style="font-size:11px;color:var(--text2);margin-top:6px;line-height:1.4">Só o sódio dos alimentos, sem o sal do preparo.${aviso}</div>
+        </div>`;
+}
+
+// ========== HISTÓRICO 7 DIAS (v1.26.0) ==========
+// Um gráfico pequeno por medida (unidades e escalas diferentes nunca dividem eixo), 7 colunas até o dia
+// em vista e o traço da meta DE CADA DIA (treino e descanso têm metas diferentes). Toque, foco ou mouse
+// numa coluna escreve o valor na linha de leitura; a tabela dá todos os números sem depender disso.
+// Não cria dia vazio em D.days (só lê dia que existe).
+const HIST_MEDIDAS = [
+    // cores das barras: mesmo matiz dos cards, um tom mais fundo (validador: contraste >= 3:1 no fundo claro e no escuro)
+    { key: 'kcal',  label: 'Calorias',     unit: 'kcal', cor: 'var(--hist-kcal)',  val: m => m.totalKcal,  meta: g => +g.kcal || 0 },
+    { key: 'prot',  label: 'Proteína',     unit: 'g',    cor: 'var(--hist-prot)',  val: m => m.totalProt,  meta: g => +g.prot || 0 },
+    { key: 'carbo', label: 'Carboidratos', unit: 'g',    cor: 'var(--hist-carbo)', val: m => m.totalCarbo, meta: g => +g.carbo || 0 },
+    { key: 'gord',  label: 'Gorduras',     unit: 'g',    cor: 'var(--hist-gord)',  val: m => m.totalGord,  meta: g => +g.gord || 0 },
+    // sódio: dia sem nenhum item com sódio conhecido = sem dado (null), nunca 0
+    { key: 'sodio', label: 'Sódio',        unit: 'mg',   cor: 'var(--hist-sodio)', val: m => m.sodioItens > 0 ? m.totalSodio : null, meta: g => +g.sodio > 0 ? +g.sodio : 0, limite: true }
+];
+
+function histCollapsed() { return !D._uiCollapsed || D._uiCollapsed.hist7 !== false; }
+function toggleHist7() {
+    if (!D._uiCollapsed) D._uiCollapsed = {};
+    D._uiCollapsed.hist7 = !histCollapsed();
+    save();
+    if (cPage === 'meal') rMeal();
+}
+function histLer(el) {
+    const box = el && el.closest ? el.closest('.hist-chart') : null;
+    if (!box) return;
+    box.querySelectorAll('.hist-hit.sel').forEach(r => r.classList.remove('sel'));
+    el.classList.add('sel');
+    box.querySelector('.hist-read').textContent = el.getAttribute('data-txt') || '';
+}
+
+function hist7Html(dt) {
+    dt = dt || curDate();
+    const aberto = !histCollapsed();
+    const botao = `<button class="hist-toggle" onclick="toggleHist7()" aria-expanded="${aberto}">📊 Últimos 7 dias <span>${aberto ? 'recolher ▲' : 'abrir ▼'}</span></button>`;
+    if (!aberto) return `<div class="hist7">${botao}</div>`;
+    const dias = [];
+    for (let k = 6; k >= 0; k--) {
+        const d = addDaysStr(dt, -k);
+        const m = D.days && D.days[d] ? getDayMeals(d) : null;
+        dias.push({ d: d, m: m, g: getGoals(d) || {}, com: !!(m && m.itens > 0) });
+    }
+    const dow = d => { const p = d.split('-').map(Number); return DOW_ABBR[new Date(p[0], p[1] - 1, p[2]).getDay()]; };
+    const rotulo = d => { const p = d.split('-'); return dow(d) + ' ' + p[2] + '/' + p[1]; };
+    const temSodio = dias.some(x => x.m && x.m.sodioItens > 0) || dias.some(x => +x.g.sodio > 0);
+    const medidas = HIST_MEDIDAS.filter(md => md.key !== 'sodio' || temSodio);
+    const W = 320, H = 96, PL = 2, PR = 2, PT = 12, PB = 16;
+    const slot = (W - PL - PR) / 7, bw = Math.min(24, slot - 12), base = H - PB;
+    const n1 = v => Math.round(v * 10) / 10;
+    const grafico = md => {
+        const vals = dias.map(x => { if (!x.com) return null; const v = md.val(x.m); return Number.isFinite(v) ? v : null; });
+        const metas = dias.map(x => md.meta(x.g));
+        const parciais = dias.map((x, i) => md.key === 'sodio' && vals[i] != null && x.m.sodioItens < x.m.itens);
+        const maxV = Math.max(1, ...vals.filter(v => v != null), ...metas) * 1.12;
+        const y = v => PT + (base - PT) * (1 - v / maxV);
+        const textos = dias.map((x, i) => {
+            const v = vals[i], meta = metas[i];
+            const vazio = !x.com ? 'sem registro' : 'sem sódio cadastrado';
+            return rotulo(x.d) + ': ' + (v == null ? vazio : (parciais[i] ? 'pelo menos ' : '') + fmtN(v) + ' ' + md.unit)
+                + (meta > 0 ? ' · ' + (md.limite ? 'limite ' : 'meta ') + fmtN(meta) + ' ' + md.unit + (v != null ? ' (' + Math.round(v / meta * 100) + '%)' : '') : '')
+                + (parciais[i] ? ' · parcial, o real é maior' : '');
+        });
+        let marcas = `<line x1="${PL}" x2="${W - PR}" y1="${base}" y2="${base}" stroke="var(--border)" stroke-width="1"/>`;
+        dias.forEach((x, i) => {
+            const cx = PL + slot * i + slot / 2, v = vals[i], meta = metas[i];
+            if (v != null && v > 0) {
+                const top = y(v), r = Math.min(4, base - top, bw / 2), x0 = cx - bw / 2;
+                marcas += `<path d="M${n1(x0)} ${base}V${n1(top + r)}Q${n1(x0)} ${n1(top)} ${n1(x0 + r)} ${n1(top)}H${n1(x0 + bw - r)}Q${n1(x0 + bw)} ${n1(top)} ${n1(x0 + bw)} ${n1(top + r)}V${base}Z" fill="${md.cor}"${parciais[i] ? ` fill-opacity="0.3" stroke="${md.cor}" stroke-width="1.5"` : ''}/>`;
+            }
+            if (meta > 0) marcas += `<line x1="${n1(cx - slot / 2 + 5)}" x2="${n1(cx + slot / 2 - 5)}" y1="${n1(y(meta))}" y2="${n1(y(meta))}" stroke="var(--text2)" stroke-width="1.5" stroke-linecap="round"/>`;
+            marcas += `<text x="${n1(cx)}" y="${H - 3}" font-size="10" text-anchor="middle" fill="var(--text2)"${x.d === dt ? ' font-weight="700"' : ''}>${dow(x.d)}</text>`;
+            marcas += `<rect class="hist-hit" x="${n1(cx - slot / 2)}" y="0" width="${n1(slot)}" height="${H}" fill="transparent" tabindex="0" role="button" aria-label="${escHtml(md.label + ', ' + textos[i])}" data-txt="${escHtml(textos[i])}" onclick="histLer(this)" onfocus="histLer(this)" onmouseenter="histLer(this)"/>`;
+        });
+        const comDados = vals.filter(v => v != null);
+        const media = comDados.length ? comDados.reduce((a, b) => a + b, 0) / comDados.length : null;
+        const mediaParcial = parciais.some(Boolean);
+        let ultimo = -1;
+        vals.forEach((v, i) => { if (v != null) ultimo = i; });
+        return `<div class="hist-chart">
+                <div class="hist-head"><span class="hist-key" style="background:${md.cor}"></span><span class="hist-title">${md.label}</span><span class="hist-avg">${media != null ? 'média ' + (mediaParcial ? 'de pelo menos ' : '') + fmtN(media) + ' ' + md.unit : ''}</span></div>
+                <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block" role="group" aria-label="${md.label} nos últimos 7 dias">${marcas}</svg>
+                <div class="hist-read" aria-live="polite">${escHtml(ultimo >= 0 ? textos[ultimo] : 'Sem registros nestes 7 dias')}</div>
+            </div>`;
+    };
+    const celula = (x, md) => {
+        if (!x.com) return '—';
+        const v = md.val(x.m), meta = md.meta(x.g);
+        if (!Number.isFinite(v)) return '—';
+        const parcial = md.key === 'sodio' && x.m.sodioItens < x.m.itens;
+        return fmtN(v) + (meta > 0 ? ' / ' + fmtN(meta) : '') + (parcial ? '*' : '');
+    };
+    const tabela = `<details class="hist-tab"><summary>Ver em tabela</summary><div style="overflow-x:auto">
+            <table><thead><tr><th>Dia</th>${medidas.map(md => `<th>${md.label} (${md.unit})</th>`).join('')}</tr></thead>
+            <tbody>${dias.map(x => `<tr><td>${rotulo(x.d)}</td>${medidas.map(md => `<td>${celula(x, md)}</td>`).join('')}</tr>`).join('')}</tbody></table>
+        </div>${temSodio ? '<div class="hist-cap" style="margin-top:6px">* sódio parcial: há item sem sódio cadastrado, o real é maior. Barra vazada (só contorno) = dia parcial.</div>' : ''}</details>`;
+    return `<div class="hist7">${botao}
+        <div class="hist-body">
+            <div class="hist-cap">Colunas = consumo do dia. Traço = meta do dia (no sódio, limite), com as metas de hoje. Toque numa coluna para ler o valor.${temSodio ? ' Sódio: só alimentos com sódio cadastrado, sem o sal do preparo.' : ''}</div>
+            ${medidas.map(grafico).join('')}
+            ${tabela}
+        </div>
     </div>`;
 }
 
@@ -2752,6 +2958,7 @@ function rMeal() {
     $('meal-body').innerHTML = `
         ${dateStripHtml()}
         ${dayMacroCardsHtml(dt)}
+        ${hist7Html(dt)}
         <div class="chip-row">${chipsHtml}</div>
 
         <div class="card mb-12" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
@@ -3009,6 +3216,10 @@ function openFoodEditor(foodId) {
                     <input type="number" id="food-edit-gord" class="form-input" placeholder="0" value="${f.gord !== '' && f.gord !== undefined ? f.gord : ''}" min="0" step="0.1" inputmode="decimal">
                 </div>
             </div>
+            <div class="form-group">
+                <label class="form-label">Sódio (mg) — opcional</label>
+                <input type="number" id="food-edit-sodio" class="form-input" placeholder="do rótulo, na mesma referência" value="${typeof f.sodio === 'number' ? f.sodio : ''}" min="0" step="1" inputmode="decimal">
+            </div>
             <div id="food-norm-preview" style="background:var(--bg);padding:8px 12px;border-radius:8px;font-size:11px;color:var(--text3);margin-bottom:12px;line-height:1.5">
                 Equivalente a 100g: — kcal / — prot / — carbo / — gord
             </div>
@@ -3042,7 +3253,7 @@ function setupFoodEditorListeners() {
         const scaleOn = scale && scale.checked;
         if (scaleOn && prev > 0 && curr > 0 && prev !== curr) {
             const ratio = curr / prev;
-            ['kcal', 'prot', 'carbo', 'gord'].forEach(key => {
+            ['kcal', 'prot', 'carbo', 'gord', 'sodio'].forEach(key => {
                 const inp = $('food-edit-' + key);
                 const v = parseFloat(inp.value);
                 if (!isNaN(v) && v > 0) {
@@ -3129,6 +3340,7 @@ function applyTACO(id) {
     $('food-edit-prot').value  = item.prot  || 0;
     $('food-edit-carbo').value = item.carbo || 0;
     $('food-edit-gord').value  = item.gord  || 0;
+    if ($('food-edit-sodio')) $('food-edit-sodio').value = typeof item.sodio === 'number' ? item.sodio : 0; // TACO vazia = traço
     if (!$('food-edit-nota').value) {
         $('food-edit-nota').value = `TACO #${item.id} — ${item.cat || ''}`;
     }
@@ -3147,6 +3359,8 @@ function saveFoodEditor(foodId) {
     const carbo = parseFloat($('food-edit-carbo').value) || 0;
     const gord = parseFloat($('food-edit-gord').value) || 0;
     const nota = $('food-edit-nota').value.trim();
+    const sodioTxt = String((($('food-edit-sodio') || {}).value) || '').trim();
+    const sodio = sodioTxt === '' ? null : parseFloat(sodioTxt.replace(',', '.'));
 
     if (!name) return toast('Nome é obrigatório', true);
     if (!ref || ref <= 0) return toast('Quantidade de referência deve ser > 0', true);
@@ -3154,6 +3368,7 @@ function saveFoodEditor(foodId) {
     if (isNaN(prot) || prot < 0) return toast('Proteína inválida', true);
     if (carbo < 0) return toast('Carboidrato inválido', true);
     if (gord < 0) return toast('Gordura inválida', true);
+    if (sodio !== null && (isNaN(sodio) || sodio < 0)) return toast('Sódio inválido', true);
 
     // Validador de sanidade: kcal/100g acima de 900 eh implausivel
     const kcalPer100 = (kcal / ref) * 100;
@@ -3178,11 +3393,16 @@ function saveFoodEditor(foodId) {
         food.carbo = carbo;
         food.gord = gord;
         food.nota = nota;
+        // apagar um sódio que existia é decisão do usuário: marca 'vazio' para a TACO não repor sozinha
+        if (sodio === null) { if (typeof food.sodio === 'number') food.sodioFonte = 'vazio'; delete food.sodio; }
+        else { if (food.sodio !== sodio) food.sodioFonte = 'usuario'; food.sodio = sodio; }
     } else {
         // novo — gera id slug a partir do nome
         const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').substr(0, 20);
         const id = slug + '_' + uid().substr(0, 5);
-        D.foods.push({ id, name, ref, unit, kcal, prot, carbo, gord, nota });
+        const novo = { id, name, ref, unit, kcal, prot, carbo, gord, nota };
+        if (sodio !== null) { novo.sodio = sodio; novo.sodioFonte = 'usuario'; }
+        D.foods.push(novo);
     }
 
     save();
@@ -3235,7 +3455,7 @@ function forceMigrateTACO() {
 function deleteFood(foodId) {
     const food = D.foods.find(f => f.id === foodId);
     if (!food) return;
-    if (!confirm(`Excluir "${food.name}" do banco?\n\nRefeições já registradas que usaram esse alimento não serão afetadas (os dados ficam guardados na refeição).`)) return;
+    if (!confirm(`Excluir "${food.name}" do banco?\n\nRefeições já registradas que usaram esse alimento não serão afetadas (os dados ficam guardados na refeição), mas o sódio delas passa a contar como desconhecido.`)) return;
     D.foods = D.foods.filter(f => f.id !== foodId);
     save();
     // fecha modal se aberto
@@ -3708,6 +3928,12 @@ function processDietImport(parsed, opts) {
             else linhasOk(v.lines, `${onde}, versão ${j + 1}`);
         });
     });
+    (Array.isArray(parsed.newFoods) ? parsed.newFoods : []).forEach((f, i) => {
+        if (!f || typeof f !== 'object') return;
+        const quem = 'alimento ' + (f.id || i + 1);
+        if (f.ref != null && !(typeof f.ref === 'number' && f.ref > 0)) formaRuim.push(quem + ': referência');
+        if (f.sodio != null && !(typeof f.sodio === 'number' && Number.isFinite(f.sodio) && f.sodio >= 0)) formaRuim.push(quem + ': sódio');
+    });
     if (formaRuim.length) return { ok: false, error: 'Plano com formato inválido: ' + formaRuim.slice(0, 3).join('; ') };
 
     // 0) Trava ANTES de mexer em qualquer coisa: todo alimento citado precisa existir no banco ou
@@ -3729,12 +3955,26 @@ function processDietImport(parsed, opts) {
     let addedFoods = 0;
     (parsed.newFoods || []).forEach(f => {
         if (!f || !f.id || !f.name) return;
-        if (D.foods.find(x => x.id === f.id)) return;
-        D.foods.push({
+        const sodioOk = typeof f.sodio === 'number' && f.sodio >= 0;
+        const existente = D.foods.find(x => x.id === f.id);
+        if (existente) {
+            // v1.26.0: só completa o sódio que falta, na MESMA unidade, escalado para a referência do usuário;
+            // nada é sobrescrito e sódio apagado de propósito ('vazio') fica apagado
+            const refJ = Number(f.ref || 100), refE = Number(existente.ref);
+            if (sodioOk && typeof existente.sodio !== 'number' && !existente.sodioFonte
+                && (existente.unit || 'g') === (f.unit || 'g') && refJ > 0 && refE > 0) {
+                existente.sodio = Math.round(f.sodio * refE / refJ * 10) / 10;
+                existente.sodioFonte = 'plano';
+            }
+            return;
+        }
+        const novo = {
             id: f.id, name: f.name, ref: f.ref || 100, unit: f.unit || 'g',
             kcal: +f.kcal || 0, prot: +f.prot || 0, carbo: +f.carbo || 0, gord: +f.gord || 0,
             nota: f.nota || ''
-        });
+        };
+        if (sodioOk) { novo.sodio = f.sodio; novo.sodioFonte = 'plano'; }
+        D.foods.push(novo);
         addedFoods++;
     });
 
@@ -3792,7 +4032,7 @@ function processDietImport(parsed, opts) {
         if (!D.goals || typeof D.goals !== 'object') D.goals = defaultD().goals;
         ['treino', 'descanso'].forEach(tipo => {
             if (!D.goals[tipo]) D.goals[tipo] = {};
-            ['kcal', 'prot', 'carbo', 'gord', 'water'].forEach(k => { if (+mg[k] > 0) D.goals[tipo][k] = +mg[k]; });
+            ['kcal', 'prot', 'carbo', 'gord', 'water', 'sodio'].forEach(k => { if (+mg[k] > 0) D.goals[tipo][k] = +mg[k]; });
         });
         goalsApplied = true;
     }
@@ -5844,6 +6084,11 @@ function rGoals() {
                 <div style="flex:1"><div class="goal-label">Gordura total — opcional</div><div class="goal-value">${D.goals[dayType].gord > 0 ? D.goals[dayType].gord + 'g' : '<span style="font-size:13px;color:var(--text3);font-weight:400">sem meta</span>'}</div></div>
                 <button class="btn btn-outline btn-sm" onclick="editGoal('gord','${dayType}')">Editar</button>
             </div>
+            <div class="goal-card">
+                <div class="goal-icon" style="background:rgba(219,39,119,0.12);color:#db2777">🧂</div>
+                <div style="flex:1"><div class="goal-label">Sódio — limite opcional</div><div class="goal-value">${D.goals[dayType].sodio > 0 ? fmtN(D.goals[dayType].sodio) + ' mg' : '<span style="font-size:13px;color:var(--text3);font-weight:400">sem limite</span>'}</div></div>
+                <button class="btn btn-outline btn-sm" onclick="editGoal('sodio','${dayType}')">Editar</button>
+            </div>
             <div class="goal-card" style="margin-bottom:0">
                 <div class="goal-icon" style="background:var(--blue-bg);color:var(--blue)">💧</div>
                 <div style="flex:1"><div class="goal-label">Hidratação</div><div class="goal-value">${fmtN(D.goals[dayType].water)} ml</div></div>
@@ -6168,14 +6413,23 @@ function settingsContaHtml() {
 
 
 function editGoal(field, dayType) {
-    const labels = { kcal: 'Calorias (kcal)', prot: 'Proteína (g)', water: 'Hidratação (ml)', carbo: 'Carboidrato (g) — 0 = sem meta', gord: 'Gordura total (g) — 0 = sem meta' };
+    const labels = { kcal: 'Calorias (kcal)', prot: 'Proteína (g)', water: 'Hidratação (ml)', carbo: 'Carboidrato (g) — 0 = sem meta', gord: 'Gordura total (g) — 0 = sem meta', sodio: 'Sódio (mg) — limite diário, 0 = sem limite' };
     const val = prompt(labels[field] + ':', D.goals[dayType][field] || 0);
-    if (val !== null && !isNaN(parseFloat(val))) {
-        D.goals[dayType][field] = parseFloat(val);
-        save();
-        rGoals();
-        toast('Meta atualizada');
+    if (val === null) return;
+    // confirmar sem mexer mantém o valor exato (o prompt vem com o número cru, que pode ter ponto decimal).
+    // Digitado: aceita o formato da tela, "2.300" e "2 300" (milhar), "12,5" (decimal) e unidade junto ("2.300 mg").
+    const txt = String(val).trim();
+    let num;
+    if (txt === String(D.goals[dayType][field] || 0)) num = Number(txt);
+    else {
+        const limpo = txt.replace(/[^\d.,\s-]/g, '').trim().replace(/\s+/g, '');
+        num = parseFloat(/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(limpo) ? limpo.replace(/\./g, '').replace(',', '.') : limpo.replace(',', '.'));
     }
+    if (isNaN(num) || num < 0) return toast('Valor inválido', true);
+    D.goals[dayType][field] = num;
+    save();
+    rGoals();
+    toast('Meta atualizada');
 }
 
 // Os blocos de config (módulos, campos de refeição, treino, planos) renderizam

@@ -1,12 +1,39 @@
 # Estado do Projeto — Gestão Saúde
 
-**Última atualização:** 2026-09-14 (parte 17, sessão no Mac mini)
-**Versão atual em produção:** v1.25.1, no ar desde 14/09 09h07 (a v1.25.2 foi commitada no Mac mini em 14/09 e aguarda o push, que por enquanto sai pelo MacBook; v1.24.0 = aulas com o personal; v1.22.0 = prints do Apple Watch na análise por IA, serviço **v2.2** na VPS)
+**Última atualização:** 2026-09-14 (parte 18, sessão no Mac mini)
+**Versão atual em produção:** v1.25.2, no ar desde 14/09 14h07 (a v1.26.0 foi commitada no Mac mini em 14/09 e aguarda o push, que por enquanto sai pelo MacBook; v1.24.0 = aulas com o personal; v1.22.0 = prints do Apple Watch na análise por IA, serviço **v2.2** na VPS)
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
 
 > Este documento é o **handoff vivo** do projeto. Qualquer nova sessão de trabalho começa lendo este arquivo pra entender estado atual, decisões já tomadas, e próximos passos.
+
+---
+
+## Resumo da sessão 2026-09-14 (parte 18): v1.26.0, sódio e histórico de 7 dias
+
+Pedido do Gileno: sódio no "Resumo do dia" e um histórico de nutrientes como o do app da nutricionista.
+
+**Sódio.** Campo opcional `D.foods[].sodio` (mg na porção de referência) com `sodioFonte` (`taco`, `plano`, `usuario`, `vazio`).
+O dia calcula ao vivo por `foodId` + gramas (`itemSodio`); alimento sem sódio, sódio NaN/negativo ou referência inválida = DESCONHECIDO,
+nunca zero. `backfillSodioFromTaco` completa depois do `loadTACO`, só em gramas, só se a kcal/100 g bate com a linha da TACO, só sem
+`sodioFonte`; sódio vazio na TACO conta como traço só nas categorias em que o arquivo o deixa vazio. Editor com campo de sódio; import
+valida `ref`/`sodio`, completa sem sobrescrever e só na mesma unidade; `meta.goals.sodio` pela caixinha; Metas com "Sódio, limite opcional";
+`editGoal` aceita "2.300", "2 300", "12,5" e unidade junto, e confirmar sem mexer mantém o valor exato.
+
+**Card de sódio (limite).** Só diz "dentro/perto do limite" com o dia completo; parcial fica neutro com "≥" e "o total real é maior"
+(amarelo se já passa de 90%); "acima do limite" vale mesmo parcial; itens sem nenhum sódio mostram "—". Sempre com "sem o sal do preparo":
+a TACO mede cozidos sem sal.
+
+**Histórico de 7 dias** (`hist7Html`, recolhido por padrão): um gráfico pequeno por medida, 7 colunas, traço da meta de cada dia,
+leitura por toque/foco/mouse, média, tabela; sódio sem dado = sem barra e fora da média, dia parcial com barra vazada e "pelo menos".
+Não cria dia vazio. Cores `--hist-*` validadas (contraste >= 3:1 nos dois temas; azul/roxo próximos sob deuteranopia, aliviado por título
+escrito em cada gráfico).
+
+**Verificação:** 1ª auditoria independente REPROVOU (sódio subestimado sem aviso em 5 cenários: selo verde com dia parcial, dia sem
+dado virando 0, alimento em "un", nota TACO velha, `ref` inválida no import); curada e REAUDITADA: APROVADO COM RESSALVAS, ressalvas
+(parcial perto do limite neutro, meta com decimal ou unidade) curadas antes do commit. Baterias: v1.26.0 79/79, reauditoria 27/27,
+porções 26/26, plano 81/81, catálogo 27/27, cura 13/13, escape 10/10.
 
 ---
 
