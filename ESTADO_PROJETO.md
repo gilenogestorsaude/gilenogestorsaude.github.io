@@ -1,7 +1,7 @@
 # Estado do Projeto — Gestão Saúde
 
 **Última atualização:** 2026-09-14 (parte 18, sessão no Mac mini)
-**Versão atual em produção:** v1.25.2, no ar desde 14/09 14h07 (a v1.26.0 foi commitada no Mac mini em 14/09 e aguarda o push, que por enquanto sai pelo MacBook; v1.24.0 = aulas com o personal; v1.22.0 = prints do Apple Watch na análise por IA, serviço **v2.2** na VPS)
+**Versão atual em produção:** v1.26.0, no ar desde 14/09 18h08 (sódio e gordura como limites, histórico de 7 dias). v1.27.0 (faixa de proteína) commitada no Mac mini em 15/09, aguarda o push, que desde 15/09 sai do próprio mini pela deploy key. Antes: v1.25.2 (14/09 14h07), v1.25.1 (14/09 09h07), v1.25.0 (14/09 08h07), v1.24.0 (02/09).
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
@@ -9,6 +9,28 @@
 > Este documento é o **handoff vivo** do projeto. Qualquer nova sessão de trabalho começa lendo este arquivo pra entender estado atual, decisões já tomadas, e próximos passos.
 
 ---
+
+## Resumo da sessão 2026-09-15 (parte 19): v1.27.0, faixa aceitável de proteína
+
+Pedido do Gileno: a nutricionista respondeu que a proteína adequada é uma **faixa** (mínimo e máximo por dia), não um piso. O Relatório Semanal contava o dia como "na meta" só com consumo >= meta e pintava vermelho uma semana inteira dentro da faixa prescrita. Decisão dele (opção A): faixa no app, relatório e base julgam por ela, a meta continua sendo o alvo do anel.
+
+**Modelo.** `goals[tipo].protMin` e `goals[tipo].protMax`, opcionais, por tipo de dia (treino/descanso); ausentes = sem faixa. `faixaProt(goals)` devolve `{min,max}` (0 = lado sem limite) ou null. `estadoProt(val, goals)` devolve `'ok' | 'abaixo' | 'acima'`: **sem faixa é exatamente a régua antiga** (`val >= goals.prot`); com faixa compara o consumo arredondado a 1 casa (como `fmt()` mostra: 135,96 g aparece "136" e conta dentro de uma faixa que começa em 136).
+
+**Metas.** Card "Faixa de proteína, opcional" abaixo da meta; `editProtRange(dayType)` pede mínimo e máximo (dois prompts, mesma leitura de número de `editGoal`, extraída para `parseNumeroMeta`), 0 apaga o lado, mínimo > máximo é recusado, cancelar não grava; avisa quando a meta fica fora da própria faixa.
+
+**Relatório Semanal.** `collectWeekReport` ganha `diasProtAbaixo`, `diasProtAcima`, `modoProt` (`'meta'` quando nenhum dia tem faixa, `'faixa'` quando todos, `'misto'`) e `faixaProtUnica` (a faixa comum a todos os dias, ou null). Alerta 🎯: no modo `meta` os textos são os antigos, byte a byte; com faixa, "na faixa em X de N dias (a abaixo, b acima)", e tudo acima também é vermelho (antes seria verde). Tela e PDF: "X / N dias na faixa" (ou "adequados" no misto) e, no lugar de Melhor/Pior (com faixa, mais proteína não é "melhor"), a contagem abaixo/dentro/acima com a faixa escrita. JSON da IA (`reportAggregatesForAI`) só ganha campos (`criterioProteina`, `faixaProteina`, `diasProteinaAbaixo`, `diasProteinaAcima`) quando há faixa; sem faixa sai idêntico ao de antes.
+
+**Import do plano.** `meta.goals.protMin`/`protMax` entram com a caixinha "Aplicar as metas", sempre em PAR (plano só com mínimo apaga o máximo antigo, para nunca misturar faixa do plano com faixa do usuário); mínimo > máximo é reprovado na trava de forma, antes de mutar; lixo é ignorado. Plano sem faixa preserva a do usuário.
+
+**Card do plano.** A linha "Dia pelo plano, com suas escolhas" ganha " · faixa X a Yg: dentro / abaixo ⚠ / acima ⚠".
+
+**Robôs da casa (fora do repo).** `gerar_relatorio.py` (relatório de domingo) e `gerar_base.py` (base do ChatGPT) passam a ler a faixa: linha "Proteína" com "X de N na faixa (a abaixo, b acima)", bloco "Dias de proteína: a abaixo, x na faixa, b acima" no lugar de Melhor/Pior, colunas `prot_faixa_g`/`prot_estado_faixa` no `diario.csv` e `prot_dias_na_faixa`/`_abaixo_faixa`/`_acima_faixa` no `semanal.csv`. Sem faixa, saída idêntica à anterior. A base importa o robô por caminho fixo: instalar o robô ANTES da base.
+
+**Verificação.** Harness jsc com o `<script>` real: 54/54 (sem faixa = saída antiga; faixa da nutri; bordas da casa decimal; um lado só; misto; faixas diferentes por dia; import em par, trava e lixo; `editProtRange` e `editGoal` refatorado; card do plano; propriedade sobre as 420 combinações do plano importado; snapshot real do banco). Reversa na v1.26.0: 4/4 (ela pinta vermelho a semana dentro da faixa e não conhece nada disso). Robôs: fixtures sem faixa idênticas byte a byte, com faixa só as linhas esperadas mudam; `gerar_base` sobre o snapshot real, old x new, só colunas e índice. Auditoria independente antes do push.
+
+**Auditoria independente de 15/09 (aprovada com ressalvas) e as curas:** (1) `processDietImport` aceitava `1e999` (Infinity) no JSON e gravava `Infinity` na faixa (virava `null` ao salvar): agora a trava e a aplicação só aceitam número finito > 0 (`faixaOk`), e Infinity num lado conta como ausente. (2) O gráfico "% da meta por dia" pintava verde o dia ACIMA da faixa e amarelo o dia dentro: com faixa, as barras passam a seguir o estado do dia (verde dentro, amarelo abaixo, vermelho acima, `protBarsItems`), a linha dos 100% continua sendo a meta e a legenda diz "cor pela faixa"; sem faixa, barras como antes. (3) No robô Python, `faixa_prot` lia os dois lados juntos e lixo num lado apagava o outro: agora cada lado é lido por si, como `faixaProt` do app; `inf` e `nan` ficam de fora. Ressalvas aceitas sem cura: a regra da 1 casa decimal (`Math.round(v*10)/10`) diverge de `fmt()` em 7 de 100 mil somas por meio exato em binário (a melhor regra simples; `toFixed` daria 23); `gerar_base.py` passa a emitir as colunas novas SEMPRE (vazias sem faixa), esquema estável em vez de idêntico byte a byte, decisão de desenho. Ordem de instalação dos robôs: `gerar_relatorio.py` antes de `gerar_base.py` (a base importa o robô por caminho fixo e chama `gr.faixa_prot`). Harness do autor 59/59 e reversa 4/4 depois das curas; harness do auditor reexecutado sobre as cópias curadas: sem faixa, 486 de 486 registros idênticos à v1.26.0.
+
+**Não tocado nesta versão:** o histórico de 7 dias (`hist7Html`) continua traçando só a meta, sem a banda da faixa; o aviso "Proteína abaixo do ritmo" do Início (< 60% da meta às 14h/15h) segue igual.
 
 ## Resumo da sessão 2026-09-14 (parte 18): v1.26.0, sódio e histórico de 7 dias
 

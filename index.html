@@ -625,7 +625,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.26.0';
+const APP_VERSION = '1.27.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -844,6 +844,7 @@ function defaultD() {
         // Water by date: { '2026-03-01': [ { time: '05:15', vol: 500, source: 'Dexilant', auto: true }, ... ] }
         water: {},
         // Goals — kcal/prot/water sempre setados; carbo (meta) e gord (limite desde a v1.26.0) opcionais (0 = sem, so mostra valor)
+        // protMin/protMax (faixa aceitável de proteína, v1.27.0): opcionais; ausentes = sem faixa, vale a régua antiga (consumo >= meta)
         goals: {
             treino:   { kcal: 2000, prot: 180, water: 4750, carbo: 0, gord: 0 },
             descanso: { kcal: 1450, prot: 160, water: 4250, carbo: 0, gord: 0 }
@@ -2736,6 +2737,77 @@ function estadoLimite(val, meta) {
     return r > lim ? 'acima' : r >= lim * 0.9 ? 'perto' : '';
 }
 
+// Faixa aceitável de proteína (v1.27.0): goals.protMin e goals.protMax, ambos opcionais, por tipo de dia.
+// Devolve { min, max } (0 = lado sem limite) ou null quando não há faixa.
+function faixaProt(goals) {
+    const g = goals || {};
+    const min = Number(g.protMin) > 0 ? Number(g.protMin) : 0;
+    const max = Number(g.protMax) > 0 ? Number(g.protMax) : 0;
+    return (min > 0 || max > 0) ? { min, max } : null;
+}
+
+// Estado da proteína de um dia: 'ok' | 'abaixo' | 'acima'.
+// Sem faixa vale EXATAMENTE a régua antiga do relatório (consumo >= meta): nada muda para quem não configurou faixa.
+// Com faixa, compara com 1 casa decimal, como fmt() mostra: 99,96 g aparece "100" e conta numa faixa que começa em 100.
+function estadoProt(val, goals) {
+    const f = faixaProt(goals);
+    if (!f) return val >= (goals || {}).prot ? 'ok' : 'abaixo';
+    const v = Math.round((Number(val) || 0) * 10) / 10;
+    if (f.min > 0 && v < f.min) return 'abaixo';
+    if (f.max > 0 && v > f.max) return 'acima';
+    return 'ok';
+}
+
+// Texto curto da faixa: "100 a 140g", "a partir de 100g", "até 140g" ('' sem faixa)
+function faixaProtTxt(f) {
+    if (!f) return '';
+    if (f.min > 0 && f.max > 0) return `${fmt(f.min)} a ${fmt(f.max)}g`;
+    return f.min > 0 ? `a partir de ${fmt(f.min)}g` : `até ${fmt(f.max)}g`;
+}
+
+// Como a semana julga a proteína: 'meta' (nenhum dia com faixa), 'faixa' (todos) ou 'misto'
+function modoProtSemana(goalsList) {
+    const com = goalsList.filter(g => faixaProt(g)).length;
+    return com === 0 ? 'meta' : com === goalsList.length ? 'faixa' : 'misto';
+}
+
+// A faixa comum a todos os dias (mesmo mínimo e máximo), ou null
+function faixaProtUnica(goalsList) {
+    const fs = goalsList.map(faixaProt);
+    if (!fs.length || fs.some(f => !f)) return null;
+    return fs.every(f => f.min === fs[0].min && f.max === fs[0].max) ? fs[0] : null;
+}
+
+// " (2 abaixo, 1 acima)" sem as partes zeradas; '' quando nenhum dia ficou fora
+function protForaTxt(n) {
+    const p = [];
+    if (n.diasProtAbaixo) p.push(`${n.diasProtAbaixo} abaixo`);
+    if (n.diasProtAcima) p.push(`${n.diasProtAcima} acima`);
+    return p.length ? ` (${p.join(', ')})` : '';
+}
+
+// Sufixo da contagem "X / N dias" no relatório: '' na régua antiga
+function protSufixo(n) {
+    return n.modoProt === 'faixa' ? ' na faixa' : n.modoProt === 'misto' ? ' adequados' : '';
+}
+
+// Com faixa, o dia de mais proteína não é o "melhor": no lugar de melhor/pior, conta abaixo, dentro e acima
+function protContagemHtml(n, onde) {
+    const faixa = n.modoProt === 'faixa';
+    const f = n.faixaProtUnica;
+    const txt = `Dias de proteína: <strong>${n.diasProtAbaixo}</strong> abaixo · <strong>${n.diasProtOk}</strong> ${faixa ? 'na faixa' : 'adequados'} · <strong>${n.diasProtAcima}</strong> acima` +
+        (f ? ` (faixa ${faixaProtTxt(f)})` : '') + (faixa ? '' : ' · faixa nos dias que têm faixa, meta nos demais');
+    return onde === 'pdf' ? `<div class="sub" style="margin-top:4px">${txt}</div>` : `<div style="font-size:11px;color:var(--text2);margin-top:8px">${txt}</div>`;
+}
+
+// " · faixa 100 a 140g: dentro" na linha "Dia pelo plano" do card do plano; '' sem faixa
+function planFaixaTxt(val, g) {
+    const f = faixaProt(g);
+    if (!f) return '';
+    const e = estadoProt(val, g);
+    return ` · faixa ${faixaProtTxt(f)}: ${e === 'ok' ? 'dentro' : e === 'abaixo' ? 'abaixo ⚠' : 'acima ⚠'}`;
+}
+
 // Percentual de leitura: em medida de limite segue estadoLimite (nunca passa de 100% sem estar "acima").
 function pctLimite(v, meta, limite) {
     const p = Math.round(v / meta * 100);
@@ -3910,7 +3982,7 @@ function planCardHtml(slotId) {
             <div style="font-size:11px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);color:var(--text3);line-height:1.6">
                 ${vers.length > 1 || pk.items.some(i => i.optIdx != null) ? 'Esta montagem' : 'Previsto'} <strong style="color:var(--text)">${fmtN(t.kcal)} kcal · ${fmt(t.prot)}g prot · ${fmt(t.carbo)}g carb · ${fmt(t.gord)}g gord</strong><br>
                 Comido <strong style="color:${real.kcal > 0 ? 'var(--primary)' : 'var(--text3)'}">${fmtN(real.kcal)} kcal · ${fmt(real.prot)}g prot</strong>${t.kcal > 0 ? ` (${pctK}% das kcal)` : ''}
-                ${dia && dia.refeicoes > 1 ? `<br>Dia pelo plano, com suas escolhas <strong style="color:var(--text)">${fmtN(dia.kcal)} kcal · ${fmt(dia.prot)}g prot</strong>${g && g.prot ? ` (meta ${fmtN(g.prot)}g)` : ''}` : ''}
+                ${dia && dia.refeicoes > 1 ? `<br>Dia pelo plano, com suas escolhas <strong style="color:var(--text)">${fmtN(dia.kcal)} kcal · ${fmt(dia.prot)}g prot</strong>${g && g.prot ? ` (meta ${fmtN(g.prot)}g${planFaixaTxt(dia.prot, g)})` : ''}` : ''}
                 ${t.missing ? `<br><span style="color:var(--red)">⚠ ${t.missing} alimento(s) do plano sem cadastro contam zero</span>` : ''}
             </div>
             ${note ? `<details class="plan-notes"><summary>Observações da nutri${/modo de preparo/i.test(note) ? ' e modo de preparo' : ''}</summary><div>${escHtml(note)}</div></details>` : ''}
@@ -3929,7 +4001,7 @@ function restorePlanScroll() {
 // Processa o plano colado (objeto já parseado). Muta D.foods/mealSlots/dietPlan (e metas, se pedido).
 // Separado do I/O pra ser testável. Retorna { ok, addedFoods, createdSlots, versions, deactivated, goalsApplied, error }.
 // opts.substituir: refeições do plano ANTERIOR que não voltaram no novo são desligadas (histórico fica).
-// opts.aplicarMetas: copia meta.goals {kcal,prot,carbo,gord,water} para os dias de treino e de descanso.
+// opts.aplicarMetas: copia meta.goals {kcal,prot,carbo,gord,water,sodio} para os dias de treino e de descanso; a faixa {protMin,protMax} entra em par (v1.27.0).
 function processDietImport(parsed, opts) {
     opts = opts || {};
     if (!parsed || typeof parsed !== 'object') return { ok: false, error: 'JSON inválido' };
@@ -3966,6 +4038,9 @@ function processDietImport(parsed, opts) {
         if (f.ref != null && !(typeof f.ref === 'number' && f.ref > 0)) formaRuim.push(quem + ': referência');
         if (f.sodio != null && !(typeof f.sodio === 'number' && Number.isFinite(f.sodio) && f.sodio >= 0)) formaRuim.push(quem + ': sódio');
     });
+    const mgF = parsed.meta && parsed.meta.goals;
+    const faixaOk = v => Number.isFinite(+v) && +v > 0; // texto, negativo, NaN e Infinity (1e999 no JSON) ficam de fora
+    if (mgF && typeof mgF === 'object' && faixaOk(mgF.protMin) && faixaOk(mgF.protMax) && +mgF.protMin > +mgF.protMax) formaRuim.push('metas: faixa de proteína com mínimo maior que o máximo');
     if (formaRuim.length) return { ok: false, error: 'Plano com formato inválido: ' + formaRuim.slice(0, 3).join('; ') };
 
     // 0) Trava ANTES de mexer em qualquer coisa: todo alimento citado precisa existir no banco ou
@@ -4065,6 +4140,11 @@ function processDietImport(parsed, opts) {
         ['treino', 'descanso'].forEach(tipo => {
             if (!D.goals[tipo]) D.goals[tipo] = {};
             ['kcal', 'prot', 'carbo', 'gord', 'water', 'sodio'].forEach(k => { if (+mg[k] > 0) D.goals[tipo][k] = +mg[k]; });
+            // v1.27.0: a faixa de proteína do plano entra em par (lado ausente fica sem limite), para nunca misturar com a do usuário
+            if (faixaOk(mg.protMin) || faixaOk(mg.protMax)) {
+                if (faixaOk(mg.protMin)) D.goals[tipo].protMin = +mg.protMin; else delete D.goals[tipo].protMin;
+                if (faixaOk(mg.protMax)) D.goals[tipo].protMax = +mg.protMax; else delete D.goals[tipo].protMax;
+            }
         });
         goalsApplied = true;
     }
@@ -4104,7 +4184,7 @@ function openDietImport() {
             </label>` : ''}
             <label style="${chkStyle}">
                 <input type="checkbox" id="diet-import-goals" style="margin-top:2px;width:18px;height:18px;flex-shrink:0">
-                <span>Aplicar as metas do plano (kcal, proteína, carbo e água) e os limites (gordura e sódio) aos dias de treino e de descanso. Desmarcado, suas metas ficam como estão.</span>
+                <span>Aplicar as metas do plano (kcal, proteína, carbo e água), os limites (gordura e sódio) e a faixa de proteína, se o plano trouxer, aos dias de treino e de descanso. Desmarcado, suas metas ficam como estão.</span>
             </label>
             <div class="modal-actions">
                 <button class="btn btn-outline" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
@@ -5295,7 +5375,12 @@ function collectWeekReport(startIso) {
         avgProt: avg(nutriDays, d => d.meals.prot),
         avgCarbo: avg(nutriDays, d => d.meals.carbo),
         avgGord: avg(nutriDays, d => d.meals.gord),
-        diasProtOk: nutriDays.filter(d => d.meals.prot >= d.goals.prot).length,
+        diasProtOk: nutriDays.filter(d => estadoProt(d.meals.prot, d.goals) === 'ok').length,
+        // v1.27.0: faixa de proteína. Sem faixa (modoProt 'meta'), diasProtOk é exatamente a régua antiga.
+        diasProtAbaixo: nutriDays.filter(d => estadoProt(d.meals.prot, d.goals) === 'abaixo').length,
+        diasProtAcima: nutriDays.filter(d => estadoProt(d.meals.prot, d.goals) === 'acima').length,
+        modoProt: modoProtSemana(nutriDays.map(d => d.goals)),
+        faixaProtUnica: faixaProtUnica(nutriDays.map(d => d.goals)),
         diasKcalOk: nutriDays.filter(d => Math.abs(d.meals.kcal - d.goals.kcal) <= d.goals.kcal * 0.10).length,
         diasGordOk: nutriDays.filter(d => estadoLimite(d.meals.gord, d.goals.gord) !== 'acima').length, // mesma régua do Resumo e do Início
         temMetaGord: nutriDays.some(d => Math.round(d.goals.gord) > 0),
@@ -5345,9 +5430,19 @@ function collectWeekReport(startIso) {
     const alerts = [];
     const add = (level, icon, text) => alerts.push({ level, icon, text });
     if (nutri.dias >= 2) {
-        if (nutri.diasProtOk === 0) add('red', '🎯', `Proteína abaixo da meta em TODOS os ${nutri.dias} dias registrados.`);
-        else if (nutri.diasProtOk < nutri.dias) add('yellow', '🎯', `Proteína na meta em ${nutri.diasProtOk} de ${nutri.dias} dias registrados.`);
-        else add('green', '🎯', `Proteína na meta em todos os ${nutri.dias} dias registrados. 👏`);
+        if (nutri.modoProt === 'meta') {
+            if (nutri.diasProtOk === 0) add('red', '🎯', `Proteína abaixo da meta em TODOS os ${nutri.dias} dias registrados.`);
+            else if (nutri.diasProtOk < nutri.dias) add('yellow', '🎯', `Proteína na meta em ${nutri.diasProtOk} de ${nutri.dias} dias registrados.`);
+            else add('green', '🎯', `Proteína na meta em todos os ${nutri.dias} dias registrados. 👏`);
+        } else {
+            // v1.27.0: com faixa, adequado é estar dentro dela; no modo misto, dia sem faixa segue a meta
+            const faixa = nutri.modoProt === 'faixa';
+            const fora = protForaTxt(nutri);
+            const misto = faixa ? '' : ' Faixa nos dias que têm faixa, meta nos demais.';
+            if (nutri.diasProtOk === 0) add('red', '🎯', `Proteína ${faixa ? 'fora da faixa' : 'fora do adequado'} em TODOS os ${nutri.dias} dias registrados${fora}.${misto}`);
+            else if (nutri.diasProtOk < nutri.dias) add('yellow', '🎯', `Proteína ${faixa ? 'na faixa' : 'adequada'} em ${nutri.diasProtOk} de ${nutri.dias} dias registrados${fora}.${misto}`);
+            else add('green', '🎯', `Proteína ${faixa ? 'na faixa' : 'adequada'} em todos os ${nutri.dias} dias registrados. 👏${misto}`);
+        }
     }
     if (agua.dias >= 2) {
         if (agua.diasAbaixo70 >= 3) add('red', '💧', `Hidratação abaixo de 70% da meta em ${agua.diasAbaixo70} dias, ponto de correção prioritário.`);
@@ -5401,6 +5496,18 @@ function svgLineChart(points, unit, pal = CHART_PAL) {
         <text x="${W - 2}" y="10" font-size="8" fill="${pal.txt}" text-anchor="end">${unit}</text>
     </svg>`;
 }
+// Barras de proteína do relatório (v1.27.0): sem faixa, verde ao passar da meta (regra antiga); com faixa, a cor é o
+// estado do dia (verde dentro, amarelo abaixo, vermelho acima) e a linha dos 100% segue sendo a meta.
+function protBarsItems(rep, color, red) {
+    const comFaixa = rep.nutri.modoProt !== 'meta';
+    const verde = color === 'var(--yellow)' ? 'var(--green)' : '#10b981';
+    return rep.days.map(d => {
+        const tem = !d.future && d.hasMeals;
+        const it = { i: d.i, pct: tem ? Math.round(d.meals.prot / d.goals.prot * 100) : null };
+        if (tem && comFaixa) { const e = estadoProt(d.meals.prot, d.goals); it.fill = e === 'ok' ? verde : e === 'acima' ? red : color; }
+        return it;
+    });
+}
 function svgPctBars(items, color, pal = CHART_PAL) {
     // items: [{i(0-6), pct|null}] — barras % da meta, linha tracejada nos 100%
     if (!items || !items.some(it => it.pct != null)) return '';
@@ -5410,7 +5517,7 @@ function svgPctBars(items, color, pal = CHART_PAL) {
     const bw = (W - 2 * PX) / 7 - 8;
     const y = p => H - PY - (H - 2 * PY) * (p / maxPct);
     const bars = items.map(it => it.pct == null ? '' :
-        `<rect x="${x(it.i).toFixed(1)}" y="${y(it.pct).toFixed(1)}" width="${bw.toFixed(1)}" height="${(H - PY - y(it.pct)).toFixed(1)}" rx="2" fill="${it.pct >= 100 ? pal.linha : color}" opacity="${it.pct >= 100 ? 1 : 0.75}"/>`).join('');
+        `<rect x="${x(it.i).toFixed(1)}" y="${y(it.pct).toFixed(1)}" width="${bw.toFixed(1)}" height="${(H - PY - y(it.pct)).toFixed(1)}" rx="2" fill="${it.fill || (it.pct >= 100 ? pal.linha : color)}" opacity="${it.pct >= 100 ? 1 : 0.75}"/>`).join('');
     const labels = DOW_ABBR.map((n, i) => `<text x="${(x(i) + bw / 2).toFixed(1)}" y="${H - 2}" font-size="8" fill="${pal.txt}" text-anchor="middle">${n}</text>`).join('');
     return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img">
         <line x1="${PX}" y1="${y(100).toFixed(1)}" x2="${W - PX}" y2="${y(100).toFixed(1)}" stroke="${pal.txt}" stroke-width="1" stroke-dasharray="4 3"/>
@@ -5460,7 +5567,9 @@ function reportAggregatesForAI(rep) {
             mediaKcal: r1(rep.nutri.avgKcal), mediaProteina: r1(rep.nutri.avgProt),
             mediaCarbo: r1(rep.nutri.avgCarbo), mediaGordura: r1(rep.nutri.avgGord),
             metaKcal: metas.kcal || null, metaProteina: metas.prot || null,
-            diasProteinaOk: rep.nutri.diasProtOk, diasKcalOk: rep.nutri.diasKcalOk
+            diasProteinaOk: rep.nutri.diasProtOk, diasKcalOk: rep.nutri.diasKcalOk,
+            // v1.27.0: só com faixa configurada; sem faixa, o JSON sai idêntico ao de antes
+            ...(rep.nutri.modoProt !== 'meta' ? { criterioProteina: rep.nutri.modoProt, faixaProteina: rep.nutri.faixaProtUnica, diasProteinaAbaixo: rep.nutri.diasProtAbaixo, diasProteinaAcima: rep.nutri.diasProtAcima } : {})
         },
         hidratacao: {
             diasRegistrados: rep.agua.dias, mediaMl: r1(rep.agua.avg),
@@ -5856,13 +5965,13 @@ function rReport() {
                 <tr style="color:var(--text3);text-align:left">
                     <th style="padding:4px 6px;font-weight:600">Métrica</th><th style="padding:4px 6px;font-weight:600">Média/dia</th><th style="padding:4px 6px;font-weight:600">Meta atingida</th></tr>
                 <tr style="border-top:1px solid var(--border)"><td style="padding:5px 6px">🔥 Calorias</td><td style="padding:5px 6px"><strong>${fmtN(n.avgKcal)}</strong> kcal</td><td style="padding:5px 6px">${n.diasKcalOk} / ${n.dias} dias (±10%)</td></tr>
-                <tr style="border-top:1px solid var(--border)"><td style="padding:5px 6px">🎯 Proteína</td><td style="padding:5px 6px"><strong>${fmt(n.avgProt)}</strong> g</td><td style="padding:5px 6px;color:${n.diasProtOk === 0 ? 'var(--red)' : n.diasProtOk === n.dias ? 'var(--green)' : 'var(--yellow)'}"><strong>${n.diasProtOk} / ${n.dias} dias</strong></td></tr>
+                <tr style="border-top:1px solid var(--border)"><td style="padding:5px 6px">🎯 Proteína</td><td style="padding:5px 6px"><strong>${fmt(n.avgProt)}</strong> g</td><td style="padding:5px 6px;color:${n.diasProtOk === 0 ? 'var(--red)' : n.diasProtOk === n.dias ? 'var(--green)' : 'var(--yellow)'}"><strong>${n.diasProtOk} / ${n.dias} dias${protSufixo(n)}</strong></td></tr>
                 <tr style="border-top:1px solid var(--border)"><td style="padding:5px 6px">🌾 Carboidrato</td><td style="padding:5px 6px"><strong>${fmt(n.avgCarbo)}</strong> g</td><td style="padding:5px 6px">—</td></tr>
                 <tr style="border-top:1px solid var(--border)"><td style="padding:5px 6px">🥑 Gordura</td><td style="padding:5px 6px"><strong>${fmt(n.avgGord)}</strong> g</td><td style="padding:5px 6px">${n.temMetaGord ? n.diasGordOk + ' / ' + n.dias + ' dentro do teto' : '—'}</td></tr>
             </table></div>
-            ${n.melhorProt ? `<div style="font-size:11px;color:var(--text2);margin-top:8px">Melhor dia de proteína: <strong style="color:var(--green)">${DOW_ABBR[n.melhorProt.i]} (${fmt(n.melhorProt.meals.prot)}g · ${Math.round(n.melhorProt.meals.prot / n.melhorProt.goals.prot * 100)}%)</strong> · Pior: <strong style="color:var(--red)">${DOW_ABBR[n.piorProt.i]} (${fmt(n.piorProt.meals.prot)}g · ${Math.round(n.piorProt.meals.prot / n.piorProt.goals.prot * 100)}%)</strong></div>` : ''}
-            <div style="margin-top:10px;font-size:10px;color:var(--text3)">Proteína — % da meta por dia:</div>
-            ${svgPctBars(rep.days.map(d => ({ i: d.i, pct: (!d.future && d.hasMeals) ? Math.round(d.meals.prot / d.goals.prot * 100) : null })), 'var(--yellow)')}
+            ${n.modoProt !== 'meta' ? protContagemHtml(n, 'tela') : n.melhorProt ? `<div style="font-size:11px;color:var(--text2);margin-top:8px">Melhor dia de proteína: <strong style="color:var(--green)">${DOW_ABBR[n.melhorProt.i]} (${fmt(n.melhorProt.meals.prot)}g · ${Math.round(n.melhorProt.meals.prot / n.melhorProt.goals.prot * 100)}%)</strong> · Pior: <strong style="color:var(--red)">${DOW_ABBR[n.piorProt.i]} (${fmt(n.piorProt.meals.prot)}g · ${Math.round(n.piorProt.meals.prot / n.piorProt.goals.prot * 100)}%)</strong></div>` : ''}
+            <div style="margin-top:10px;font-size:10px;color:var(--text3)">Proteína — % da meta por dia${n.modoProt !== 'meta' ? ', cor pela faixa' : ''}:</div>
+            ${svgPctBars(protBarsItems(rep, 'var(--yellow)', 'var(--red)'), 'var(--yellow)')}
         </div>`;
 
     // Treinos
@@ -6007,11 +6116,11 @@ ${rep.pesoSerie.length >= 2 ? `<div class="chart-cap">Peso ao longo da semana:</
 ${n.dias ? `<h2>🍽 Resumo nutricional <span class="sub">(${n.dias} dia(s) com registro)</span></h2>
 <table style="${tbl}"><tr><th style="${th}">Métrica</th><th style="${th}">Média/dia</th><th style="${th}">Meta atingida</th></tr>
 <tr><td style="${td}">Calorias</td><td style="${td}">${fmtN(n.avgKcal)} kcal</td><td style="${td}">${n.diasKcalOk} / ${n.dias} dias (±10%)</td></tr>
-<tr><td style="${td}">Proteína</td><td style="${td}">${fmt(n.avgProt)} g</td><td style="${td}">${n.diasProtOk} / ${n.dias} dias</td></tr>
+<tr><td style="${td}">Proteína</td><td style="${td}">${fmt(n.avgProt)} g</td><td style="${td}">${n.diasProtOk} / ${n.dias} dias${protSufixo(n)}</td></tr>
 <tr><td style="${td}">Carboidrato</td><td style="${td}">${fmt(n.avgCarbo)} g</td><td style="${td}">—</td></tr>
 <tr><td style="${td}">Gordura</td><td style="${td}">${fmt(n.avgGord)} g</td><td style="${td}">${n.temMetaGord ? n.diasGordOk + ' / ' + n.dias + ' dentro do teto' : '—'}</td></tr></table>
-${n.melhorProt ? `<div class="sub" style="margin-top:4px">Melhor dia de proteína: ${DOW_ABBR[n.melhorProt.i]} (${fmt(n.melhorProt.meals.prot)}g) · Pior: ${DOW_ABBR[n.piorProt.i]} (${fmt(n.piorProt.meals.prot)}g)</div>` : ''}
-<div class="chart-cap">Proteína — % da meta por dia:</div><div class="chart">${svgPctBars(rep.days.map(d => ({ i: d.i, pct: (!d.future && d.hasMeals) ? Math.round(d.meals.prot / d.goals.prot * 100) : null })), '#f59e0b', CHART_PAL_PDF)}</div>` : ''}
+${n.modoProt !== 'meta' ? protContagemHtml(n, 'pdf') : n.melhorProt ? `<div class="sub" style="margin-top:4px">Melhor dia de proteína: ${DOW_ABBR[n.melhorProt.i]} (${fmt(n.melhorProt.meals.prot)}g) · Pior: ${DOW_ABBR[n.piorProt.i]} (${fmt(n.piorProt.meals.prot)}g)</div>` : ''}
+<div class="chart-cap">Proteína — % da meta por dia${n.modoProt !== 'meta' ? ', cor pela faixa' : ''}:</div><div class="chart">${svgPctBars(protBarsItems(rep, '#f59e0b', '#ef4444'), '#f59e0b', CHART_PAL_PDF)}</div>` : ''}
 
 ${isModuleEnabled('treino') && (t.sessoes || rep.past.length >= 4) ? `<h2>🏋️ Treinos</h2>
 <div class="sub" style="margin-top:4px"><strong>${t.sessoes} de ${t.meta}</strong> sessões na semana${t.minutos ? ` · ${fmtN(t.minutos)} min` : ''}${t.volume ? ` · ${fmtN(t.volume)}kg de volume total` : ''}</div>
@@ -6105,6 +6214,11 @@ function rGoals() {
                 <div class="goal-icon" style="background:var(--yellow-bg);color:var(--yellow)">🎯</div>
                 <div style="flex:1"><div class="goal-label">Proteína</div><div class="goal-value">${D.goals[dayType].prot}g</div></div>
                 <button class="btn btn-outline btn-sm" onclick="editGoal('prot','${dayType}')">Editar</button>
+            </div>
+            <div class="goal-card">
+                <div class="goal-icon" style="background:var(--yellow-bg);color:var(--yellow)">↕️</div>
+                <div style="flex:1"><div class="goal-label">Faixa de proteína, opcional</div><div class="goal-value">${faixaProt(D.goals[dayType]) ? faixaProtTxt(faixaProt(D.goals[dayType])) : '<span style="font-size:13px;color:var(--text3);font-weight:400">sem faixa</span>'}</div></div>
+                <button class="btn btn-outline btn-sm" onclick="editProtRange('${dayType}')">Editar</button>
             </div>
             <div class="goal-card">
                 <div class="goal-icon" style="background:rgba(59,130,246,0.12);color:#3b82f6">🌾</div>
@@ -6444,24 +6558,48 @@ function settingsContaHtml() {
 }
 
 
+// Número digitado numa meta (v1.27.0: extraído de editGoal, mesma regra, usado também pela faixa de proteína).
+function parseNumeroMeta(val, atual) {
+    const txt = String(val).trim();
+    if (txt === String(atual || 0)) return Number(txt);
+    const limpo = txt.replace(/[^\d.,\s-]/g, '').trim().replace(/\s+/g, '');
+    return parseFloat(/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(limpo) ? limpo.replace(/\./g, '').replace(',', '.') : limpo.replace(',', '.'));
+}
+
 function editGoal(field, dayType) {
     const labels = { kcal: 'Calorias (kcal)', prot: 'Proteína (g)', water: 'Hidratação (ml)', carbo: 'Carboidrato (g) — 0 = sem meta', gord: 'Gordura total (g) — limite diário, 0 = sem limite', sodio: 'Sódio (mg) — limite diário, 0 = sem limite' };
     const val = prompt(labels[field] + ':', D.goals[dayType][field] || 0);
     if (val === null) return;
     // confirmar sem mexer mantém o valor exato (o prompt vem com o número cru, que pode ter ponto decimal).
     // Digitado: aceita o formato da tela, "2.300" e "2 300" (milhar), "12,5" (decimal) e unidade junto ("2.300 mg").
-    const txt = String(val).trim();
-    let num;
-    if (txt === String(D.goals[dayType][field] || 0)) num = Number(txt);
-    else {
-        const limpo = txt.replace(/[^\d.,\s-]/g, '').trim().replace(/\s+/g, '');
-        num = parseFloat(/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(limpo) ? limpo.replace(/\./g, '').replace(',', '.') : limpo.replace(',', '.'));
-    }
+    const num = parseNumeroMeta(val, D.goals[dayType][field]);
     if (isNaN(num) || num < 0) return toast('Valor inválido', true);
     D.goals[dayType][field] = num;
     save();
     rGoals();
     toast(field === 'gord' || field === 'sodio' ? 'Limite atualizado' : 'Meta atualizada');
+}
+
+// Faixa de proteína (v1.27.0): mínimo e máximo opcionais, por tipo de dia. Com faixa, o Relatório Semanal conta o dia
+// como adequado dentro dela; a meta continua sendo o alvo do anel. 0 = aquele lado sem limite; os dois 0 = sem faixa.
+function editProtRange(dayType) {
+    const g = D.goals[dayType];
+    const vMin = prompt('Proteína, mínimo aceitável (g), 0 = sem mínimo:', g.protMin || 0);
+    if (vMin === null) return;
+    const min = parseNumeroMeta(vMin, g.protMin);
+    if (isNaN(min) || min < 0) return toast('Valor inválido', true);
+    const vMax = prompt('Proteína, máximo aceitável (g), 0 = sem máximo:', g.protMax || 0);
+    if (vMax === null) return;
+    const max = parseNumeroMeta(vMax, g.protMax);
+    if (isNaN(max) || max < 0) return toast('Valor inválido', true);
+    if (min > 0 && max > 0 && min > max) return toast('O mínimo não pode passar do máximo', true);
+    if (min > 0) g.protMin = min; else delete g.protMin;
+    if (max > 0) g.protMax = max; else delete g.protMax;
+    save();
+    rGoals();
+    const f = faixaProt(g);
+    const metaFora = f && g.prot > 0 && ((f.min > 0 && g.prot < f.min) || (f.max > 0 && g.prot > f.max));
+    toast(!f ? 'Faixa removida' : metaFora ? 'Faixa atualizada, mas a meta está fora dela' : 'Faixa atualizada');
 }
 
 // Os blocos de config (módulos, campos de refeição, treino, planos) renderizam
