@@ -1,7 +1,7 @@
 # Estado do Projeto — Gestão Saúde
 
 **Última atualização:** 2026-09-14 (parte 18, sessão no Mac mini)
-**Versão atual em produção:** v1.26.0, no ar desde 14/09 18h08 (sódio e gordura como limites, histórico de 7 dias). v1.27.0 (faixa de proteína) commitada no Mac mini em 15/09, aguarda o push, que desde 15/09 sai do próprio mini pela deploy key. Antes: v1.25.2 (14/09 14h07), v1.25.1 (14/09 09h07), v1.25.0 (14/09 08h07), v1.24.0 (02/09).
+**Versão atual em produção:** v1.27.0 (faixa aceitável de proteína), no ar desde 15/09 16h4x, primeiro push feito do próprio Mac mini pela deploy key. Antes: v1.26.0 (14/09 18h08), v1.25.2 (14/09 14h07), v1.25.1 (14/09 09h07), v1.25.0 (14/09 08h07), v1.24.0 (02/09).
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
