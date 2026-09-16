@@ -2,7 +2,7 @@ rules_version = '2';
 
 // Firestore Security Rules — Gileno Gestão Saúde
 // Princípio: cada usuário só acessa o próprio documento.
-// Modelo de dados: users/{uid} com campo `data` (JSON serializado) + `updatedAt`.
+// Modelo de dados: users/{uid} com campo `data` (JSON serializado) + `updatedAt` + `rev` (v1.28.0).
 // Default-deny: qualquer path não listado aqui é bloqueado.
 
 service cloud.firestore {
@@ -15,15 +15,29 @@ service cloud.firestore {
              && request.auth.token.email == 'gilenopaivalima@gmail.com';
     }
 
+    // v1.28.0: toda gravação tem que trazer a revisão seguinte (rev = rev atual + 1).
+    // O app grava numa transação que lê o documento e junta as mudanças antes de escrever, então
+    // ele sempre manda rev + 1. Cópia antiga do app (que não manda rev) ou gravação atrasada
+    // (rev velha, feita com dados que já foram sobrescritos) é RECUSADA aqui, no servidor:
+    // nunca mais um escritor parado apaga o que outro gravou.
+    // Documento anterior à v1.28.0 (sem rev): aceita a primeira gravação que traz rev (migração).
+    function revOk() {
+      return request.resource.data.rev is int
+             && (!('rev' in resource.data) || request.resource.data.rev == resource.data.rev + 1);
+    }
+
     // Documento principal do usuário
-    // - Dono autenticado: leitura, criação e atualização do próprio doc
+    // - Dono autenticado: leitura, criação e atualização (com revOk) do próprio doc
     // - Admin: leitura (incluindo list) de qualquer doc + DELETE pra limpar
     //   contas órfãs/abandonadas (mas não pode alterar conteúdo)
     match /users/{userId} {
       allow read: if (request.auth != null && request.auth.uid == userId)
                   || isAdmin();
-      allow create, update: if request.auth != null
-                            && request.auth.uid == userId;
+      allow create: if request.auth != null
+                    && request.auth.uid == userId;
+      allow update: if request.auth != null
+                    && request.auth.uid == userId
+                    && revOk();
       allow delete: if (request.auth != null && request.auth.uid == userId)
                     || isAdmin();
     }

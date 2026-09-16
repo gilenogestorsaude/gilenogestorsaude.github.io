@@ -625,7 +625,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.27.0';
+const APP_VERSION = '1.28.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1014,38 +1014,436 @@ function getOrphanWaterEntries(entries) {
 }
 
 // ========== FIRESTORE ==========
-async function save() {
-    if (!U) return;
+// v1.28.0 — sincronização segura entre cópias do app (app instalado, Safari, outro aparelho).
+// Até a v1.27.0, save() gravava o documento inteiro e o último escritor vencia: uma cópia parada com
+// dados velhos apagava, sem aviso, as edições feitas em outra cópia (perdas de 14/09 e 15/09/2026).
+// Agora:
+//  1. O documento carrega um número de revisão (rev). save() roda numa transação que confere rev,
+//     versão do escritor e updatedAt com o que ESTA cópia conhece. Se alguém gravou antes, faz a
+//     junção de 3 vias (base = último estado sincronizado, ours = esta cópia, theirs = servidor) em
+//     vez de sobrescrever. Só o que os dois lados mudaram no MESMO item fica com a versão desta cópia,
+//     e o app avisa.
+//  2. onSnapshot ouve o documento: mudança feita em outra cópia entra aqui sem recarregar.
+//  3. Cada gravação registra o escritor (aparelho, versão, hora) em writer/writers: Ajustes › Sincronização.
+//  4. Toda alteração é guardada no localStorage antes de ir ao servidor e apagada quando ele confirma:
+//     app morto no meio da gravação, ou sem rede, não perde a edição; na volta (rede, foco ou próxima
+//     abertura) ela é juntada e gravada.
+//  5. load() NUNCA troca os dados por defaultD() em erro de rede (isso apagaria a conta na gravação
+//     seguinte); mostra uma tela de "tentar de novo".
+//  6. Cópia ANTIGA do app (anterior à 1.28.0) grava sem rev e pode gravar dado velho: quando ela é
+//     detectada (version do documento), a junção é conservadora (acréscimos dela entram; mexida em item
+//     que já existia fica com a nossa) e esta cópia regrava o documento certo.
+// As regras do Firestore (firestore.rules) completam a cura: recusam gravação sem rev = rev atual + 1,
+// o que barra cópias antigas do app e gravações atrasadas no próprio servidor.
+
+const SYNC_PROTOCOL_VERSION = '1.28.0';   // primeira versão que grava rev e junta
+const SYNC_LS_PENDING = 'gs_sync_pending'; // localStorage: alteração local ainda não confirmada pelo servidor
+const SYNC_LS_BASE = 'gs_sync_base';       // localStorage: base (último estado sincronizado) da pendência
+const SYNC = {
+    cid: null, label: '',   // identidade desta cópia do app
+    rev: 0,                 // revisão do documento que esta cópia conhece
+    updatedAtMs: 0,         // updatedAt (servidor) dessa revisão; 0 = desconhecido (logo após gravar)
+    baseJson: null,         // JSON do último estado sincronizado: base da junção de 3 vias
+    basePersistedRev: -1,   // rev da base já guardada no localStorage
+    saving: false, queued: false,
+    pending: false,         // há alteração local não confirmada pelo servidor
+    offlineAvisado: false,  // aviso de "sem rede" dado uma vez por episódio
+    unsub: null,            // cancelamento do onSnapshot
+    remote: null,           // mudança remota adiada (modal aberto, digitação, página de edição)
+    lastWriter: null, writers: [],
+    fromCache: false,       // load() serviu do cache local, sem confirmação do servidor
+    loadError: false,
+    log: []                 // últimos eventos desta cópia (para Ajustes)
+};
+
+function syncClientId() {
     try {
-        // Stats agregadas pro painel admin (sem expor conteúdo privado)
-        const stats = {
-            templates: (D.workoutTemplates || []).length,
-            treinos: (D.treinos || []).length,
-            meals: Object.keys(D.days || {}).length,
-            vitals: Object.keys(D.vitals || {}).length,
-            meds: (D.meds || []).length,
-            consultas: (D.consultas || []).length
-        };
-        await db.collection('users').doc(U.uid).set({
-            data: JSON.stringify(D),
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-            email: U.email || '',
-            displayName: U.displayName || '',
-            stats: stats,
-            version: APP_VERSION
-        }, { merge: true });
+        let id = localStorage.getItem('gs_client_id');
+        if (!id) { id = uid().slice(0, 10); localStorage.setItem('gs_client_id', id); }
+        return id;
+    } catch (e) { return 'sem-storage'; }
+}
+function syncClientLabel() {
+    const ua = navigator.userAgent || '';
+    let disp = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android'
+        : /Macintosh/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : 'aparelho';
+    if (disp === 'Mac' && navigator.maxTouchPoints > 1) disp = 'iPad'; // iPadOS se apresenta como Mac
+    const nav = /Edg/.test(ua) ? 'Edge' : /CriOS|Chrome/.test(ua) ? 'Chrome' : /Firefox|FxiOS/.test(ua) ? 'Firefox'
+        : /Safari/.test(ua) ? 'Safari' : 'navegador';
+    return disp + ' · ' + (isStandalone() ? 'app instalado' : nav);
+}
+SYNC.cid = syncClientId();
+SYNC.label = syncClientLabel();
+
+function syncLog(kind, info) {
+    SYNC.log.push({ t: Date.now(), kind, info: info == null ? '' : String(info) });
+    if (SYNC.log.length > 30) SYNC.log.shift();
+}
+function tsMs(v) {
+    if (!v) return 0;
+    if (typeof v.toMillis === 'function') return v.toMillis();
+    if (typeof v.seconds === 'number') return v.seconds * 1000 + Math.floor((v.nanoseconds || 0) / 1e6);
+    const d = new Date(v); return isNaN(d) ? 0 : d.getTime();
+}
+function isPlainObj(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
+// a < b em versões "x.y.z"
+function versionLt(a, b) {
+    const pa = String(a || '0').split('.').map(x => parseInt(x, 10) || 0);
+    const pb = String(b || '0').split('.').map(x => parseInt(x, 10) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const x = pa[i] || 0, y = pb[i] || 0;
+        if (x !== y) return x < y;
+    }
+    return false;
+}
+
+// Forma canônica (chaves ordenadas) para comparar dois valores. Espelha JSON.stringify:
+// undefined em objeto é omitido, undefined em array vira null, NaN/Infinity viram null.
+function canon(v) {
+    if (v === undefined) return 'u';
+    if (v === null || typeof v !== 'object') return JSON.stringify(v);
+    if (Array.isArray(v)) return '[' + v.map(x => x === undefined ? 'null' : canon(x)).join(',') + ']';
+    const keys = Object.keys(v).sort();
+    let s = '{', first = true;
+    for (let i = 0; i < keys.length; i++) {
+        const k = keys[i];
+        if (v[k] === undefined) continue;
+        s += (first ? '' : ',') + JSON.stringify(k) + ':' + canon(v[k]);
+        first = false;
+    }
+    return s + '}';
+}
+
+// ---- Junção de 3 vias -------------------------------------------------------------------------
+// Unidade = menor pedaço que se compara inteiro. Regra por unidade:
+//   iguais nos dois lados → fica; só eles mudaram → deles; só nós mudamos → nossa;
+//   os dois mudaram → desce um nível se der (objeto por chave, array por id, união em água/remédios);
+//   sem como descer → CONFLITO: fica a nossa, e o caminho vai para a lista de conflitos.
+// Atômicos (nunca descem): um alimento, um treino, um remédio, um campo de refeição, um item registrado
+// numa refeição, o plano da nutri, o plano do personal, o treino em execução, a montagem do dia.
+// Modo legacy (o outro escritor é cópia ANTIGA do app, que não junta): unidade NOVA deles entra; mexida
+// deles em unidade que já existia desce para pegar acréscimos, e no fim fica a nossa (o dado dela pode
+// ser velho); apagamento deles não vale.
+const SYNC_ATOMIC_TOP = { dietPlan: 1, personalPlan: 1, workoutPlan: 1, activeExecution: 1, metaPeso: 1 };
+const SYNC_ID_ARRAYS = { foods: 1, treinos: 1, meds: 1, mealSlots: 1, workoutTemplates: 1, consultas: 1, clinicos: 1 };
+function syncIsAtomic(seg) {
+    const n = seg.length, k = seg[0];
+    if (n === 1) return !!SYNC_ATOMIC_TOP[k];
+    if (n === 2 && SYNC_ID_ARRAYS[k]) return true;
+    if (n === 2 && (k === 'planPicks' || k === 'weeklyNotes' || k === 'weeklyProse')) return true;
+    if (k === 'days' && n === 6 && seg[2] === 'slots' && seg[4] === 'items') return true;
+    return false;
+}
+function syncIsUnion(seg) {
+    return (seg[0] === 'water' && seg.length === 2) || (seg[0] === 'medsTaken' && seg.length === 3);
+}
+function syncAllIds(arr) { return arr.every(e => e && typeof e === 'object' && e.id != null); }
+// Chaves por id, na ordem do array; id repetido (defeito de dado) não colapsa: a 2ª ocorrência vira "id#2"
+function syncIdKeys(arr) {
+    const n = {}, keys = [];
+    arr.forEach(e => { let k = String(e.id); n[k] = (n[k] || 0) + 1; if (n[k] > 1) k += '#' + n[k]; keys.push(k); });
+    return keys;
+}
+function syncById(arr) { const m = {}; const keys = syncIdKeys(arr); arr.forEach((e, i) => { m[keys[i]] = e; }); return m; }
+function syncConflict(out, seg) { if (out.conflicts.length < 50) out.conflicts.push(seg.join('.') || '(raiz)'); }
+function syncLegacyKept(out, seg) { out.legacyKept++; if (out.legacyPaths.length < 20) out.legacyPaths.push(seg.join('.') || '(raiz)'); }
+
+// Tenta descer um nível; null = não dá (atômico, tipos diferentes, array sem id fora da união)
+function syncDescend(b, o, t, seg, out) {
+    if (syncIsAtomic(seg)) return null;
+    if (isPlainObj(o) && isPlainObj(t)) return syncMergeObj(isPlainObj(b) ? b : {}, o, t, seg, out);
+    if (Array.isArray(o) && Array.isArray(t)) {
+        const bb = Array.isArray(b) ? b : [];
+        if (syncAllIds(o) && syncAllIds(t) && syncAllIds(bb)) return syncMergeIdArr(bb, o, t, seg, out);
+        if (syncIsUnion(seg)) return syncUnionArr(bb, o, t, out.legacy);
+    }
+    return null;
+}
+function syncMergeUnit(b, o, t, seg, out) {
+    const co = canon(o), ct = canon(t);
+    if (co === ct) return o;
+    const cb = canon(b);
+    if (co === cb) {                                   // só eles mudaram
+        if (!out.legacy || b === undefined) return t;  // (legacy: unidade nova deles entra)
+        const r = syncDescend(b, o, t, seg, out);      // legacy em unidade que já existia: acréscimos entram
+        if (r !== null) return r;
+        syncLegacyKept(out, seg);                      // indivisível: fica a nossa, o dado deles pode ser velho
+        return o;
+    }
+    if (ct === cb) return o;                           // só nós mudamos
+    const r = syncDescend(b, o, t, seg, out);          // os dois mudaram
+    if (r !== null) return r;
+    syncConflict(out, seg);
+    return o;
+}
+function syncMergeObj(b, o, t, seg, out) {
+    const res = {}, seen = {};
+    const visit = k => {
+        if (seen[k]) return; seen[k] = 1;
+        const v = syncMergeUnit(b[k], o[k], t[k], seg.concat([k]), out);
+        if (v !== undefined) res[k] = v;
+    };
+    Object.keys(o).forEach(visit); Object.keys(t).forEach(visit); Object.keys(b).forEach(visit);
+    return res;
+}
+function syncMergeIdArr(b, o, t, seg, out) {
+    const bm = syncById(b), om = syncById(o), tm = syncById(t);
+    const order = [], seen = {};
+    const add = k => { if (!seen[k]) { seen[k] = 1; order.push(k); } };
+    syncIdKeys(o).forEach(add); syncIdKeys(t).forEach(add); syncIdKeys(b).forEach(add);
+    const res = [];
+    order.forEach(k => {
+        const v = syncMergeUnit(bm[k], om[k], tm[k], seg.concat([k]), out);
+        if (v !== undefined) res.push(v);
+    });
+    return res;
+}
+// Listas sem id (água do dia, horários de remédio): união. Entrada que estava na base e sumiu do outro
+// lado foi apagada lá e sai (não no modo legacy); entrada nova do outro lado entra no fim.
+function syncUnionArr(b, o, t, legacy) {
+    const inB = {}, inT = {}, inRes = {};
+    b.forEach(e => { inB[canon(e)] = 1; });
+    t.forEach(e => { inT[canon(e)] = 1; });
+    const res = [];
+    o.forEach(e => { const c = canon(e); if (!legacy && inB[c] && !inT[c]) return; inRes[c] = 1; res.push(e); });
+    t.forEach(e => { const c = canon(e); if (!inRes[c] && !inB[c]) { inRes[c] = 1; res.push(e); } });
+    return res;
+}
+function mergeD(base, ours, theirs, opts) {
+    const out = { conflicts: [], legacy: !!(opts && opts.legacy), legacyKept: 0, legacyPaths: [] };
+    out.result = syncMergeUnit(base, ours, theirs, [], out);
+    out.changed = canon(out.result) !== canon(ours);
+    return out;
+}
+
+// ---- Gravação -----------------------------------------------------------------------------------
+function syncStats() {
+    return {
+        templates: (D.workoutTemplates || []).length,
+        treinos: (D.treinos || []).length,
+        meals: Object.keys(D.days || {}).length,
+        vitals: Object.keys(D.vitals || {}).length,
+        meds: (D.meds || []).length,
+        consultas: (D.consultas || []).length
+    };
+}
+function isOfflineErr(e) {
+    const code = e && e.code ? String(e.code) : '';
+    const msg = e && e.message ? String(e.message) : String(e || '');
+    return code === 'unavailable' || /offline|network|unavailable/i.test(msg);
+}
+// Guarda no localStorage a alteração ainda não confirmada (e a base, quando mudou). Sobrevive ao app
+// ser morto no meio da gravação. Apagada quando o servidor confirma.
+function persistPendingLocal() {
+    if (!U || !D) return;
+    try {
+        localStorage.setItem(SYNC_LS_PENDING, JSON.stringify({ uid: U.uid, rev: SYNC.rev, data: JSON.stringify(D), at: Date.now() }));
+        if (SYNC.baseJson && SYNC.basePersistedRev !== SYNC.rev) {
+            localStorage.setItem(SYNC_LS_BASE, JSON.stringify({ uid: U.uid, rev: SYNC.rev, base: SYNC.baseJson }));
+            SYNC.basePersistedRev = SYNC.rev;
+        }
+    } catch (e) { /* sem espaço: fica só na memória desta sessão */ }
+}
+function clearPendingLocal() {
+    try { localStorage.removeItem(SYNC_LS_PENDING); localStorage.removeItem(SYNC_LS_BASE); } catch (e) {}
+    SYNC.basePersistedRev = -1;
+}
+// Pendência guardada para o usuário atual: { data, base|null, rev, at } ou null
+function readPendingLocal() {
+    if (!U) return null;
+    let p = null, b = null;
+    try { p = JSON.parse(localStorage.getItem(SYNC_LS_PENDING) || 'null'); } catch (e) { p = null; }
+    try { b = JSON.parse(localStorage.getItem(SYNC_LS_BASE) || 'null'); } catch (e) { b = null; }
+    if (!p || p.uid !== U.uid || typeof p.data !== 'string') return null;
+    return { data: p.data, rev: p.rev, at: p.at, base: (b && b.uid === U.uid && b.rev === p.rev && typeof b.base === 'string') ? b.base : null };
+}
+
+async function save() {
+    if (!U || !D) return;
+    SYNC.pending = true;
+    persistPendingLocal();                       // durável ANTES de ir ao servidor
+    if (SYNC.saving) { SYNC.queued = true; return; } // gravações em rajada: uma transação com o D mais novo
+    SYNC.saving = true;
+    try {
+        if (navigator.onLine === false) { const e = new Error('offline'); e.code = 'unavailable'; throw e; } // sem rede declarada: não espera a transação falhar
+        do { SYNC.queued = false; await saveTx(); } while (SYNC.queued && U);
+        SYNC.offlineAvisado = false;
     } catch (e) {
-        console.error('Erro ao salvar:', e);
-        toast('Erro ao salvar dados', true);
+        if (!U) {
+            // saiu da conta no meio da gravação: nada a avisar nesta tela
+        } else if (isOfflineErr(e)) {
+            syncLog('sem rede', e && e.code);
+            if (!SYNC.offlineAvisado) { SYNC.offlineAvisado = true; toast('📡 Sem conexão: as alterações ficam guardadas neste aparelho e sincronizo quando a rede voltar'); }
+        } else {
+            console.error('Erro ao salvar:', e);
+            syncLog('erro ao gravar', (e && e.code) || (e && e.message) || e);
+            toast('Erro ao salvar dados', true);
+        }
+    } finally {
+        SYNC.saving = false;
+        if (SYNC.remote) tryAdoptRemote(); // snapshot que chegou durante a gravação
+    }
+}
+
+async function saveTx() {
+    const u = U;                          // dono desta gravação (o usuário pode sair no meio)
+    const ref = db.collection('users').doc(u.uid);
+    const ours = D;                       // referência; NÃO mutar dentro da transação (ela pode repetir)
+    const oursJson = JSON.stringify(ours);
+    let outcome = null;
+    await db.runTransaction(async tx => {
+        const snap = await tx.get(ref);
+        const s = snap.exists ? snap.data() : {};
+        const serverRev = Number(s.rev) || 0;
+        const serverUpd = tsMs(s.updatedAt);
+        const serverVersion = s.version || '';
+        // Alguém gravou depois de nós? rev diferente, escritor de outra versão do app (cópia antiga não
+        // mexe no rev) ou updatedAt diferente do que conhecemos.
+        const changedUnder = snap.exists && (
+            serverRev !== SYNC.rev ||
+            serverVersion !== APP_VERSION ||
+            (SYNC.updatedAtMs > 0 && serverUpd > 0 && serverUpd !== SYNC.updatedAtMs));
+        const legacy = snap.exists && versionLt(serverVersion, SYNC_PROTOCOL_VERSION); // último escritor foi cópia antiga
+        let dataOut = oursJson, merged = false, conflicts = [], result = null, changed = false, legacyKept = 0;
+        if (changedUnder && typeof s.data === 'string' && s.data) {
+            let theirs = null;
+            try { theirs = JSON.parse(s.data); } catch (e) { theirs = null; }
+            if (!isPlainObj(theirs)) syncLog('servidor ilegível', 'gravou a cópia local por cima'); // documento corrompido: a cópia local é o que há de válido
+            if (isPlainObj(theirs)) {
+                let base = theirs;
+                if (SYNC.baseJson) { try { base = JSON.parse(SYNC.baseJson); } catch (e) { base = theirs; } }
+                const m = mergeD(base, ours, theirs, { legacy });
+                result = m.result; changed = m.changed; conflicts = m.conflicts; legacyKept = m.legacyKept; merged = true;
+                dataOut = JSON.stringify(result);
+            }
+        }
+        const entry = { cid: SYNC.cid, label: SYNC.label, version: APP_VERSION, at: new Date().toISOString(),
+                        rev: serverRev + 1, merged, changed: !!changed, conflicts: conflicts.length, legacy: !!legacy };
+        const writers = (Array.isArray(s.writers) ? s.writers.filter(w => w && typeof w === 'object').slice(-9) : []).concat([entry]);
+        tx.set(ref, {
+            data: dataOut,
+            rev: serverRev + 1,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            email: u.email || '',
+            displayName: u.displayName || '',
+            stats: syncStats(),
+            version: APP_VERSION,
+            writer: entry,
+            writers: writers
+        }, { merge: true });
+        outcome = { rev: serverRev + 1, dataOut, merged, changed, conflicts, result, entry, writers, legacy, legacyKept, serverVersion };
+    });
+    if (!U || U.uid !== u.uid) return; // saiu da conta durante a gravação: o servidor recebeu, esta sessão não é mais dele
+    // Sucesso: esta cópia passa a conhecer a revisão que acabou de gravar.
+    if (outcome.merged && outcome.changed && D === ours) {
+        // Edições feitas enquanto a gravação ia ao servidor não podem se perder: junta de novo com a foto
+        // do início (base), o D vivo (nossa) e o que foi gravado (deles).
+        const live = D;
+        const m2 = mergeD(JSON.parse(oursJson), live, outcome.result);
+        const houveEdicaoNova = canon(m2.result) !== canon(outcome.result);
+        D = m2.result;
+        normalizeLoadedD();
+        if (houveEdicaoNova) SYNC.queued = true; // grava de novo com a edição nova
+        if (m2.conflicts.length) { syncLog('rejunção com conflito', m2.conflicts.join(' ')); toast('⚠ ' + m2.conflicts.length + ' item(ns) alterado(s) nos dois aparelhos: ficou a versão deste', true); }
+        rerenderAfterSync();
+    }
+    SYNC.rev = outcome.rev;
+    SYNC.updatedAtMs = 0; // o carimbo do servidor chega pelo onSnapshot
+    SYNC.baseJson = outcome.dataOut;
+    SYNC.lastWriter = outcome.entry; SYNC.writers = outcome.writers;
+    SYNC.pending = SYNC.queued;   // se chegou gravação nova durante a transação, continua pendente
+    if (!SYNC.pending) clearPendingLocal();
+    syncLog(outcome.merged ? (outcome.legacy ? 'gravou juntando app antigo' : 'gravou com junção') : 'gravou',
+        'rev ' + outcome.rev + (outcome.conflicts.length ? ', conflitos ' + outcome.conflicts.join(' ') : '') + (outcome.legacyKept ? ', mantidos ' + outcome.legacyKept : ''));
+    if (outcome.merged && outcome.legacy) {
+        // aviso só quando houve algo a juntar ou a manter (a regravação de conserto depois da adoção é silenciosa)
+        if (outcome.changed || outcome.legacyKept > 0) toast('⚠ Uma cópia antiga do app (v' + (outcome.serverVersion || '?') + ') gravou por cima. Mantive os dados desta cópia e juntei o que ela registrou. Feche e abra o app nos outros aparelhos.', true);
+    } else if (outcome.merged && outcome.changed) {
+        toast('🔄 Juntei mudanças feitas em outro aparelho');
+    }
+    if (outcome.conflicts.length) {
+        toast('⚠ ' + outcome.conflicts.length + ' item(ns) alterado(s) nos dois aparelhos: ficou a versão deste', true);
+    }
+}
+
+// ---- Carga ----------------------------------------------------------------------------------------
+function applyServerDoc(snap) {
+    const s = snap.data();
+    D = JSON.parse(s.data);
+    normalizeLoadedD();
+    SYNC.rev = Number(s.rev) || 0;
+    SYNC.updatedAtMs = tsMs(s.updatedAt);
+    SYNC.baseJson = s.data;
+    SYNC.basePersistedRev = -1;
+    SYNC.lastWriter = s.writer && typeof s.writer === 'object' ? s.writer : null;
+    SYNC.writers = Array.isArray(s.writers) ? s.writers.filter(w => w && typeof w === 'object') : [];
+    SYNC.pending = false;
+}
+
+// Alteração feita numa sessão anterior que não chegou ao servidor (sem rede, ou app morto no meio da
+// gravação): junta com o que o servidor tem hoje e grava.
+function restorePendingLocal() {
+    const p = readPendingLocal();
+    if (!p) return false;
+    try {
+        const ours = JSON.parse(p.data);
+        const base = p.base ? JSON.parse(p.base) : D;
+        const m = mergeD(base, ours, D);
+        if (canon(m.result) === canon(D)) { clearPendingLocal(); return false; } // o servidor já tem tudo da pendência
+        D = m.result;
+        normalizeLoadedD();
+        SYNC.pending = true;
+        syncLog('pendência recuperada', new Date(p.at || Date.now()).toISOString());
+        save();
+        return true;
+    } catch (e) {
+        console.warn('Pendência local ilegível, descartada:', e);
+        clearPendingLocal();
+        return false;
     }
 }
 
 async function load() {
     if (!U) return;
+    const ref = db.collection('users').doc(U.uid);
+    SYNC.fromCache = false; SYNC.loadError = false;
+    let doc = null;
     try {
-        const doc = await db.collection('users').doc(U.uid).get();
-        if (doc.exists && doc.data().data) {
-            D = JSON.parse(doc.data().data);
+        doc = await ref.get({ source: 'server' });
+    } catch (e1) {
+        // Servidor fora de alcance: cache local (só o que ESTA cópia já viu), marcado como não confirmado.
+        try { doc = await ref.get({ source: 'cache' }); SYNC.fromCache = true; syncLog('carregou do cache', e1 && e1.code); }
+        catch (e2) { console.error('Erro ao carregar:', e1, e2); SYNC.loadError = true; }
+    }
+    if (SYNC.loadError) { D = null; return; }
+    try {
+        if (doc.exists && typeof doc.data().data === 'string' && doc.data().data) {
+            applyServerDoc(doc);
+            restorePendingLocal();
+        } else if (!SYNC.fromCache) {
+            // Documento não existe no servidor: conta nova, ou documento apagado com pendência guardada.
+            const p = readPendingLocal();
+            if (p) {
+                D = JSON.parse(p.data);
+                syncLog('documento ausente no servidor', 'recriado da pendência local');
+            } else {
+                D = defaultD();
+            }
+            normalizeLoadedD();
+            SYNC.rev = 0; SYNC.updatedAtMs = 0; SYNC.baseJson = null; SYNC.basePersistedRev = -1;
+            await save();
+        } else {
+            SYNC.loadError = true; D = null; // cache sem documento: não inventa conta nova
+        }
+    } catch (e) {
+        console.error('Erro ao carregar:', e);
+        SYNC.loadError = true; D = null;
+    }
+}
+
+// Campos que versões novas acrescentaram: usuário antigo herda defaults. Roda em toda carga e em toda
+// adoção de dados vindos de outra cópia (v1.28.0: extraído de load()).
+function normalizeLoadedD() {
             // Ensure new fields exist
             if (!D.foods) D.foods = getDefaultFoods();
             if (!D.goals) D.goals = defaultD().goals;
@@ -1119,14 +1517,168 @@ async function load() {
                 // marca pra avisar o user no proximo render
                 D._migrationToast = `${migrated} alimento(s) atualizado(s) com valores oficiais TACO`;
             }
-        } else {
-            D = defaultD();
-            await save();
-        }
-    } catch (e) {
-        console.error('Erro ao carregar:', e);
-        D = defaultD();
+}
+
+// Pós-carga: o que o login faz depois de ter os dados (v1.28.0: extraído do onAuthStateChanged para o
+// "Tentar de novo" repetir exatamente o mesmo caminho).
+function afterLoadOk() {
+    startSync(); // ouve o documento; mudança de outra cópia entra sem recarregar
+    restoreExecution(); // treino em andamento sobrevive a reload do PWA (v1.12.0)
+    showPage('dash');
+    $('bottom-nav').classList.remove('hidden');
+    applyBottomNavVisibility();
+    if (D && D.theme === 'light') document.body.classList.add('light');
+    // Carrega TACO em background (nao bloqueia render) e completa o sódio que faltar (v1.26.0)
+    loadTACO().then(taco => {
+        if (D && backfillSodioFromTaco(taco) > 0) { save(); if (cPage === 'meal') rMeal(); }
+    });
+    // LGPD primeiro (gate); boas-vindas em seguida (acceptConsent encadeia)
+    if (D && !D.consent) {
+        setTimeout(openConsentModal, 400);
+    } else if (D && !D._welcomeSeen) {
+        setTimeout(showWelcomeModal, 600);
     }
+    maybeRouteHash();
+}
+
+// ---- Escuta do documento (mudanças vindas de outra cópia) ------------------------------------------
+function startSync() {
+    stopSync();
+    if (!U) return;
+    const ref = db.collection('users').doc(U.uid);
+    SYNC.unsub = ref.onSnapshot(snap => {
+        if (!snap.exists) return;
+        const s = snap.data();
+        if (snap.metadata.hasPendingWrites || snap.metadata.fromCache) return; // eco local ou cache: só o servidor conta
+        if (s.writer && typeof s.writer === 'object') SYNC.lastWriter = s.writer;
+        if (Array.isArray(s.writers)) SYNC.writers = s.writers.filter(w => w && typeof w === 'object');
+        const rev = Number(s.rev) || 0;
+        const upd = tsMs(s.updatedAt);
+        if (s.data === SYNC.baseJson) { // mesmo conteúdo que já temos: nada a juntar, só avança o carimbo
+            if (rev >= SYNC.rev) { SYNC.rev = rev; SYNC.updatedAtMs = upd; }
+            return;
+        }
+        const nossa = rev === SYNC.rev && (s.version || '') === APP_VERSION && (SYNC.updatedAtMs === 0 || upd === SYNC.updatedAtMs);
+        if (nossa) { SYNC.updatedAtMs = upd; return; }   // nossa própria gravação confirmada
+        if (rev < SYNC.rev) return;                        // snapshot atrasado
+        if (typeof s.data !== 'string' || !s.data) return;
+        SYNC.remote = { rev, upd, data: s.data, version: s.version || '', writer: (s.writer && typeof s.writer === 'object') ? s.writer : null };
+        tryAdoptRemote();
+    }, err => {
+        console.warn('Escuta do documento:', err);
+        syncLog('escuta com erro', err && err.code);
+        SYNC.unsub = null;
+        setTimeout(() => { if (U && D && !SYNC.unsub) startSync(); }, 30000); // religa
+    });
+}
+function stopSync() {
+    if (SYNC.unsub) { try { SYNC.unsub(); } catch (e) {} }
+    SYNC.unsub = null; SYNC.remote = null;
+}
+function syncResetState() {
+    stopSync();
+    SYNC.rev = 0; SYNC.updatedAtMs = 0; SYNC.baseJson = null; SYNC.basePersistedRev = -1;
+    SYNC.pending = false; SYNC.queued = false; SYNC.offlineAvisado = false;
+    SYNC.lastWriter = null; SYNC.writers = []; SYNC.fromCache = false; SYNC.loadError = false;
+}
+// Páginas em que adotar dados novos no meio do gesto atrapalharia: espera a próxima troca de página.
+const SYNC_HOLD_PAGES = { 'treino-execute': 1, 'template-editor': 1, 'treino-editor': 1, 'treino-session': 1 };
+function tryAdoptRemote() {
+    const r = SYNC.remote;
+    if (!r || !D || !U) return;
+    if (r.rev < SYNC.rev) { SYNC.remote = null; return; }             // já passamos dessa revisão
+    if (r.rev === SYNC.rev && r.writer && r.writer.cid === SYNC.cid && r.version === APP_VERSION) {
+        SYNC.updatedAtMs = r.upd; SYNC.remote = null; return;          // eco confirmado da nossa própria gravação
+    }
+    if (SYNC.saving || SYNC.pending) return;                          // a transação da gravação já junta
+    if (document.querySelector('.modal-overlay')) return;             // edição em curso: adia
+    if (SYNC_HOLD_PAGES[cPage]) return;
+    const ae = document.activeElement;
+    if (ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName || '')) return; // digitando: adia
+    SYNC.remote = null;
+    let theirs;
+    try { theirs = JSON.parse(r.data); } catch (e) { syncLog('remoto ilegível', e && e.message); return; }
+    if (!isPlainObj(theirs)) return;
+    let base = theirs;
+    if (SYNC.baseJson) { try { base = JSON.parse(SYNC.baseJson); } catch (e) { base = theirs; } }
+    const legacy = versionLt(r.version, SYNC_PROTOCOL_VERSION);       // escrito por cópia antiga do app
+    const m = mergeD(base, D, theirs, { legacy });   // sem pendência local, esta cópia == base ⇒ resultado = deles (ou o conservador, se legacy)
+    D = m.result;
+    normalizeLoadedD();
+    SYNC.rev = r.rev; SYNC.updatedAtMs = r.upd; SYNC.baseJson = r.data; SYNC.basePersistedRev = -1;
+    const quem = r.writer && r.writer.label ? r.writer.label : (r.version ? 'app v' + r.version : 'outra cópia');
+    syncLog((legacy ? 'recebeu de app antigo rev ' : 'recebeu rev ') + r.rev, quem + (m.legacyKept ? ', mantidos ' + m.legacyKept : ''));
+    if (m.changed) rerenderAfterSync();
+    if (legacy) {
+        toast('⚠ Uma cópia antiga do app (v' + (r.version || '?') + ') gravou por cima. Mantive os dados desta cópia e juntei o que ela registrou. Feche e abra o app nos outros aparelhos.', true);
+        if (canon(m.result) !== canon(theirs)) { SYNC.pending = true; save(); } // conserta o servidor
+    } else if (m.changed) {
+        toast('🔄 Dados atualizados: ' + quem + (r.writer && r.writer.cid === SYNC.cid ? ' (esta cópia, sessão anterior)' : ''));
+    }
+    if (m.conflicts.length) toast('⚠ ' + m.conflicts.length + ' item(ns) alterado(s) nos dois lados: ficou a versão deste aparelho', true);
+}
+const SYNC_RERENDER_PAGES = { dash: 1, meal: 1, hydro: 1, meds: 1, treino: 1, vitais: 1, goals: 1, more: 1, settings: 1, report: 1, personal: 1, consultas: 1, 'treino-history': 1 };
+function rerenderAfterSync() {
+    if (SYNC_RERENDER_PAGES[cPage]) showPage(cPage);
+}
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || !U || !D) return;
+    if (SYNC.pending && navigator.onLine && !SYNC.saving) save();
+    else if (SYNC.remote) tryAdoptRemote();
+});
+window.addEventListener('online', () => { if (U && D && SYNC.pending && !SYNC.saving) save(); });
+
+function renderLoadError() {
+    const el = $('dash-body');
+    if (!el) return;
+    el.innerHTML = `
+        <div class="card" style="text-align:center;padding:24px;margin-top:16px">
+            <div style="font-size:32px;margin-bottom:8px">📡</div>
+            <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:6px">Não consegui carregar seus dados</div>
+            <div style="font-size:12px;color:var(--text2);line-height:1.5;margin-bottom:14px">Sem resposta do servidor e sem cópia local neste aparelho. Nada foi alterado. Confira a conexão e tente de novo.</div>
+            <div style="display:flex;gap:8px;justify-content:center">
+                <button class="btn btn-primary" onclick="retryLoad()">Tentar de novo</button>
+                <button class="btn btn-outline" onclick="auth.signOut()">Sair</button>
+            </div>
+        </div>`;
+}
+async function retryLoad() {
+    if (!U) return;
+    await load();
+    if (!D) { toast('Ainda sem resposta do servidor', true); renderLoadError(); return; }
+    afterLoadOk();
+}
+
+// Card de Ajustes › Sincronização
+function fmtWriter(w) {
+    if (!w || typeof w !== 'object') return '?';
+    const d = w.at ? new Date(w.at) : null;
+    const p2 = n => String(n).padStart(2, '0');
+    const hora = d && !isNaN(d) ? `${p2(d.getDate())}/${p2(d.getMonth() + 1)} ${p2(d.getHours())}:${p2(d.getMinutes())}` : '?';
+    return `${hora} · ${escHtml(w.label || '?')}${w.cid === SYNC.cid ? ' <span style="color:var(--accent);font-weight:700">(este)</span>' : ''} · v${escHtml(w.version || '?')} · rev ${w.rev != null ? w.rev : '?'}${w.merged && w.changed ? (w.legacy ? ' · juntou app antigo' : ' · juntou') : ''}${w.conflicts ? ' · ' + w.conflicts + ' conflito(s)' : ''}`;
+}
+function settingsSyncHtml() {
+    const w = SYNC.lastWriter;
+    const lst = (SYNC.writers || []).slice().reverse().slice(0, 6);
+    const estado = SYNC.loadError ? '❌ sem dados do servidor'
+        : SYNC.pending ? (navigator.onLine ? '⏳ gravando…' : '📡 aguardando rede: alteração guardada neste aparelho')
+        : SYNC.fromCache ? '🟡 dados locais, ainda sem confirmação do servidor'
+        : '✅ sincronizado';
+    const p2 = n => String(n).padStart(2, '0');
+    const logHtml = SYNC.log.slice().reverse().slice(0, 5).map(e => { const d = new Date(e.t); return `${p2(d.getHours())}:${p2(d.getMinutes())} ${escHtml(e.kind)}${e.info ? ' · ' + escHtml(e.info) : ''}`; }).join('<br>');
+    return `
+        <div class="card mb-12">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                <span class="card-title" style="margin:0">☁️ Sincronização</span>
+                <button class="btn btn-outline btn-sm" onclick="rSettings()">↻ Atualizar</button>
+            </div>
+            <div class="cfg-item"><div><div class="cfg-label">Este aparelho</div><div class="cfg-desc">${escHtml(SYNC.label)} · id ${escHtml(SYNC.cid)}</div></div></div>
+            <div class="cfg-item"><div><div class="cfg-label">Estado</div><div class="cfg-desc">${estado} · revisão ${SYNC.rev}</div></div></div>
+            <div class="cfg-item"><div><div class="cfg-label">Última gravação no banco</div><div class="cfg-desc">${w ? fmtWriter(w) : 'sem registro ainda (versões anteriores à 1.28.0 não gravavam quem escreveu)'}</div></div></div>
+            <div class="cfg-item"><div style="min-width:0;flex:1"><div class="cfg-label">Últimas gravações</div><div class="cfg-desc" style="line-height:1.6">${lst.length ? lst.map(fmtWriter).join('<br>') : '—'}</div></div></div>
+            <div class="cfg-item" style="border:none"><div style="min-width:0;flex:1"><div class="cfg-label">Eventos desta cópia</div><div class="cfg-desc" style="line-height:1.6">${logHtml || '—'}</div></div></div>
+            <div style="font-size:11px;color:var(--text3);margin-top:8px;line-height:1.5">Cada gravação confere no servidor se outro aparelho gravou antes e junta as duas versões em vez de sobrescrever. Se dois aparelhos mudarem o mesmo item ao mesmo tempo, vale o deste aparelho e o app avisa. Cópia antiga do app (antes da 1.28.0) grava sem essa proteção: feche e abra o app em todos os aparelhos.</div>
+        </div>`;
 }
 
 // ========== AUTH ==========
@@ -1295,24 +1847,15 @@ auth.onAuthStateChanged(async user => {
     U = user;
     if (user) {
         await load();
-        restoreExecution(); // treino em andamento sobrevive a reload do PWA (v1.12.0)
-        showPage('dash');
-        $('bottom-nav').classList.remove('hidden');
-        applyBottomNavVisibility();
-        if (D && D.theme === 'light') document.body.classList.add('light');
-        // Carrega TACO em background (nao bloqueia render) e completa o sódio que faltar (v1.26.0)
-        loadTACO().then(taco => {
-            if (D && backfillSodioFromTaco(taco) > 0) { save(); if (cPage === 'meal') rMeal(); }
-        });
-        // LGPD primeiro (gate); boas-vindas em seguida (acceptConsent encadeia)
-        if (D && !D.consent) {
-            setTimeout(openConsentModal, 400);
-        } else if (D && !D._welcomeSeen) {
-            setTimeout(showWelcomeModal, 600);
+        if (!D) { // v1.28.0: sem servidor e sem cache, nada de defaultD(): tela de tentar de novo
+            showPage('dash');
+            renderLoadError();
+            return;
         }
-        maybeRouteHash();
+        afterLoadOk(); // v1.28.0: escuta do documento + o pós-carga de sempre (mesmo caminho do "Tentar de novo")
     } else {
         D = null;
+        syncResetState(); // v1.28.0
         showPage('login');
         $('bottom-nav').classList.add('hidden');
         maybeRouteHash();
@@ -1393,6 +1936,7 @@ function showPage(name) {
     else if (name === 'admin') rAdmin();
     else if (name === 'install') rInstall();
     else if (name === 'tutorial') rTutorial();
+    if (typeof SYNC !== 'undefined' && SYNC.remote && !SYNC_HOLD_PAGES[name]) tryAdoptRemote(); // v1.28.0
 }
 
 // ========== INSTALAÇÃO (PWA — Adicionar à Tela de Início) ==========
@@ -6156,16 +6700,60 @@ function exportDocChrome() {
 function __voltarApp(){try{window.close()}catch(e){}setTimeout(function(){if(!window.closed)location.replace(__APP_URL)},200)}<\/script>`;
 }
 
-// Abre um documento autocontido FORA do app (usado pelo Relatório Semanal e pelo
-// registro de treino). Cadeia: janela nova → compartilhar arquivo (PWA iOS) → download.
+// Abre um documento autocontido (Relatório Semanal, registro de treino, extrato do personal).
+// v1.28.0: no app INSTALADO (iOS/Android) a janela nova é bloqueada ou toma a própria janela do
+// app (v1.12.1); agora o documento abre num visor DENTRO do app, com Imprimir / Salvar PDF
+// (folha de impressão do sistema), Compartilhar (arquivo) e Voltar. No navegador comum segue
+// a janela nova; se ela for bloqueada, cai no mesmo visor.
 function openExportedDoc(html, filename) {
-    // 1º: janela nova (navegador comum) — o botão de imprimir fica NA página exportada
+    if (isStandalone()) return openDocViewer(html, filename);
     let w = null;
     try { w = window.open('', '_blank'); } catch (e) { w = null; }
     if (w && w.document) {
         try { w.document.open(); w.document.write(html); w.document.close(); return; } catch (e) {}
     }
-    // 2º: PWA instalado (iOS bloqueia window.open) — compartilhar como arquivo
+    openDocViewer(html, filename);
+}
+let _docViewer = null; // { html, filename }
+function openDocViewer(html, filename) {
+    closeDocViewer();
+    _docViewer = { html, filename };
+    // os botões da própria página exportada (Voltar/Imprimir de exportDocChrome) ficam escondidos: o visor tem os seus
+    const oculta = '<style>.backbtn,.printbtn{display:none!important}</style>';
+    let inner = html.indexOf('</head>') >= 0 ? html.replace('</head>', oculta + '</head>') : oculta + html;
+    // o __voltarApp da página exportada, se chamado dentro do iframe, carregaria o app inteiro no visor: vira "fechar o visor"
+    const guarda = '<script>window.__voltarApp=function(){try{parent.closeDocViewer()}catch(e){}};<\/script>';
+    inner = inner.indexOf('</body>') >= 0 ? inner.replace('</body>', guarda + '</body>') : inner + guarda;
+    const ov = document.createElement('div');
+    ov.id = 'doc-viewer';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9998;background:#f1f5f9;display:flex;flex-direction:column'; // abaixo dos toasts (9999), acima dos modais (1000)
+    ov.innerHTML = `
+        <div style="display:flex;gap:8px;align-items:center;padding:calc(env(safe-area-inset-top, 0px) + 8px) 10px 8px;background:#0f172a;color:#fff;flex-shrink:0">
+            <button class="btn btn-outline btn-sm" style="color:#fff;border-color:#475569" onclick="closeDocViewer()">← Voltar</button>
+            <div style="flex:1;min-width:0;font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(filename.replace(/\.html$/, ''))}</div>
+            <button class="btn btn-outline btn-sm" style="color:#fff;border-color:#475569" onclick="shareDocViewer()">↗ Compartilhar</button>
+            <button class="btn btn-primary btn-sm" onclick="printDocViewer()">🖨 Imprimir / Salvar PDF</button>
+        </div>
+        <div style="flex:1;overflow:auto;-webkit-overflow-scrolling:touch;background:#fff"><iframe id="doc-viewer-frame" title="Documento" style="display:block;width:100%;min-height:100%;border:0"></iframe></div>`;
+    document.body.appendChild(ov);
+    const fr = document.getElementById('doc-viewer-frame');
+    if (fr) fr.srcdoc = inner;
+}
+function closeDocViewer() {
+    const ov = document.getElementById('doc-viewer');
+    if (ov) ov.remove();
+    _docViewer = null;
+}
+function printDocViewer() {
+    const fr = document.getElementById('doc-viewer-frame');
+    try {
+        if (fr && fr.contentWindow) { fr.contentWindow.focus(); fr.contentWindow.print(); return; }
+    } catch (e) {}
+    toast('Não consegui abrir a impressão neste aparelho: use Compartilhar', true);
+}
+function shareDocViewer() {
+    if (!_docViewer) return;
+    const { html, filename } = _docViewer;
     try {
         const file = new File([html], filename, { type: 'text/html' });
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -6173,7 +6761,6 @@ function openExportedDoc(html, filename) {
             return;
         }
     } catch (e) {}
-    // 3º: download direto
     try {
         const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
         const el = document.createElement('a');
@@ -6360,6 +6947,7 @@ function rSettings() {
         ${isModuleEnabled('treino') ? settingsSectionHtml('treino', '🏋️', 'Treino', 'Descanso, passo da carga e aulas com o personal', settingsTreinoHtml()) : ''}
         ${settingsSectionHtml('planos', '📋', 'Planos do profissional', 'Importar dieta da nutri e treino do personal', settingsImportHtml())}
         ${D.proPreview ? settingsSectionHtml('ia', '🧠', 'Relatório por IA', 'Serviço que comenta a semana (acesso pelo seu login)', settingsIAHtml()) : ''}
+        ${settingsSectionHtml('sync', '☁️', 'Sincronização', 'Quem gravou por último e o estado deste aparelho', settingsSyncHtml())}
         ${settingsSectionHtml('conta', '⚙️', 'Configurações e conta', 'Tema, versão, privacidade, exportar e sair', settingsContaHtml())}
     `;
 }
@@ -7920,6 +8508,7 @@ function rTreinoSession() {
 
     $('treino-session-body').innerHTML = `
         <div class="card mb-12">
+            ${personalSessionBannerHtml(t)}
             ${chipsHtml ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">${chipsHtml}</div>` : ''}
             <div style="display:flex;gap:8px;text-align:center">
                 <div style="flex:1;padding:8px;background:var(--bg);border-radius:8px"><div style="font-size:18px;font-weight:800;color:var(--text)">${stat.exercicios}</div><div style="font-size:10px;color:var(--text3)">exercícios</div></div>
@@ -7948,6 +8537,7 @@ function reopenTreino() {
 
 function buildSessionHtml(t) {
     const stat = treinoStats(t);
+    const pi = personalSessionInfo(t);
     const nome = escHtml(D.userName || '');
     const tbl = 'width:100%;border-collapse:collapse;font-size:12px;margin-top:6px';
     const th = 'text-align:left;padding:5px 8px;background:#f1f5f9;font-weight:700;border:1px solid #e2e8f0';
@@ -7959,18 +8549,73 @@ function buildSessionHtml(t) {
 body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#0f172a;margin:0;padding:20px;max-width:760px;margin:0 auto;background:#fff}
 h1{font-size:20px;margin:0 0 2px}h2{font-size:14px;margin:18px 0 4px;border-bottom:2px solid #10b981;padding-bottom:3px}
 .sub{color:#64748b;font-size:12px}.foot{margin-top:24px;padding-top:10px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:10px;text-align:center}
+.ban{margin:12px 0 4px;padding:10px 12px;border-radius:8px;font-size:14px;font-weight:800;letter-spacing:.2px}.ban small{display:block;font-size:11px;font-weight:600;opacity:.85;margin-top:2px}
+.ban.com{background:#ede9fe;color:#5b21b6;border:1px solid #c4b5fd}.ban.sem{background:#f1f5f9;color:#334155;border:1px solid #cbd5e1}
+h2.ext{border-bottom-color:#7c3aed}.tot{font-size:14px;font-weight:700;margin-top:10px}
+@page{size:A4 portrait;margin:12mm}
+@media print{body{padding:0;font-size:11px;max-width:none}h1{font-size:16px}h2{font-size:12px;margin:9px 0 3px}.sub{font-size:10.5px}.ban{margin:8px 0 2px;padding:6px 10px;font-size:12px}.ban small{font-size:10px}table{font-size:10.5px}td,th{padding:3px 6px!important}.tot{font-size:12px;margin-top:6px}.foot{margin-top:12px}tr{page-break-inside:avoid}}
 </style></head><body>
 ${exportDocChrome()}
 <h1>Gileno Gestão · SAÚDE</h1>
 <div class="sub">Registro de treino${nome ? ' · ' + nome : ''} · ${formatDataTreino(t.data)}</div>
+${pi.com ? `<div class="ban com">🏋️ AULA COM O PERSONAL${pi.p && pi.p.nome ? ' · ' + escHtml(pi.p.nome) : ''}<small>${pi.sub}</small></div>` : pi.sem ? `<div class="ban sem">🏠 TREINO SEM O PERSONAL<small>${pi.sub}</small></div>` : ''}
 <h2>🏋️ ${escHtml(t.nome || 'Sessão')}</h2>
-<div class="sub">${stat.exercicios} exercício(s) · ${stat.series} série(s) · ${fmtN(stat.volume)} kg de volume${t.duracao ? ' · ' + t.duracao + ' min' : ''}${t.personal === true ? ' · aula com o personal' : ''}</div>
-<table style="${tbl}"><tr><th style="${th}">Exercício</th><th style="${th}">Série</th><th style="${th}">Reps</th><th style="${th}">Carga (kg)</th></tr>
-${(t.exercicios || []).map(ex => (ex.series || []).map((s, i) => `<tr>${i === 0 ? `<td style="${td}" rowspan="${ex.series.length}">${escHtml(ex.nome || '—')}</td>` : ''}<td style="${td}">${i + 1}</td><td style="${td}">${s.reps || 0}</td><td style="${td}">${fmtCarga(s.carga)}</td></tr>`).join('')).join('')}
+<div class="sub">${stat.exercicios} exercício(s) · ${stat.series} série(s) · ${fmtN(stat.volume)} kg de volume${t.duracao ? ' · ' + t.duracao + ' min' : ''}${pi.com ? ' · aula com o personal' : pi.sem ? ' · sem o personal' : ''}</div>
+<table style="${tbl}"><tr><th style="${th}">Exercício</th><th style="${th};text-align:center">Séries</th><th style="${th}">Reps</th><th style="${th}">Carga (kg)</th></tr>
+${(t.exercicios || []).map(ex => {
+    // v1.28.0: uma linha por exercício (PDF em uma página): reps e cargas por série na mesma linha; iguais viram "4 × 8"
+    const ss = ex.series || [];
+    const reps = ss.map(s => String(s.reps || 0)), cargas = ss.map(s => String(fmtCarga(s.carga)));
+    const iguais = a => a.length > 0 && a.every(x => x === a[0]);
+    return `<tr><td style="${td}">${escHtml(ex.nome || '—')}</td><td style="${td};text-align:center">${ss.length}</td><td style="${td}">${iguais(reps) ? ss.length + ' × ' + reps[0] : reps.join(' · ')}</td><td style="${td}">${iguais(cargas) ? cargas[0] : cargas.join(' · ')}</td></tr>`;
+}).join('')}
 </table>
 ${t.notas ? `<h2>📝 Notas</h2><div style="font-size:12px;white-space:pre-wrap;line-height:1.6">${escHtml(t.notas)}</div>` : ''}
+${personalSessionExtratoHtml(pi, td)}
 <div class="foot">Gileno Gestão Saúde · registro gerado pelo app · não substitui orientação profissional</div>
 </body></html>`;
+}
+
+// v1.28.0 (pedido do CEO 16/09/2026): toda sessão diz EM DESTAQUE se foi aula com o personal ou treino sem
+// ele, na tela e no PDF; e o PDF leva o resumo do extrato do mês, porque o personal recebe todos os registros.
+// "Sem o personal" só aparece quando a sessão foi marcada assim de propósito (personal === false) e o controle
+// de aulas está ligado; sessão antiga sem a marca não ganha faixa nenhuma.
+function personalSessionInfo(t) {
+    const p = D && D.personalPlan ? normalizePersonalPlan(D.personalPlan) : null;
+    const ativo = !!(p && p.ativo);
+    const ym = String((t && t.data) || '').slice(0, 7);
+    const ymOk = /^\d{4}-\d{2}$/.test(ym);
+    const hoje = today().slice(0, 7);
+    let r = null;
+    if (ativo && ymOk) {
+        try { r = (personalLedger(D, ym > hoje ? ym : hoje) || []).find(x => x.ym === ym) || null; } catch (e) { r = null; }
+    }
+    const com = t.personal === true, sem = t.personal === false && ativo;
+    // legenda da faixa: dentro do acordo diz se conta ou não como aula do mês; fora dele, só o fato
+    const mes = ymOk ? ' de ' + ymLabel(ym) : ' do mês';
+    const sub = r ? ((com ? 'conta como aula' : 'não conta como aula') + mes) : (com ? 'fora do acordo registrado no app' : 'treino por conta própria');
+    return { p, ativo, com, sem, marcada: com || sem, ym, ymOk, r, sub, emCurso: ymOk && ym === hoje, futuro: ymOk && ym > hoje, fechado: ymOk && ym < hoje };
+}
+function personalSessionBannerHtml(t) {
+    const i = personalSessionInfo(t);
+    if (!i.com && !i.sem) return '';
+    const st = i.com ? 'background:rgba(124,58,237,.16);color:#7c3aed;border:1px solid rgba(124,58,237,.35)'
+                     : 'background:var(--bg);color:var(--text2);border:1px solid var(--border)';
+    const txt = i.com ? `🏋️ AULA COM O PERSONAL${i.p && i.p.nome ? ' · ' + escHtml(i.p.nome) : ''}` : '🏠 TREINO SEM O PERSONAL';
+    return `<div style="${st};border-radius:10px;padding:10px 12px;margin-bottom:10px"><div style="font-size:13px;font-weight:800;letter-spacing:.2px">${txt}</div><div style="font-size:11px;opacity:.85;margin-top:2px">${i.sub}</div></div>`;
+}
+// Resumo do extrato do mês da sessão, no PDF do treino (mesmos números de buildPersonalExtratoHtml)
+function personalSessionExtratoHtml(pi, td) {
+    const r = pi && pi.r, p = pi && pi.p;
+    if (!r || !p || !pi.marcada) return ''; // só sessão marcada (com ou sem) dentro do acordo
+    const tbl = 'width:100%;border-collapse:collapse;font-size:12px;margin-top:6px';
+    const rotulo = pi.emCurso ? ' (mês em curso)' : pi.futuro ? ' (mês futuro)' : '';
+    return `<h2 class="ext">📒 Extrato do mês com o personal${p.nome ? ' · ' + escHtml(p.nome) : ''} · ${ymLabel(pi.ym)}${rotulo}</h2>
+<table style="${tbl}">
+<tr><td style="${td}"><b>Mensalidade (dia 1)</b><br>${fmtBRL(r.mensalidade)} = ${p.aulasMes} aulas${r.mensalidadePaga ? ' · paga' : ''}</td><td style="${td}"><b>Banco que entrou do mês anterior</b><br>${r.bancoIn} aula(s)</td><td style="${td}"><b>Aulas disponíveis no mês</b><br>${r.disponiveis}</td></tr>
+<tr><td style="${td}"><b>Aulas dadas${pi.emCurso ? ' até aqui' : ''}</b><br>${r.aulas} (${r.aulasApp} pelo app${r.avulsas ? ' + ' + r.avulsas + ' avulsa(s)' : ''})</td><td style="${td}"><b>Aulas extras</b><br>${r.extras} × ${fmtBRL(p.valorExtra)} = <strong>${fmtBRL(r.valorExtras)}</strong>${(r.extras && r.extrasPagos) ? ' · pagas' : ''}</td><td style="${td}"><b>Banco que segue pro mês seguinte</b><br>${r.bancoOut} aula(s)</td></tr>
+</table>
+<div class="tot">Valor a acertar no fim do mês: ${fmtBRL(r.valorExtras)} <span class="sub" style="font-weight:400">· esta sessão ${pi.com ? '<strong>conta</strong>' : '<strong>não conta</strong>'} como aula com o personal · extrato completo: Personal › 📄 Extrato</span></div>`;
 }
 
 function exportTreinoSession() {
