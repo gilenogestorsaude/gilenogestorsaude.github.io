@@ -625,7 +625,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.28.0';
+const APP_VERSION = '1.28.1';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -6744,12 +6744,31 @@ function closeDocViewer() {
     if (ov) ov.remove();
     _docViewer = null;
 }
+// v1.28.1: no app INSTALADO, imprimir de dentro do iframe não abre a folha de impressão do iOS (CEO, 16/09).
+// O caminho que funciona, provado pelos PDFs de julho (v1.12.1), é o documento tomar a PRÓPRIA tela do app e o
+// window.print() sair da tela inteira. Nada se perde: a pendência local já está guardada (v1.28.0) e o
+// "← Voltar" do documento recarrega o app. No navegador comum a impressão sai do iframe mesmo.
 function printDocViewer() {
     const fr = document.getElementById('doc-viewer-frame');
-    try {
-        if (fr && fr.contentWindow) { fr.contentWindow.focus(); fr.contentWindow.print(); return; }
-    } catch (e) {}
+    if (!isStandalone()) {
+        try {
+            if (fr && fr.contentWindow) { fr.contentWindow.focus(); fr.contentWindow.print(); return; }
+        } catch (e) {}
+    }
+    if (_docViewer && _docViewer.html) return docTakeover(_docViewer.html);
     toast('Não consegui abrir a impressão neste aparelho: use Compartilhar', true);
+}
+function docTakeover(html) {
+    try { if (U && D && SYNC.pending) persistPendingLocal(); } catch (e) {}
+    try { stopSync(); } catch (e) {}
+    // abre a folha de impressão sozinho; o botão 🖨 do documento continua lá para repetir
+    const auto = '<script>setTimeout(function(){try{window.focus();window.print()}catch(e){}},600);<\/script>';
+    const doc = html.indexOf('</body>') >= 0 ? html.replace('</body>', auto + '</body>') : html + auto;
+    try {
+        document.open(); document.write(doc); document.close();
+    } catch (e) {
+        toast('Não consegui abrir a impressão neste aparelho: use Compartilhar', true);
+    }
 }
 function shareDocViewer() {
     if (!_docViewer) return;
