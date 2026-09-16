@@ -1,7 +1,7 @@
 # Estado do Projeto — Gestão Saúde
 
 **Última atualização:** 2026-09-16 (parte 20, sessão no Mac mini)
-**Versão atual em produção:** v1.28.0 (sincronização segura entre cópias: revisão + junção de 3 vias + escuta do documento), commitada em 16/09/2026 no Mac mini; publicação pela deploy key com ok do CEO (ver parte 20). Antes: v1.27.0 (15/09 16h4x), v1.26.0 (14/09 18h08), v1.25.2 (14/09 14h07), v1.25.1 (14/09 09h07), v1.25.0 (14/09 08h07), v1.24.0 (02/09).
+**Versão atual em produção:** v1.28.0 (sincronização segura entre cópias: revisão + junção de 3 vias + escuta do documento), no ar desde 16/09/2026 07h23, push do Mac mini pela deploy key com ok do CEO (ver parte 20). Antes: v1.27.0 (15/09 16h4x), v1.26.0 (14/09 18h08), v1.25.2 (14/09 14h07), v1.25.1 (14/09 09h07), v1.25.0 (14/09 08h07), v1.24.0 (02/09).
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
