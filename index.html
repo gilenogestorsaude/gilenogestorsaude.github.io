@@ -625,7 +625,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.30.0';
+const APP_VERSION = '1.31.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -6667,7 +6667,8 @@ function rReport() {
             <div style="display:flex;gap:8px">
                 <button class="btn btn-outline" style="flex:1;justify-content:space-between" onclick="exportWeeklyReport()"><span>📄 Exportar PDF</span><span style="font-size:10px;color:var(--text3)">${D.proPreview ? '✓' : '🔒'}</span></button>
             </div>
-            <div style="font-size:10px;color:var(--text3);text-align:center;margin-top:6px">Exportar é ilimitado: só reimprime os números e a análise já gravados, não gasta nada.</div>
+            ${D.dietPlan ? `<button class="btn btn-outline w-full" style="justify-content:space-between;margin-top:8px" onclick="exportNutriReport()"><span>🥗 PDF para a nutricionista</span><span style="font-size:10px;color:var(--text3)">plano × comido · ${D.proPreview ? '✓' : '🔒'}</span></button>` : ''}
+            <div style="font-size:10px;color:var(--text3);text-align:center;margin-top:6px">Exportar é ilimitado: só reimprime os números e a análise já gravados, não gasta nada.${D.dietPlan ? ' O PDF para a nutricionista compara, refeição a refeição, o plano importado com o que você registrou.' : ''}</div>
         </div>`;
 }
 
@@ -8991,6 +8992,413 @@ function buildPersonalExtratoPdf(ym) {
     const d = pdfDoc().newPage();
     if (!pdfExtratoPages(d, ym, {})) return null;
     return d.build('extrato gerado pelo app em ' + formatDataTreino(today()) + ' · base de conferência entre aluno e personal');
+}
+
+// ========== RELATÓRIO PARA A NUTRICIONISTA (v1.31.0) ==========
+// Pedido do CEO 17/09/2026: um PDF semanal para a nutricionista com as métricas do app E o comparativo entre a
+// dieta prescrita (plano importado) e o que foi de fato registrado, refeição a refeição. Como o usuário registra
+// item a item (não pelo "Comi tudo"), a comparação NÃO depende da escolha guardada em planPicks: para cada
+// refeição do dia ela procura a versão do plano que mais casa com os itens comidos (por foodId, entre as opções
+// de cada linha) e mostra, linha a linha, planejado × comido. Tudo aqui é SÓ LEITURA de D (nada de getDayData).
+const NUTRI_TOL_PCT = 0.10, NUTRI_TOL_G = 5; // "igual ao plano" = diferença de gramas até 10% (mínimo 5 g)
+const NUTRI_NEUTRO_KCAL = 10, NUTRI_NEUTRO_PROT = 1; // item registrado fora do plano com até isso é "sem impacto" (café, creatina, psyllium)
+function nutriNome(s) { return normalizeStr(String(s || '')).replace(/\(plano\)/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim(); }
+// nomes equivalentes: iguais, ou um contido no outro em fronteira de palavra (o menor com 5+ letras): "queijo, ricota" ~ "ricota",
+// "whey probiótica cookies" ~ "whey probiótica cookies (plano)"; "ovo de galinha cozido" NÃO ~ "ovo de codorna"
+function nutriNomeEquiv(a, b) {
+    a = nutriNome(a); b = nutriNome(b);
+    if (!a || !b) return false;
+    if (a === b) return true;
+    const menor = a.length <= b.length ? a : b, maior = a.length <= b.length ? b : a;
+    if (menor.length < 5) return false;
+    return (' ' + maior + ' ').indexOf(' ' + menor + ' ') >= 0;
+}
+function nutriNeutro(it) { return (Number(it.kcal) || 0) <= NUTRI_NEUTRO_KCAL && (Number(it.prot) || 0) <= NUTRI_NEUTRO_PROT; }
+function nutriRO(dt) { const day = D && D.days && D.days[dt]; return (day && day.slots) || {}; }
+function nutriItemsOf(dt, slotId) { const s = nutriRO(dt)[slotId]; return (s && Array.isArray(s.items)) ? s.items.filter(it => it && typeof it === 'object') : []; }
+function nutriSodioOf(foodId, grams) { return itemSodio({ foodId: foodId, grams: grams }); }
+// campos do dia sem criar o dia (espelho de getDaySlots, sem getDayData)
+function nutriDaySlotsRO(dt) {
+    const slotsDay = nutriRO(dt);
+    const isTreino = getDayType(dt) === 'treino';
+    const out = [], seen = new Set();
+    getMealSlots().forEach(s => {
+        if (!s || !s.id) return;
+        const slot = slotsDay[s.id];
+        const hasItems = !!(slot && slot.items && slot.items.length);
+        const treinoOk = !s.treinoOnly || isTreino, descansoOk = !s.descansoOnly || !isTreino;
+        if ((s.ativo !== false && treinoOk && descansoOk) || hasItems) { out.push(s); seen.add(s.id); }
+    });
+    Object.keys(slotsDay).forEach(id => {
+        if (seen.has(id)) return;
+        const slot = slotsDay[id];
+        if (slot && slot.items && slot.items.length) { out.push({ id: id, name: slot.name || id, time: slot.time || '', _orphan: true }); seen.add(id); }
+    });
+    return out;
+}
+// Casa os itens comidos com as linhas de UMA versão do plano. Cada item só casa uma linha; entre vários itens
+// candidatos à mesma linha fica o de gramas mais próximas. O que sobra dos itens é "fora do plano".
+function nutriMatchVersion(version, items) {
+    // três passadas: (1) um item por linha, pelo id do cadastro (gramas mais próximas); (2) um item por linha, pelo nome
+    // equivalente, só para linhas ainda vazias; (3) sobras que pertencem à família de alguma linha somam a ela
+    // (coxa de frango 30 g + merluza 48 g na linha "Proteína"). Duas linhas da mesma família (Carboidrato 1 e 2)
+    // recebem um item cada antes de qualquer soma. O que sobra dos itens é "fora do plano".
+    const used = new Set();
+    const nomeOpt = o => { const f = D.foods.find(x => x && x.id === o.foodId); return f ? f.name : ''; };
+    const L = [];
+    ((version && version.lines) || []).forEach(ln => {
+        if (!ln || typeof ln !== 'object') return;
+        const opts = Array.isArray(ln.options) ? ln.options.filter(o => o && o.foodId) : (ln.foodId ? [{ foodId: ln.foodId, grams: ln.grams }] : []);
+        if (!opts.length) return;
+        L.push({ ln: ln, opts: opts, casados: [] });
+    });
+    const livre = k => !used.has(k) && items[k];
+    // (auditoria 17/09, A2) linha com MENOS candidatos escolhe primeiro: P1 = {frango, ovo} e P2 = {ovo} com [ovo, frango] dá 2/2
+    const porRestricao = cand => L.map((l, i) => ({ l: l, i: i, n: cand(l).length })).sort((a, b) => a.n - b.n || a.i - b.i).map(x => x.l);
+    const candId = l => items.map((it, k) => k).filter(k => livre(k) && items[k].foodId && l.opts.some(x => x.foodId === items[k].foodId));
+    porRestricao(candId).forEach(l => { // (1)
+        let best = -1, bestOpt = null, bestDiff = Infinity;
+        items.forEach((it, k) => { if (!livre(k) || !it.foodId) return; const o = l.opts.find(x => x.foodId === it.foodId); if (!o) return; const diff = Math.abs((Number(it.grams) || 0) - (Number(o.grams) || 0)); if (diff < bestDiff) { best = k; bestOpt = o; bestDiff = diff; } });
+        if (best >= 0) { used.add(best); l.casados.push({ k: best, o: bestOpt, porNome: false }); }
+    });
+    const candNome = l => l.casados.length ? [] : items.map((it, k) => k).filter(k => livre(k) && l.opts.some(x => nutriNomeEquiv(nomeOpt(x), items[k].name)));
+    porRestricao(candNome).forEach(l => { // (2)
+        if (l.casados.length) return;
+        for (let k = 0; k < items.length; k++) { if (!livre(k)) continue; const o = l.opts.find(x => nutriNomeEquiv(nomeOpt(x), items[k].name)); if (o) { used.add(k); l.casados.push({ k: k, o: o, porNome: true }); break; } }
+    });
+    items.forEach((it, k) => { // (3)
+        if (!livre(k)) return;
+        let alvo = null, opt = null;
+        if (it.foodId) L.forEach(l => { if (alvo) return; const o = l.opts.find(x => x.foodId === it.foodId); if (o) { alvo = l; opt = o; } });
+        let porNome = false;
+        if (!alvo) L.forEach(l => { if (alvo) return; const o = l.opts.find(x => nutriNomeEquiv(nomeOpt(x), it.name)); if (o) { alvo = l; opt = o; porNome = true; } });
+        if (alvo) { used.add(k); alvo.casados.push({ k: k, o: opt, porNome: porNome }); }
+    });
+    const lines = L.map(l => {
+        // a opção "planejada" é a do item mais pesado casado (senão a 1ª)
+        const maior = l.casados.slice().sort((a, b) => (Number(items[b.k].grams) || 0) - (Number(items[a.k].grams) || 0))[0];
+        const planned = maior ? maior.o : l.opts[0];
+        const g = Number(planned.grams) || 0;
+        const pm = planLineMacros(planned.foodId, g);
+        const row = { label: String(l.ln.label || pm.name || ''), planned: { foodId: planned.foodId, name: pm.name, grams: g, kcal: pm.kcal, prot: pm.prot, carbo: pm.carbo, gord: pm.gord, sodio: nutriSodioOf(planned.foodId, g), missing: !!pm.missing }, eaten: null, estado: 'nao_consumido', diff: null, porNome: false };
+        if (l.casados.length) {
+            const its = l.casados.map(c => items[c.k]);
+            const sod = its.map(it => nutriSodioOf(it.foodId, Number(it.grams) || 0)).filter(x => x != null);
+            // (auditoria 17/09, A6) o sódio conhecido dos irmãos fica; n/de contam ITENS
+            row.eaten = { name: its.map(it => it.name || pm.name).join(' + '), grams: nutriSum(its, 'grams'), kcal: nutriSum(its, 'kcal'), prot: nutriSum(its, 'prot'), carbo: nutriSum(its, 'carbo'), gord: nutriSum(its, 'gord'), sodio: sod.length ? sod.reduce((a, b) => a + b, 0) : null, sodioN: sod.length, sodioDe: its.length };
+            row.porNome = l.casados.some(c => c.porNome);
+            row.diff = row.eaten.grams - g;
+            row.estado = Math.abs(row.diff) <= Math.max(NUTRI_TOL_G, g * NUTRI_TOL_PCT) ? 'igual' : 'quantidade';
+        }
+        return row;
+    });
+    // (auditoria 17/09, A3) "à vontade" da versão (free: nomes soltos, às vezes vários numa string): item que casa por nome é livre, não "fora"
+    const frees = ((version && Array.isArray(version.free)) ? version.free : []).map(f => String(f || '')).join(',').split(',').map(x => x.replace(/\(opcional\)/gi, '').trim()).filter(Boolean);
+    const extras = items.map((it, k) => ({ it: it, k: k })).filter(x => x.it && !used.has(x.k))
+        .map(x => ({ name: x.it.name || x.it.foodId || '(item)', grams: Number(x.it.grams) || 0, kcal: Number(x.it.kcal) || 0, prot: Number(x.it.prot) || 0, carbo: Number(x.it.carbo) || 0, gord: Number(x.it.gord) || 0, sodio: nutriSodioOf(x.it.foodId, Number(x.it.grams) || 0), neutro: nutriNeutro(x.it), livre: frees.some(f => nutriNomeEquiv(f, x.it.name)) }));
+    return { lines: lines, extras: extras, matched: lines.filter(l => l.eaten).length, total: lines.length, extrasReais: extras.filter(e => !e.neutro && !e.livre).length };
+}
+function nutriSum(arr, k) { return arr.reduce((s, x) => s + (Number(x && x[k]) || 0), 0); }
+function nutriSodioSum(arr) { let mg = 0, n = 0, de = 0; arr.forEach(x => { if (!x) return; if (x.sodio != null) mg += x.sodio; n += (x.sodioN != null) ? x.sodioN : (x.sodio != null ? 1 : 0); de += (x.sodioDe != null) ? x.sodioDe : 1; }); return { mg: mg, n: n, de: de }; }
+// Uma refeição do dia contra o plano: versão que mais casa (mais linhas casadas; empate: menos itens fora,
+// menor diferença de gramas, depois a versão escolhida no app). Sem item registrado, vale a versão escolhida.
+function nutriCompareSlot(dt, slotId) {
+    const ps = getPlanSlot(slotId);
+    if (!ps) return null;
+    const items = nutriItemsOf(dt, slotId);
+    const vers = planVersions(ps);
+    const pick = getPlanPick(slotId, dt);
+    const pv = Math.min(Math.max(0, parseInt(pick.v, 10) || 0), Math.max(0, vers.length - 1));
+    let best = null;
+    vers.forEach((v, vi) => {
+        const m = nutriMatchVersion(v, items);
+        const score = [m.matched, -m.extrasReais, -m.lines.reduce((s, l) => s + (l.diff != null ? Math.abs(l.diff) : 0), 0), vi === pv ? 1 : 0];
+        let melhor = !best;
+        if (best) { for (let i = 0; i < score.length; i++) { if (score[i] !== best.score[i]) { melhor = score[i] > best.score[i]; break; } } }
+        if (melhor) best = { vi: vi, v: v, m: m, score: score };
+    });
+    if (!items.length || !best) { const v = vers[pv] || { name: '', lines: [] }; best = { vi: pv, v: v, m: nutriMatchVersion(v, []), score: null }; }
+    const m = best.m;
+    const eatenAll = m.lines.filter(l => l.eaten).map(l => l.eaten).concat(m.extras);
+    const plannedAll = m.lines.map(l => l.planned);
+    let estado;
+    if (!items.length) estado = 'nao_registrado';
+    else if (m.total > 0 && m.matched / m.total >= 0.5) estado = (m.extrasReais === 0 && m.lines.every(l => !l.eaten || l.estado === 'igual')) ? 'no_plano' : 'ajustado';
+    else estado = 'fora';
+    return { slotId: slotId, name: ps.name || slotId, planned: true, versionName: String(best.v.name || ''), versionIdx: best.vi, nVersions: vers.length,
+             inferida: items.length > 0 && vers.length > 1, lines: m.lines, extras: m.extras, matched: m.matched, total: m.total, estado: estado,
+             tot: { planned: { kcal: nutriSum(plannedAll, 'kcal'), prot: nutriSum(plannedAll, 'prot'), carbo: nutriSum(plannedAll, 'carbo'), gord: nutriSum(plannedAll, 'gord'), sodio: nutriSodioSum(plannedAll) },
+                    eaten: { kcal: nutriSum(eatenAll, 'kcal'), prot: nutriSum(eatenAll, 'prot'), carbo: nutriSum(eatenAll, 'carbo'), gord: nutriSum(eatenAll, 'gord'), sodio: nutriSodioSum(eatenAll) } } };
+}
+// O dia inteiro: refeições do plano (comparadas) + refeições registradas fora do plano ("não previstas")
+function nutriCompareDay(dt) {
+    const p = D && D.dietPlan;
+    if (!p || !Array.isArray(p.slots)) return null;
+    const hoje = today();
+    const slots = [];
+    nutriDaySlotsRO(dt).forEach(s => {
+        const c = nutriCompareSlot(dt, s.id);
+        if (c) { slots.push(c); return; }
+        const items = nutriItemsOf(dt, s.id);
+        if (!items.length) return;
+        const ext = items.map(it => ({ name: it.name || it.foodId || '(item)', grams: Number(it.grams) || 0, kcal: Number(it.kcal) || 0, prot: Number(it.prot) || 0, carbo: Number(it.carbo) || 0, gord: Number(it.gord) || 0, sodio: nutriSodioOf(it.foodId, Number(it.grams) || 0), neutro: nutriNeutro(it) }));
+        slots.push({ slotId: s.id, name: s.name || s.id, planned: false, versionName: '', lines: [], extras: ext, matched: 0, total: 0, estado: 'nao_previsto',
+                     tot: { planned: { kcal: 0, prot: 0, carbo: 0, gord: 0, sodio: { mg: 0, n: 0, de: 0 } }, eaten: { kcal: nutriSum(ext, 'kcal'), prot: nutriSum(ext, 'prot'), carbo: nutriSum(ext, 'carbo'), gord: nutriSum(ext, 'gord'), sodio: nutriSodioSum(ext) } } });
+    });
+    const soma = k => slots.reduce((s, x) => s + x.tot[k].kcal, 0);
+    const agg = k => ({ kcal: slots.reduce((s, x) => s + x.tot[k].kcal, 0), prot: slots.reduce((s, x) => s + x.tot[k].prot, 0), carbo: slots.reduce((s, x) => s + x.tot[k].carbo, 0), gord: slots.reduce((s, x) => s + x.tot[k].gord, 0),
+                        sodio: slots.reduce((s, x) => ({ mg: s.mg + x.tot[k].sodio.mg, n: s.n + x.tot[k].sodio.n, de: s.de + x.tot[k].sodio.de }), { mg: 0, n: 0, de: 0 }) });
+    const cont = { no_plano: 0, ajustado: 0, fora: 0, nao_registrado: 0, nao_previsto: 0 };
+    slots.forEach(s => { cont[s.estado] = (cont[s.estado] || 0) + 1; });
+    const registrado = slots.some(s => s.estado !== 'nao_registrado');
+    return { dt: dt, dow: DOW_ABBR[getDayOfWeek(dt)], tipo: getDayType(dt), future: dt > hoje, parcial: dt === hoje, registrado: registrado, slots: slots, planned: agg('planned'), eaten: agg('eaten'), cont: cont,
+             previstas: slots.filter(s => s.planned).length, goals: D.goals[getDayType(dt)] || D.goals.treino };
+}
+// A semana: métricas do Relatório Semanal (collectWeekReport) + o comparativo dia a dia + agregados para a nutricionista
+function collectNutriReport(startIso) {
+    if (!D || !D.dietPlan || !Array.isArray(D.dietPlan.slots)) return null;
+    const rep = collectWeekReport(startIso);
+    const prev = collectWeekReport(addDaysStr(startIso, -7));
+    const days = rep.days.map(d => { const c = nutriCompareDay(d.dt); c.rep = d; c.treinos = rep.treinos.filter(t => t.data === d.dt).map(t => { const pi = personalSessionInfo(t); return { nome: t.nome || 'Treino', com: pi.com, sem: pi.sem }; }); return c; });
+    const reg = days.filter(d => !d.future && d.registrado);
+    const avg = (arr, f) => arr.length ? arr.reduce((s, x) => s + f(x), 0) / arr.length : 0;
+    const cont = { no_plano: 0, ajustado: 0, fora: 0, nao_registrado: 0, nao_previsto: 0, previstas: 0 };
+    reg.forEach(d => { Object.keys(d.cont).forEach(k => { cont[k] += d.cont[k]; }); cont.previstas += d.previstas; });
+    const sodioDias = reg.filter(d => d.eaten.sodio.n > 0);
+    const m = D.dietPlan.meta || {};
+    const pro = m.professional || {};
+    const pesoAvg = rep.pesoSerie.length ? avg(rep.pesoSerie, p => p.peso) : null;
+    const pesoPrev = prev.pesoSerie.length ? avg(prev.pesoSerie, p => p.peso) : null;
+    const g0 = (rep.past[0] && rep.past[0].goals) || D.goals.treino || {};
+    const gT = D.goals.treino || {}, gD = D.goals.descanso || {};
+    const metasIguais = ['kcal', 'prot', 'carbo', 'gord', 'water', 'sodio', 'protMin', 'protMax'].every(k => (gT[k] || 0) === (gD[k] || 0));
+    return {
+        startIso: startIso, endIso: rep.endIso, rep: rep, days: days, user: D.userName || '',
+        plan: { name: m.name || '', date: m.date || '', importedAt: m.importedAt || '', proName: pro.name || (m.source || ''), proRole: pro.role || '' },
+        goals: g0, metasIguais: metasIguais,
+        agg: { dias: reg.length,
+               eaten: { kcal: avg(reg, d => d.eaten.kcal), prot: avg(reg, d => d.eaten.prot), carbo: avg(reg, d => d.eaten.carbo), gord: avg(reg, d => d.eaten.gord), sodio: sodioDias.length ? avg(sodioDias, d => d.eaten.sodio.mg) : null, sodioDias: sodioDias.length, itensSemSodio: reg.reduce((s, d) => s + (d.eaten.sodio.de - d.eaten.sodio.n), 0) },
+               planned: { kcal: avg(reg, d => d.planned.kcal), prot: avg(reg, d => d.planned.prot), carbo: avg(reg, d => d.planned.carbo), gord: avg(reg, d => d.planned.gord), sodio: avg(reg, d => d.planned.sodio.mg),
+                          sodioParcial: reg.some(d => d.planned.sodio.n < d.planned.sodio.de), linhasSemSodio: reg.reduce((s, d) => s + (d.planned.sodio.de - d.planned.sodio.n), 0) }, // (auditoria 17/09, A1)
+               cont: cont,
+               diasSodioOk: sodioDias.filter(d => estadoLimite(d.eaten.sodio.mg, d.goals.sodio) !== 'acima').length,
+               pesoAvg: pesoAvg, pesoPrev: pesoPrev, pesoDelta: (pesoAvg != null && pesoPrev != null) ? pesoAvg - pesoPrev : null }
+    };
+}
+const NUTRI_ESTADO = { no_plano: 'NO PLANO', ajustado: 'AJUSTADO', fora: 'FORA DO PLANO', nao_registrado: 'NÃO REGISTRADO', nao_previsto: 'NÃO PREVISTO NO PLANO' };
+function nutriExtraTxt(e, planned) { return e.livre ? 'à vontade no plano' : e.neutro ? 'sem impacto' : planned ? 'fora do plano' : 'não previsto'; }
+function nutriDifTxt(l) {
+    if (!l.eaten) return 'não consumido';
+    if (l.estado === 'igual') return '=';
+    const d = Math.round(l.diff);
+    return (d > 0 ? '+' : '') + d + ' g';
+}
+function nutriFmtSodio(s, sufixo) { return (s && s.n > 0) ? fmtN(s.mg) + (sufixo || '') + (s.n < s.de ? '*' : '') : 'n/d'; }
+function nutriTituloSemana(nr) { return `Domingo ${fmtDM(nr.startIso)} a Sábado ${fmtDM(nr.endIso)}${nr.startIso === weekStartOf(today()) ? ' (semana em curso)' : ''}`; }
+function nutriMetaProtTxt(g) { const f = faixaProt(g); return fmt(g.prot) + ' g' + (f ? ' (faixa ' + faixaProtTxt(f) + ')' : ''); }
+// ---- Resumo da semana para o documento de 2 páginas (pedido do CEO 17/09: "6 a 7 páginas é muito detalhe") ----
+// Rankings a partir do comparativo dia a dia: o que entrou fora do plano, o que do plano ficou de fora, as maiores
+// diferenças de quantidade, e a média por refeição. Derivado de `nr.days`; lê D.dietPlan.slots só para a ordem e os nomes das refeições.
+function nutriResumoSemana(nr) {
+    const reg = nr.days.filter(x => !x.future && x.registrado);
+    const slotsPlano = (D.dietPlan && D.dietPlan.slots || []).map(ps => ({ slotId: ps.slotId, name: ps.name || ps.slotId }));
+    const LETRA = { no_plano: 'P', ajustado: 'A', fora: 'F', nao_registrado: 'N' };
+    // grade: refeição × dia
+    const grade = slotsPlano.map(sp => {
+        const cel = nr.days.map(x => { if (x.future || !x.registrado) return '-'; const s = x.slots.find(z => z.slotId === sp.slotId); return s ? (LETRA[s.estado] || '?') : '·'; });
+        const cont = { P: 0, A: 0, F: 0, N: 0 }; cel.forEach(c => { if (cont[c] != null) cont[c]++; });
+        return { name: sp.name, cel: cel, cont: cont };
+    });
+    const naoPrev = nr.days.map(x => (x.future || !x.registrado) ? '-' : String(x.slots.filter(z => z.estado === 'nao_previsto').length || '·'));
+    if (naoPrev.some(c => c !== '-' && c !== '·')) grade.push({ name: 'Não previstas no plano', cel: naoPrev, cont: null, extra: true });
+    // rankings
+    const mapa = () => ({});
+    const foraM = mapa(), ncM = mapa(), difM = mapa(), refM = mapa();
+    reg.forEach(x => x.slots.forEach(s => {
+        const regSlot = s.estado !== 'nao_registrado';
+        s.extras.forEach(e => { if (e.neutro || e.livre) return; const k = nutriNome(e.name) || e.name; const r = foraM[k] || (foraM[k] = { name: e.name, vezes: 0, grams: 0, kcal: 0, prot: 0, onde: {} }); r.vezes++; r.grams += e.grams; r.kcal += e.kcal; r.prot += e.prot; r.onde[s.name] = (r.onde[s.name] || 0) + 1; });
+        if (s.planned) {
+            s.lines.forEach(l => {
+                if (!regSlot) return; // refeição inteira não registrada conta na grade, não linha a linha
+                // (reauditoria 17/09, M1) por LINHA do plano (refeição + rótulo), não pelo nome da opção: "Proteína" cumprida com coxa conta como consumida
+                const k = s.slotId + '|' + (l.label || l.planned.name);
+                const r = ncM[k] || (ncM[k] = { name: l.label || l.planned.name, exemplo: l.planned.name, refeicao: s.name, vezes: 0, de: 0 });
+                r.de++; if (!l.eaten) r.vezes++;
+                if (l.eaten) { const kd = nutriNome(l.planned.name) || l.planned.name; const q = difM[kd] || (difM[kd] = { name: l.planned.name, n: 0, plano: 0, comido: 0 }); q.n++; q.plano += l.planned.grams; q.comido += l.eaten.grams; }
+            });
+            const r = refM[s.slotId] || (refM[s.slotId] = { name: s.name, dias: 0, registradas: 0, plano: { kcal: 0, prot: 0 }, comido: { kcal: 0, prot: 0 } });
+            r.dias++; if (regSlot) r.registradas++;
+            r.plano.kcal += s.tot.planned.kcal; r.plano.prot += s.tot.planned.prot; r.comido.kcal += s.tot.eaten.kcal; r.comido.prot += s.tot.eaten.prot;
+        }
+    }));
+    const fora = Object.values(foraM).map(r => Object.assign(r, { ondeTxt: Object.keys(r.onde).sort((a, b) => r.onde[b] - r.onde[a]).slice(0, 2).join(', ') })).sort((a, b) => b.vezes - a.vezes || b.kcal - a.kcal).slice(0, 8);
+    const naoCons = Object.values(ncM).filter(r => r.vezes > 0).sort((a, b) => b.vezes - a.vezes || a.name.localeCompare(b.name, 'pt-BR')).slice(0, 8);
+    const difs = Object.values(difM).map(q => ({ name: q.name, n: q.n, plano: q.plano / q.n, comido: q.comido / q.n, dif: (q.comido - q.plano) / q.n })).filter(q => Math.abs(q.dif) > Math.max(NUTRI_TOL_G, q.plano * NUTRI_TOL_PCT)).sort((a, b) => Math.abs(b.dif) - Math.abs(a.dif)).slice(0, 6);
+    const porRef = slotsPlano.map(sp => refM[sp.slotId]).filter(Boolean).map(r => ({ name: r.name, dias: r.dias, registradas: r.registradas, plano: { kcal: r.plano.kcal / r.dias, prot: r.plano.prot / r.dias }, comido: { kcal: r.comido.kcal / r.dias, prot: r.comido.prot / r.dias } }));
+    const naoReg = slotsPlano.map(sp => ({ name: sp.name, vezes: reg.filter(x => x.slots.some(z => z.slotId === sp.slotId && z.estado === 'nao_registrado')).length, de: reg.filter(x => x.slots.some(z => z.slotId === sp.slotId)).length })).filter(r => r.vezes > 0);
+    return { grade: grade, fora: fora, naoCons: naoCons, difs: difs, porRef: porRef, naoReg: naoReg, dias: reg.length };
+}
+// ---- documento HTML (Imprimir / Compartilhar), 2 páginas ----
+function buildNutriReportHtml(nr) {
+    const n = nr.rep.nutri, a = nr.rep.agua, g = nr.goals, ag = nr.agg, rs = nutriResumoSemana(nr);
+    const tbl = 'width:100%;border-collapse:collapse;font-size:11.5px;margin-top:6px';
+    const th = 'text-align:left;padding:4px 6px;background:#f1f5f9;font-weight:700;border:1px solid #e2e8f0';
+    const td = 'padding:4px 6px;border:1px solid #e2e8f0';
+    const num = td + ';text-align:right', ctr = td + ';text-align:center;font-weight:700';
+    const corL = { P: '#065f46', A: '#92400e', F: '#991b1b', N: '#94a3b8' };
+    const dias = nr.days.map(x => x.dow + ' ' + fmtDM(x.dt).slice(0, 2));
+    return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Relatório para a nutricionista · ${fmtDM(nr.startIso)} a ${fmtDM(nr.endIso)}</title>
+<style>
+body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#0f172a;margin:0;padding:20px;max-width:800px;margin:0 auto;background:#fff}
+h1{font-size:20px;margin:0 0 2px}h2{font-size:14px;margin:16px 0 4px;border-bottom:2px solid #7c3aed;padding-bottom:3px}
+.sub{color:#64748b;font-size:11px;font-weight:400}.foot{margin-top:24px;padding-top:10px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:10px;text-align:center}
+@page{size:A4 portrait;margin:12mm}@media print{body{padding:0;font-size:11px;max-width:none}table{font-size:10px}td,th{padding:3px 5px!important}tr{page-break-inside:avoid}h2{page-break-after:avoid}.p2{page-break-before:always}}
+</style></head><body>
+${exportDocChrome()}
+<h1>Gileno Gestão · SAÚDE</h1>
+<div class="sub" style="font-size:12px">Relatório para a nutricionista${nr.plan.proName ? ' · ' + escHtml(nr.plan.proName) + (nr.plan.proRole ? ' (' + escHtml(nr.plan.proRole) + ')' : '') : ''}${nr.user ? ' · aluno: ' + escHtml(nr.user) : ''}</div>
+<div class="sub" style="font-size:12px">Semana: ${nutriTituloSemana(nr)}</div>
+<div class="sub">Plano: ${escHtml(nr.plan.name || '—')}${nr.plan.date ? ' · prescrito em ' + escHtml(nr.plan.date.split('-').reverse().join('/')) : ''}${nr.plan.importedAt ? ' · importado no app em ' + escHtml(nr.plan.importedAt.split('-').reverse().join('/')) : ''}</div>
+<h2>Semana vs metas <span class="sub">(${ag.dias} dia(s) com registro de refeição${nr.metasIguais ? '' : '; metas de dia de treino'})</span></h2>
+<table style="${tbl}"><tr><th style="${th}">Métrica</th><th style="${th}">Meta</th><th style="${th};text-align:right">Comido (média/dia)</th><th style="${th};text-align:right">Plano (média/dia)</th><th style="${th}">Dias adequados</th></tr>
+<tr><td style="${td}">Calorias</td><td style="${td}">${fmtN(g.kcal)} kcal</td><td style="${num}">${ag.dias ? fmtN(ag.eaten.kcal) : '—'}</td><td style="${num}">${ag.dias ? fmtN(ag.planned.kcal) : '—'}</td><td style="${td}">${n.diasKcalOk} / ${n.dias} (±10%)</td></tr>
+<tr><td style="${td}">Proteína</td><td style="${td}">${nutriMetaProtTxt(g)}</td><td style="${num}">${ag.dias ? fmt(ag.eaten.prot) + ' g' : '—'}</td><td style="${num}">${ag.dias ? fmt(ag.planned.prot) + ' g' : '—'}</td><td style="${td}">${n.diasProtOk} / ${n.dias}${protSufixo(n)}${protForaTxt(n)}</td></tr>
+<tr><td style="${td}">Carboidrato</td><td style="${td}">${fmt(g.carbo)} g</td><td style="${num}">${ag.dias ? fmt(ag.eaten.carbo) + ' g' : '—'}</td><td style="${num}">${ag.dias ? fmt(ag.planned.carbo) + ' g' : '—'}</td><td style="${td}">—</td></tr>
+<tr><td style="${td}">Gordura</td><td style="${td}">limite ${fmt(g.gord)} g</td><td style="${num}">${ag.dias ? fmt(ag.eaten.gord) + ' g' : '—'}</td><td style="${num}">${ag.dias ? fmt(ag.planned.gord) + ' g' : '—'}</td><td style="${td}">${n.temMetaGord ? n.diasGordOk + ' / ' + n.dias + ' dentro do limite' : '—'}</td></tr>
+<tr><td style="${td}">Sódio</td><td style="${td}">${g.sodio > 0 ? 'limite ' + fmtN(g.sodio) + ' mg' : '—'}</td><td style="${num}">${ag.eaten.sodio != null ? fmtN(ag.eaten.sodio) + ' mg' : 'n/d'}</td><td style="${num}">${ag.dias ? fmtN(ag.planned.sodio) + ' mg' + (ag.planned.sodioParcial ? '*' : '') : '—'}</td><td style="${td}">${g.sodio > 0 && ag.eaten.sodioDias ? ag.diasSodioOk + ' / ' + ag.eaten.sodioDias + ' dentro do limite' : '—'}</td></tr>
+<tr><td style="${td}">Água</td><td style="${td}">${fmtN(g.water)} ml</td><td style="${num}">${a.dias ? fmtN(a.avg) + ' ml' : '—'}</td><td style="${num}">—</td><td style="${td}">${a.dias ? a.diasMeta + ' / ' + a.dias : '—'}</td></tr></table>
+<div class="sub" style="margin-top:4px">Sódio: só dos alimentos com sódio cadastrado (* = parcial: ${ag.eaten.itensSemSodio} item(ns) comidos e ${ag.planned.linhasSemSodio} linha(s) do plano sem sódio cadastrado na semana); sal de preparo não entra. "Plano" = a versão do plano que mais casa com o registrado, em cada refeição.</div>
+${ag.pesoAvg != null || nr.rep.sonoAvg != null ? `<div style="font-size:12px;margin-top:6px">${ag.pesoAvg != null ? `Peso médio da semana: <strong>${fmt(ag.pesoAvg)} kg</strong>${ag.pesoPrev != null ? ` (semana anterior ${fmt(ag.pesoPrev)} kg, ${ag.pesoDelta > 0 ? '+' : ''}${ag.pesoDelta.toFixed(2).replace('.', ',')} kg)` : ''}` : ''}${nr.rep.sonoAvg != null ? ` · Sono médio: <strong>${formatSleepDuration(Math.round(nr.rep.sonoAvg))}</strong>` : ''} · Treinos: <strong>${nr.rep.treinoAgg.sessoes}</strong> na semana</div>` : ''}
+<h2>Mapa da semana <span class="sub">(${ag.cont.previstas} refeições previstas nos ${ag.dias} dia(s) registrados: ${ag.cont.no_plano} no plano · ${ag.cont.ajustado} ajustadas · ${ag.cont.fora} fora · ${ag.cont.nao_registrado} não registradas${ag.cont.nao_previsto ? ' · ' + ag.cont.nao_previsto + ' não previstas' : ''})</span></h2>
+<table style="${tbl}"><tr><th style="${th}">Refeição</th>${dias.map(x => `<th style="${th};text-align:center">${x}</th>`).join('')}<th style="${th}">P / A / F / N</th></tr>
+${rs.grade.map(r => `<tr><td style="${td}">${escHtml(r.name)}</td>${r.cel.map(c => `<td style="${ctr};color:${corL[c] || '#334155'}">${c}</td>`).join('')}<td style="${td}">${r.cont ? [r.cont.P, r.cont.A, r.cont.F, r.cont.N].join(' / ') : 'quantidade por dia'}</td></tr>`).join('')}</table>
+<div class="sub" style="margin-top:4px"><b>P</b> no plano (itens do plano, quantidade dentro de 10%) · <b>A</b> ajustada (metade ou mais do plano, com quantidade diferente ou item a mais) · <b>F</b> fora do plano (menos da metade) · <b>N</b> não registrada · "-" dia sem registro.</div>
+<h2>Dia a dia</h2>
+<div style="overflow-x:auto"><table style="${tbl}"><tr><th style="${th}">Dia</th><th style="${th}">Tipo</th><th style="${th};text-align:right">kcal</th><th style="${th};text-align:right">Prot</th><th style="${th};text-align:right">Carbo</th><th style="${th};text-align:right">Gord</th><th style="${th};text-align:right">Sódio</th><th style="${th};text-align:right">Água</th><th style="${th};text-align:right">Peso</th><th style="${th}">Treino</th></tr>
+${nr.days.filter(x => !x.future).map(x => `<tr><td style="${td}">${x.dow} ${fmtDM(x.dt)}${x.parcial ? ' <span class="sub">(parcial)</span>' : ''}</td><td style="${td}">${x.tipo === 'treino' ? 'treino' : 'descanso'}</td>
+<td style="${num}">${x.registrado ? fmtN(x.eaten.kcal) : '—'}</td><td style="${num}">${x.registrado ? fmt(x.eaten.prot) : '—'}</td><td style="${num}">${x.registrado ? fmt(x.eaten.carbo) : '—'}</td><td style="${num}">${x.registrado ? fmt(x.eaten.gord) : '—'}</td><td style="${num}">${x.registrado ? nutriFmtSodio(x.eaten.sodio) : '—'}</td>
+<td style="${num}">${x.rep.hasWater ? fmtN(x.rep.water) : '—'}</td><td style="${num}">${x.rep.v.peso != null ? fmt(x.rep.v.peso) : '—'}</td><td style="${td}">${x.treinos.length ? x.treinos.map(t => escHtml(t.nome) + (t.com ? ' (com personal)' : t.sem ? ' (sem personal)' : '')).join(', ') : '—'}</td></tr>`).join('')}</table></div>
+<div class="p2"></div>
+<h2>O que mais entrou fora do plano</h2>
+${rs.fora.length ? `<table style="${tbl}"><tr><th style="${th}">Item</th><th style="${th}">Em que refeição</th><th style="${th};text-align:right">Vezes</th><th style="${th};text-align:right">g por vez</th><th style="${th};text-align:right">kcal na semana</th><th style="${th};text-align:right">prot na semana</th></tr>
+${rs.fora.map(r => `<tr><td style="${td}">${escHtml(r.name)}</td><td style="${td}">${escHtml(r.ondeTxt)}</td><td style="${num}">${r.vezes}</td><td style="${num}">${fmt(r.grams / r.vezes)}</td><td style="${num}">${fmtN(r.kcal)}</td><td style="${num}">${fmt(r.prot)} g</td></tr>`).join('')}</table>` : '<div class="sub">Nenhum item fora do plano na semana.</div>'}
+<h2>O que do plano ficou de fora</h2>
+${rs.naoReg.length ? `<div style="font-size:12px;margin-bottom:4px">Refeições inteiras não registradas: ${rs.naoReg.map(r => `<strong>${escHtml(r.name)}</strong> ${r.vezes} de ${r.de} dia(s)`).join(' · ')}.</div>` : ''}
+${rs.naoCons.length ? `<table style="${tbl}"><tr><th style="${th}">Linha do plano</th><th style="${th}">Refeição</th><th style="${th};text-align:right">Não consumida</th></tr>
+${rs.naoCons.map(r => `<tr><td style="${td}">${escHtml(r.name)}${r.exemplo && nutriNome(r.exemplo) !== nutriNome(r.name) ? ` <span class="sub">(ex.: ${escHtml(r.exemplo)})</span>` : ''}</td><td style="${td}">${escHtml(r.refeicao)}</td><td style="${num}">${r.vezes} de ${r.de} vez(es)</td></tr>`).join('')}</table>` : '<div class="sub">Nas refeições registradas, nenhuma linha do plano ficou sem consumo.</div>'}
+<h2>Maiores diferenças de quantidade</h2>
+${rs.difs.length ? `<table style="${tbl}"><tr><th style="${th}">Item do plano</th><th style="${th};text-align:right">Plano (g)</th><th style="${th};text-align:right">Comido (média g)</th><th style="${th};text-align:right">Diferença</th><th style="${th};text-align:right">Vezes</th></tr>
+${rs.difs.map(r => `<tr><td style="${td}">${escHtml(r.name)}</td><td style="${num}">${fmt(r.plano)}</td><td style="${num}">${fmt(r.comido)}</td><td style="${num}">${r.dif > 0 ? '+' : ''}${fmt(r.dif)} g</td><td style="${num}">${r.n}</td></tr>`).join('')}</table>` : '<div class="sub">Quantidades dentro da tolerância em todas as linhas casadas.</div>'}
+<h2>Por refeição, média dos dias registrados</h2>
+<table style="${tbl}"><tr><th style="${th}">Refeição</th><th style="${th};text-align:right">Registrada</th><th style="${th};text-align:right">Plano kcal</th><th style="${th};text-align:right">Comido kcal</th><th style="${th};text-align:right">Plano prot</th><th style="${th};text-align:right">Comido prot</th></tr>
+${rs.porRef.map(r => `<tr><td style="${td}">${escHtml(r.name)}</td><td style="${num}">${r.registradas} de ${r.dias}</td><td style="${num}">${fmtN(r.plano.kcal)}</td><td style="${num}">${fmtN(r.comido.kcal)}</td><td style="${num}">${fmt(r.plano.prot)} g</td><td style="${num}">${fmt(r.comido.prot)} g</td></tr>`).join('')}</table>
+<div class="sub" style="margin-top:6px">Como o comparativo é feito: em cada refeição registrada, o app procura a versão do plano que mais casa com os itens registrados (pelo cadastro do alimento, senão pelo nome) e compara linha a linha; item fora do plano com até 10 kcal e 1 g de proteína (café, creatina, psyllium) e item "à vontade" da versão (tomate, orégano) não contam. "Não registrada" quer dizer sem registro no app, não necessariamente não consumida.</div>
+${nr.rep.notes ? `<h2>Anotações da semana</h2><div style="font-size:12px;white-space:pre-wrap;line-height:1.6">${escHtml(nr.rep.notes)}</div>` : ''}
+<div class="foot">Gileno Gestão Saúde · relatório gerado pelo app em ${formatDataTreino(today())} a partir dos registros diários e do plano importado · não substitui avaliação profissional</div>
+</body></html>`;
+}
+// ---- PDF de 2 páginas, gerado no aparelho ----
+function buildNutriReportPdf(nr) {
+    const d = pdfDoc().newPage();
+    const { W, M, CW } = d;
+    const n = nr.rep.nutri, a = nr.rep.agua, g = nr.goals, ag = nr.agg, rs = nutriResumoSemana(nr);
+    const cinza = PDF_CINZA, verde = '0.02 0.37 0.27 rg', ambar = '0.57 0.25 0.05 rg', verm = '0.6 0.11 0.11 rg';
+    const corL = { P: verde, A: ambar, F: verm, N: cinza };
+    let y = d.y;
+    const need = h => { if (y - h < d.RODAPE) { d.newPage(); y = d.y; return true; } return false; };
+    const titulo = (t, cor) => { y -= 4; need(34); d.txt(M, y, pdfCorta(t, 11, CW), 11, true); y -= 4; d.line(M, y, W - M, y, cor || PDF_ROXO, 1.2); y -= 12; };
+    const nota = (t, fs) => pdfQuebra(t, fs || 7.5, CW).forEach(l => { need(10); d.txt(M, y, l, fs || 7.5, false, cinza); y -= (fs || 7.5) + 2; });
+    const tabela = (cols, cab, rows, fs, rh) => {
+        fs = fs || 8; rh = rh || 13;
+        const wB = (t, f, bold) => pdfW(t, f) * (bold ? 1.07 : 1); // Helvetica-Bold é mais larga do que pdfW estima (auditoria 17/09, A4)
+        const cabecalho = () => { d.rect(M, y - rh, CW, rh, PDF_FUNDO, PDF_BORDA); cab.forEach((c, i) => { const right = /^>/.test(c), center = /^\^/.test(c); const t = c.replace(/^[>^]/, ''); const w = cols[i + 1] - cols[i]; if (right) d.txt(cols[i + 1] - 4 - wB(t, fs, true), y - rh + 4, t, fs, true); else if (center) d.txt(cols[i] + (w - wB(t, fs, true)) / 2, y - rh + 4, t, fs, true); else d.txt(cols[i] + 4, y - rh + 4, t, fs, true); }); y -= rh; };
+        need(rh * 3); cabecalho(); let topo = y + rh;
+        const fecha = ate => { for (let i = 1; i < cols.length - 1; i++) d.line(cols[i], ate, cols[i], topo); };
+        rows.forEach(r => {
+            if (y - rh < d.RODAPE) { fecha(y); d.newPage(); y = d.y; cabecalho(); topo = y + rh; }
+            d.rect(M, y - rh, CW, rh, r.fill || null, PDF_BORDA);
+            r.cells.forEach((c, i) => { const cel = (c && typeof c === 'object') ? c : { t: String(c == null ? '' : c) }; const w = cols[i + 1] - cols[i] - 8; const t = cel.fit ? cel.t : pdfCorta(cel.t, fs, w); const cor = cel.cor || r.cor;
+                if (cel.center) d.txt(cols[i] + (cols[i + 1] - cols[i] - wB(t, fs, cel.bold)) / 2, y - rh + 4, t, fs, cel.bold, cor);
+                else if (cel.right) d.txtFit(cols[i + 1] - 4 - Math.min(wB(t, fs, cel.bold), w), y - rh + 4, t, fs, w, cel.bold, cor);
+                else if (cel.fit) d.txtFit(cols[i] + 4, y - rh + 4, t, fs, w, cel.bold, cor); else d.txt(cols[i] + 4, y - rh + 4, t, fs, cel.bold, cor); });
+            y -= rh;
+        });
+        fecha(y); y -= 10;
+    };
+    // cabeçalho
+    d.txt(M, y, 'Gileno Gestão · SAÚDE', 16, true); y -= 13;
+    d.txt(M, y, pdfCorta('Relatório para a nutricionista' + (nr.plan.proName ? ' · ' + nr.plan.proName + (nr.plan.proRole ? ' (' + nr.plan.proRole + ')' : '') : '') + (nr.user ? ' · aluno: ' + nr.user : ''), 9.5, CW), 9.5, false, cinza); y -= 12;
+    d.txt(M, y, pdfCorta('Semana: ' + nutriTituloSemana(nr), 9.5, CW), 9.5, true, cinza); y -= 12;
+    d.txt(M, y, pdfCorta('Plano: ' + (nr.plan.name || '-') + (nr.plan.date ? ' · prescrito em ' + nr.plan.date.split('-').reverse().join('/') : '') + (nr.plan.importedAt ? ' · importado no app em ' + nr.plan.importedAt.split('-').reverse().join('/') : ''), 8.5, CW), 8.5, false, cinza); y -= 16;
+    // 1) semana vs metas
+    titulo('Semana vs metas · ' + ag.dias + ' dia(s) com registro de refeição' + (nr.metasIguais ? '' : ' · metas de dia de treino'));
+    const c1 = [M, M + 80, M + 200, M + 290, M + 380, W - M];
+    tabela(c1, ['Métrica', 'Meta', '>Comido (média/dia)', '>Plano (média/dia)', 'Dias adequados'], [
+        { cells: ['Calorias', fmtN(g.kcal) + ' kcal', { t: ag.dias ? fmtN(ag.eaten.kcal) + ' kcal' : '-', right: true }, { t: ag.dias ? fmtN(ag.planned.kcal) + ' kcal' : '-', right: true }, n.diasKcalOk + ' / ' + n.dias + ' (±10%)'] },
+        { cells: ['Proteína', nutriMetaProtTxt(g), { t: ag.dias ? fmt(ag.eaten.prot) + ' g' : '-', right: true }, { t: ag.dias ? fmt(ag.planned.prot) + ' g' : '-', right: true }, n.diasProtOk + ' / ' + n.dias + protSufixo(n) + protForaTxt(n)] },
+        { cells: ['Carboidrato', fmt(g.carbo) + ' g', { t: ag.dias ? fmt(ag.eaten.carbo) + ' g' : '-', right: true }, { t: ag.dias ? fmt(ag.planned.carbo) + ' g' : '-', right: true }, '-'] },
+        { cells: ['Gordura', 'limite ' + fmt(g.gord) + ' g', { t: ag.dias ? fmt(ag.eaten.gord) + ' g' : '-', right: true }, { t: ag.dias ? fmt(ag.planned.gord) + ' g' : '-', right: true }, n.temMetaGord ? n.diasGordOk + ' / ' + n.dias + ' dentro do limite' : '-'] },
+        { cells: ['Sódio', g.sodio > 0 ? 'limite ' + fmtN(g.sodio) + ' mg' : '-', { t: ag.eaten.sodio != null ? fmtN(ag.eaten.sodio) + ' mg' : 'n/d', right: true }, { t: ag.dias ? fmtN(ag.planned.sodio) + ' mg' + (ag.planned.sodioParcial ? '*' : '') : '-', right: true }, (g.sodio > 0 && ag.eaten.sodioDias) ? ag.diasSodioOk + ' / ' + ag.eaten.sodioDias + ' dentro do limite' : '-'] },
+        { cells: ['Água', fmtN(g.water) + ' ml', { t: a.dias ? fmtN(a.avg) + ' ml' : '-', right: true }, { t: '-', right: true }, a.dias ? a.diasMeta + ' / ' + a.dias : '-'] }
+    ], 8.5, 14);
+    nota('Sódio: só dos alimentos com sódio cadastrado (* = parcial: ' + ag.eaten.itensSemSodio + ' item(ns) comidos e ' + ag.planned.linhasSemSodio + ' linha(s) do plano sem sódio cadastrado na semana); sal de preparo não entra. "Plano" = a versão do plano que mais casa com o registrado, em cada refeição.');
+    if (ag.pesoAvg != null || nr.rep.sonoAvg != null) { y -= 2; d.txtFit(M, y, (ag.pesoAvg != null ? 'Peso médio da semana: ' + fmt(ag.pesoAvg) + ' kg' + (ag.pesoPrev != null ? ' (semana anterior ' + fmt(ag.pesoPrev) + ' kg, ' + (ag.pesoDelta > 0 ? '+' : '') + ag.pesoDelta.toFixed(2).replace('.', ',') + ' kg)' : '') : '') + (nr.rep.sonoAvg != null ? ' · Sono médio: ' + formatSleepDuration(Math.round(nr.rep.sonoAvg)) : '') + ' · Treinos: ' + nr.rep.treinoAgg.sessoes + ' na semana', 9, CW); y -= 14; }
+    y -= 4;
+    // 2) mapa da semana
+    titulo('Mapa da semana');
+    pdfQuebra(ag.cont.previstas + ' refeições previstas nos ' + ag.dias + ' dia(s) registrados: ' + ag.cont.no_plano + ' no plano · ' + ag.cont.ajustado + ' ajustadas · ' + ag.cont.fora + ' fora do plano · ' + ag.cont.nao_registrado + ' não registradas' + (ag.cont.nao_previsto ? ' · ' + ag.cont.nao_previsto + ' refeição(ões) não previstas no plano' : ''), 9, CW / 1.07).forEach(l => { need(12); d.txt(M, y, l, 9, true); y -= 12; }); y -= 1;
+    const cg = [M, M + 150]; for (let i = 1; i <= 7; i++) cg.push(M + 150 + i * 40); cg.push(W - M);
+    tabela(cg, ['Refeição'].concat(nr.days.map(x => '^' + x.dow + ' ' + fmtDM(x.dt).slice(0, 2))).concat(['P / A / F / N']),
+        rs.grade.map(r => ({ cells: [r.name].concat(r.cel.map(c => ({ t: c, center: true, bold: true, cor: corL[c] || null }))).concat([r.cont ? [r.cont.P, r.cont.A, r.cont.F, r.cont.N].join(' / ') : 'quantidade por dia']) })), 8.5, 14);
+    nota('P = no plano (itens do plano, quantidade dentro de 10%) · A = ajustada (metade ou mais do plano, com quantidade diferente ou item a mais) · F = fora do plano (menos da metade) · N = não registrada · "-" = dia sem registro.');
+    y -= 4;
+    // 3) dia a dia
+    titulo('Dia a dia');
+    const c2 = [M, M + 64, M + 112, M + 156, M + 200, M + 244, M + 288, M + 336, M + 382, M + 426, W - M];
+    tabela(c2, ['Dia', 'Tipo', '>kcal', '>Prot', '>Carbo', '>Gord', '>Sódio', '>Água', '>Peso', 'Treino'],
+        nr.days.filter(x => !x.future).map(x => ({ cells: [x.dow + ' ' + fmtDM(x.dt) + (x.parcial ? ' (p)' : ''), x.tipo === 'treino' ? 'treino' : 'descanso',
+            { t: x.registrado ? fmtN(x.eaten.kcal) : '-', right: true }, { t: x.registrado ? fmt(x.eaten.prot) : '-', right: true }, { t: x.registrado ? fmt(x.eaten.carbo) : '-', right: true }, { t: x.registrado ? fmt(x.eaten.gord) : '-', right: true }, { t: x.registrado ? nutriFmtSodio(x.eaten.sodio) : '-', right: true },
+            { t: x.rep.hasWater ? fmtN(x.rep.water) : '-', right: true }, { t: x.rep.v.peso != null ? fmt(x.rep.v.peso) : '-', right: true },
+            { t: x.treinos.length ? x.treinos.map(t => t.nome + (t.com ? ' (C)' : t.sem ? ' (S)' : '')).join(', ') : '-' }] })), 8, 13);
+    nota('(p) = dia parcial (em curso). Treino: (C) aula com o personal, (S) sem o personal. * no sódio = parte dos itens sem sódio cadastrado.');
+    // 4) página 2: desvios
+    d.newPage(); y = d.y;
+    titulo('O que mais entrou fora do plano');
+    if (rs.fora.length) tabela([M, M + 165, M + 280, M + 320, M + 380, M + 450, W - M], ['Item', 'Em que refeição', '>Vezes', '>g por vez', '>kcal semana', '>prot semana'],
+        rs.fora.map(r => ({ cells: [r.name, r.ondeTxt, { t: String(r.vezes), right: true }, { t: fmt(r.grams / r.vezes), right: true }, { t: fmtN(r.kcal), right: true }, { t: fmt(r.prot) + ' g', right: true }] })), 8.5, 13);
+    else { nota('Nenhum item fora do plano na semana.', 8.5); y -= 6; }
+    titulo('O que do plano ficou de fora');
+    if (rs.naoReg.length) { pdfQuebra('Refeições inteiras não registradas: ' + rs.naoReg.map(r => r.name + ' ' + r.vezes + ' de ' + r.de + ' dia(s)').join(' · ') + '.', 8.5, CW).forEach(l => { need(11); d.txt(M, y, l, 8.5); y -= 11; }); y -= 2; } // (reauditoria M2) quebra em vez de encolher
+    if (rs.naoCons.length) tabela([M, M + 255, M + 375, W - M], ['Linha do plano', 'Refeição', '>Não consumida'],
+        rs.naoCons.map(r => ({ cells: [r.name + (r.exemplo && nutriNome(r.exemplo) !== nutriNome(r.name) ? ' (ex.: ' + r.exemplo + ')' : ''), r.refeicao, { t: r.vezes + ' de ' + r.de + ' vez(es)', right: true }] })), 8.5, 13);
+    else { nota('Nas refeições registradas, nenhuma linha do plano ficou sem consumo.', 8.5); y -= 6; }
+    titulo('Maiores diferenças de quantidade');
+    if (rs.difs.length) tabela([M, M + 255, M + 325, M + 405, M + 470, W - M], ['Item do plano', '>Plano (g)', '>Comido (média g)', '>Diferença', '>Vezes'],
+        rs.difs.map(r => ({ cells: [r.name, { t: fmt(r.plano), right: true }, { t: fmt(r.comido), right: true }, { t: (r.dif > 0 ? '+' : '') + fmt(r.dif) + ' g', right: true, cor: r.dif > 0 ? ambar : verm }, { t: String(r.n), right: true }] })), 8.5, 13);
+    else { nota('Quantidades dentro da tolerância em todas as linhas casadas.', 8.5); y -= 6; }
+    titulo('Por refeição, média dos dias registrados');
+    tabela([M, M + 150, M + 225, M + 300, M + 375, M + 445, W - M], ['Refeição', '>Registrada', '>Plano kcal', '>Comido kcal', '>Plano prot', '>Comido prot'],
+        rs.porRef.map(r => ({ cells: [r.name, { t: r.registradas + ' de ' + r.dias, right: true }, { t: fmtN(r.plano.kcal), right: true }, { t: fmtN(r.comido.kcal), right: true }, { t: fmt(r.plano.prot) + ' g', right: true }, { t: fmt(r.comido.prot) + ' g', right: true }] })), 8.5, 13);
+    nota('Como o comparativo é feito: em cada refeição registrada, o app procura a versão do plano que mais casa com os itens registrados (pelo cadastro do alimento, senão pelo nome) e compara linha a linha; item fora do plano com até 10 kcal e 1 g de proteína (café, creatina, psyllium) e item "à vontade" da versão (tomate, orégano) não contam. "Não registrada" quer dizer sem registro no app, não necessariamente não consumida.', 8);
+    if (nr.rep.notes) { // (reauditoria M3) anotações cabem no que resta da página 2; o excesso sai com "(...)"
+        y -= 6; titulo('Anotações da semana', PDF_BORDA);
+        const linhas = pdfQuebra(nr.rep.notes, 8.5, CW), cabem = Math.max(1, Math.floor((y - d.RODAPE) / 11));
+        const mostra = linhas.length > cabem ? linhas.slice(0, cabem) : linhas;
+        if (linhas.length > cabem) { let u = mostra[mostra.length - 1]; while (u.length > 1 && pdfW(u + ' (...)', 8.5) > CW) u = u.slice(0, -1); mostra[mostra.length - 1] = u + ' (...)'; }
+        mostra.forEach(l => { d.txt(M, y, l, 8.5); y -= 11; });
+    }
+    d.y = y;
+    return d.build('relatório gerado pelo app em ' + formatDataTreino(today()) + ' a partir dos registros diários e do plano importado · não substitui avaliação profissional');
+}
+function exportNutriReport() {
+    if (!D.proPreview) return openProFeature('report');
+    if (!D.dietPlan || !Array.isArray(D.dietPlan.slots)) return toast('Importe o plano da nutricionista primeiro (Ajustes › Importar plano)', true);
+    const startIso = reportWeekStart || weekStartOf(today());
+    const nr = collectNutriReport(startIso);
+    if (!nr) return toast('Não consegui montar o relatório', true);
+    openExportedDoc(buildNutriReportHtml(nr), 'nutricionista-' + startIso + '.html', () => buildNutriReportPdf(nr));
 }
 
 // ========== TREINO — HISTÓRICO DE SESSÕES ==========
