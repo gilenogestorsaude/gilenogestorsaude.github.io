@@ -625,7 +625,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.29.0';
+const APP_VERSION = '1.30.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -4546,6 +4546,10 @@ function restorePlanScroll() {
 // Separado do I/O pra ser testável. Retorna { ok, addedFoods, createdSlots, versions, deactivated, goalsApplied, error }.
 // opts.substituir: refeições do plano ANTERIOR que não voltaram no novo são desligadas (histórico fica).
 // opts.aplicarMetas: copia meta.goals {kcal,prot,carbo,gord,water,sodio} para os dias de treino e de descanso; a faixa {protMin,protMax} entra em par (v1.27.0).
+// v1.30.0 "o plano manda" (regra do CEO 17/09/2026: o usuário nunca ajusta métrica ou cadastro na mão): alimento de newFoods com
+// `atualizar: true` cujo id já existe tem o cadastro ATUALIZADO pelo plano (nome, referência, unidade, kcal, macros, sódio);
+// refeição do plano com `dias: "todos" | "treino" | "descanso"` e/ou `time` tem o campo existente CONFIGURADO. Sem esses
+// campos, o comportamento é o de antes (cadastro existente intocado, campo existente só religado).
 function processDietImport(parsed, opts) {
     opts = opts || {};
     if (!parsed || typeof parsed !== 'object') return { ok: false, error: 'JSON inválido' };
@@ -4576,11 +4580,26 @@ function processDietImport(parsed, opts) {
             else linhasOk(v.lines, `${onde}, versão ${j + 1}`);
         });
     });
+    const DIAS_OK = { todos: 1, treino: 1, descanso: 1 };
+    const diasOk = v => typeof v === 'string' && Object.prototype.hasOwnProperty.call(DIAS_OK, v); // auditoria 17/09: array e "constructor" passavam calados
+    const horaOk = h => typeof h === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(h);
+    parsed.slots.forEach((ps, i) => {
+        if (!ps || typeof ps !== 'object') return;
+        const onde = ps.name || `refeição ${i + 1}`;
+        if (ps.dias != null && !diasOk(ps.dias)) formaRuim.push(onde + ': dias (use "todos", "treino" ou "descanso")');
+        if (ps.time != null && ps.time !== '' && !horaOk(ps.time)) formaRuim.push(onde + ': horário (use HH:MM)');
+    });
     (Array.isArray(parsed.newFoods) ? parsed.newFoods : []).forEach((f, i) => {
         if (!f || typeof f !== 'object') return;
         const quem = 'alimento ' + (f.id || i + 1);
         if (f.ref != null && !(typeof f.ref === 'number' && f.ref > 0)) formaRuim.push(quem + ': referência');
         if (f.sodio != null && !(typeof f.sodio === 'number' && Number.isFinite(f.sodio) && f.sodio >= 0)) formaRuim.push(quem + ': sódio');
+        if (f.atualizar === true) { // cadastro que o plano vai sobrescrever: cada número presente tem de ser número finito >= 0
+            ['kcal', 'prot', 'carbo', 'gord'].forEach(k => { if (f[k] != null && !(typeof f[k] === 'number' && Number.isFinite(f[k]) && f[k] >= 0)) formaRuim.push(quem + ': ' + k); });
+            if (f.unit != null && !(typeof f.unit === 'string' && f.unit.trim())) formaRuim.push(quem + ': unidade');
+            if (f.ref != null && f.unit == null) formaRuim.push(quem + ': referência sem unidade'); // o sódio de dias passados é calculado ao vivo pelo cadastro: referência nova só com a unidade junto
+            if (f.name != null && !(typeof f.name === 'string' && f.name.trim())) formaRuim.push(quem + ': nome');
+        }
     });
     const mgF = parsed.meta && parsed.meta.goals;
     const faixaOk = v => Number.isFinite(+v) && +v > 0; // texto, negativo, NaN e Infinity (1e999 no JSON) ficam de fora
@@ -4602,12 +4621,25 @@ function processDietImport(parsed, opts) {
     });
     if (faltam.size) return { ok: false, error: 'Alimento sem cadastro no plano: ' + Array.from(faltam).slice(0, 5).join(', ') };
 
-    // 1) Alimentos novos — adiciona só os que não existem (preserva edições do usuário)
+    // 1) Alimentos novos — adiciona só os que não existem (preserva edições do usuário), salvo `atualizar: true` (v1.30.0)
     let addedFoods = 0;
+    const atualizados = new Set(); // ids com mudança real (mesmo id 2x no plano conta 1)
     (parsed.newFoods || []).forEach(f => {
         if (!f || !f.id || !f.name) return;
         const sodioOk = typeof f.sodio === 'number' && f.sodio >= 0;
         const existente = D.foods.find(x => x.id === f.id);
+        if (existente && f.atualizar === true) {
+            // v1.30.0: o plano manda no cadastro. Só os campos presentes no plano mudam; conta como atualizado se algo mudou de fato.
+            const antes = JSON.stringify(existente);
+            existente.name = f.name;
+            if (f.ref != null) existente.ref = f.ref;
+            if (f.unit != null) existente.unit = f.unit;
+            ['kcal', 'prot', 'carbo', 'gord'].forEach(k => { if (f[k] != null) existente[k] = +f[k]; });
+            if (f.nota != null) existente.nota = String(f.nota);
+            if (sodioOk) { existente.sodio = f.sodio; existente.sodioFonte = 'plano'; }
+            if (JSON.stringify(existente) !== antes) atualizados.add(f.id);
+            return;
+        }
         if (existente) {
             // v1.26.0: só completa o sódio que falta, na MESMA unidade, escalado para a referência do usuário;
             // nada é sobrescrito e sódio apagado de propósito ('vazio') fica apagado
@@ -4631,10 +4663,12 @@ function processDietImport(parsed, opts) {
 
     // 2) Resolve cada slot do plano → campo real (por id, depois por nome); cria se faltar.
     //    Novos campos entram logo após o último resolvido, preservando a ordem do plano.
-    let createdSlots = 0, totalVersions = 0;
+    let createdSlots = 0, totalVersions = 0, configuredSlots = 0;
     const resolvedSlots = [];
     const reactivated = [];
     let cursor = -1;
+    // v1.30.0: `dias` do plano vira o par treinoOnly/descansoOnly do campo
+    const diasCfg = ps => ps.dias === 'treino' ? { treinoOnly: true, descansoOnly: false } : ps.dias === 'descanso' ? { treinoOnly: false, descansoOnly: true } : ps.dias === 'todos' ? { treinoOnly: false, descansoOnly: false } : null;
     parsed.slots.forEach(ps => {
         if (!ps) return;
         const wantName = normalizeStr(ps.name);
@@ -4646,10 +4680,17 @@ function processDietImport(parsed, opts) {
             cursor = idx;
             // refeição que o plano prescreve volta a aparecer, mesmo que um plano anterior a tenha desligado
             if (D.mealSlots[idx].ativo === false) { D.mealSlots[idx].ativo = true; reactivated.push(D.mealSlots[idx].name); }
+            // v1.30.0: o plano manda na configuração do campo (dias e horário), só quando o plano traz o campo
+            const cfg = diasCfg(ps), slot = D.mealSlots[idx];
+            const antes = JSON.stringify([slot.treinoOnly, slot.descansoOnly, slot.time]);
+            if (cfg) { slot.treinoOnly = cfg.treinoOnly; slot.descansoOnly = cfg.descansoOnly; }
+            if (ps.time) slot.time = ps.time;
+            if (JSON.stringify([slot.treinoOnly, slot.descansoOnly, slot.time]) !== antes) configuredSlots++;
         } else {
             const base = normalizeStr(ps.name).replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').substr(0, 16) || 'refeicao';
             slotId = base + '_' + uid().substr(0, 4);
-            const novo = { id: slotId, name: ps.name, time: ps.time || '', treinoOnly: !!ps.treinoOnly, descansoOnly: !!ps.descansoOnly, ativo: true };
+            const cfgNovo = diasCfg(ps) || { treinoOnly: !!ps.treinoOnly, descansoOnly: !!ps.descansoOnly };
+            const novo = { id: slotId, name: ps.name, time: ps.time || '', treinoOnly: cfgNovo.treinoOnly, descansoOnly: cfgNovo.descansoOnly, ativo: true };
             const at = (cursor >= 0 ? cursor + 1 : D.mealSlots.length);
             D.mealSlots.splice(at, 0, novo);
             cursor = at;
@@ -4699,7 +4740,8 @@ function processDietImport(parsed, opts) {
     D.dietPlan = { meta: meta, slots: resolvedSlots };
     D.planPicks = {};
 
-    return { ok: true, addedFoods: addedFoods, createdSlots: createdSlots, versions: totalVersions, deactivated: deactivated, reactivated: reactivated, goalsApplied: goalsApplied };
+    const updatedFoods = atualizados.size;
+    return { ok: true, addedFoods: addedFoods, updatedFoods: updatedFoods, createdSlots: createdSlots, configuredSlots: configuredSlots, versions: totalVersions, deactivated: deactivated, reactivated: reactivated, goalsApplied: goalsApplied };
 }
 
 function openDietImport() {
@@ -4707,7 +4749,7 @@ function openDietImport() {
     overlay.className = 'modal-overlay';
     overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
     const cur = D.dietPlan
-        ? `<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Plano atual: <strong style="color:var(--text)">${escHtml((D.dietPlan.meta || {}).name || '—')}</strong>. Importar de novo substitui o plano (seus registros de refeição não são afetados).</div>`
+        ? `<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Plano atual: <strong style="color:var(--text)">${escHtml((D.dietPlan.meta || {}).name || '—')}</strong>. Importar de novo substitui o plano (seus registros de refeição não são afetados). Cadastros e campos de refeição que o plano trouxer com configuração são atualizados por ele: nada precisa ser ajustado na mão.</div>`
         : '';
     const chkStyle = 'display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--text2);margin-bottom:10px;cursor:pointer';
     overlay.innerHTML = `
@@ -4752,7 +4794,9 @@ function doDietImport() {
     const ov = document.querySelector('.modal-overlay'); if (ov) ov.remove();
     const partes = [`${res.versions} opção(ões) de refeição`];
     if (res.addedFoods) partes.push(`${res.addedFoods} alimento(s) novo(s)`);
+    if (res.updatedFoods) partes.push(`${res.updatedFoods} cadastro(s) atualizado(s) pelo plano`);
     if (res.createdSlots) partes.push(`${res.createdSlots} campo(s) novo(s)`);
+    if (res.configuredSlots) partes.push(`${res.configuredSlots} campo(s) configurado(s) pelo plano`);
     if (res.reactivated.length) partes.push(`religado(s): ${res.reactivated.join(', ')}`);
     if (res.deactivated.length) partes.push(`desligado(s): ${res.deactivated.join(', ')}`);
     if (res.goalsApplied) partes.push('metas atualizadas');
