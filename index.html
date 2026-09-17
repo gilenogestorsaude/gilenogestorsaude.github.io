@@ -625,7 +625,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.28.2';
+const APP_VERSION = '1.29.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -5088,6 +5088,32 @@ function personalAulasDoMes(d, ym) {
     ((d.personalPlan && d.personalPlan.avulsas) || []).forEach(a => { if (String(a.data || '').slice(0, 7) === ym) out.push({ id: a.id, data: a.data, nome: a.nota || 'Aula avulsa', tipo: 'avulsa' }); });
     return out.sort((a, b) => String(b.data).localeCompare(String(a.data)));
 }
+// v1.29.0: TODOS os treinos do mês, com a marca de cada um (com o personal, sem o personal, avulsa, sem marca), em
+// ordem cronológica. É o que vai na lista detalhada do extrato e do PDF do treino. Lê de `d` (testável), não de D.
+// `com` + `avulsa` são as aulas que o extrato conta (as mesmas de personalAulasDoMes).
+function personalTreinosDoMes(d, ym) {
+    const out = [];
+    (d.treinos || []).forEach(t => {
+        if (String(t.data || '').slice(0, 7) !== ym) return;
+        const st = treinoStats(t);
+        out.push({ id: t.id, data: t.data, nome: t.nome || 'Sessão', tipo: t.personal === true ? 'com' : t.personal === false ? 'sem' : 'semmarca',
+                   duracao: t.duracao || null, exercicios: st.exercicios, series: st.series, volume: st.volume, createdAt: t.createdAt || 0 });
+    });
+    ((d.personalPlan && d.personalPlan.avulsas) || []).forEach(a => { if (String(a.data || '').slice(0, 7) === ym) out.push({ id: a.id, data: a.data, nome: a.nota || 'Aula avulsa', tipo: 'avulsa', duracao: null, exercicios: 0, series: 0, volume: 0, createdAt: a.createdAt || 0 }); });
+    return out.sort((a, b) => String(a.data).localeCompare(String(b.data)) || ((a.createdAt || 0) - (b.createdAt || 0)));
+}
+// Lista detalhada do mês em HTML (extrato exportado e registro de treino): a mesma do PDF. `destaqueId` marca a sessão do registro.
+function personalMesListaHtml(ym, r, st, destaqueId) {
+    const lista = personalTreinosDoMes(D, ym);
+    const sem = lista.filter(a => a.tipo === 'sem').length, semMarca = lista.filter(a => a.tipo === 'semmarca').length;
+    const marca = a => a.tipo === 'com' ? '<span class="pc">AULA COM O PERSONAL</span>' : a.tipo === 'avulsa' ? '<span class="pc">COM O PERSONAL · avulsa</span>' : a.tipo === 'sem' ? '<span class="ps">sem o personal</span>' : '<span class="ps">não marcado</span>';
+    const resumo = `${r.aulas} aula(s) com o personal (${r.aulasApp} pelo app${r.avulsas ? ' + ' + r.avulsas + ' avulsa(s)' : ''}) · ${sem} sem o personal${semMarca ? ' · ' + semMarca + ' sem marca' : ''}`;
+    return `<h2 class="ext">Treinos do mês (${lista.length})</h2>
+<div class="sub">${resumo}</div>
+<table style="${st.tbl}"><tr><th style="${st.th}">Data</th><th style="${st.th}">Sessão</th><th style="${st.th}">Personal</th><th style="${st.th};text-align:center">Ex · séries</th><th style="${st.th};text-align:right">Volume (kg)</th><th style="${st.th};text-align:right">Min</th></tr>
+${lista.map(a => { const dq = !!(destaqueId && a.id === destaqueId); return `<tr${dq ? ' class="pd"' : ''}><td style="${st.td}">${formatDataTreino(a.data)}</td><td style="${st.td}">${escHtml(a.nome)}${dq ? ' <b>(esta sessão)</b>' : ''}</td><td style="${st.td}">${marca(a)}</td><td style="${st.td};text-align:center">${a.tipo === 'avulsa' ? '—' : a.exercicios + ' · ' + a.series}</td><td style="${st.td};text-align:right">${a.tipo === 'avulsa' ? '—' : fmtN(a.volume)}</td><td style="${st.td};text-align:right">${a.duracao ? escHtml(a.duracao) : '—'}</td></tr>`; }).join('') || `<tr><td style="${st.td}" colspan="6">Nenhum treino neste mês</td></tr>`}
+</table>`;
+}
 // Extrato mês a mês do início do acordo até `ateYm` (inclusive). O banco entra, as aulas consomem
 // primeiro o banco e depois as do mês; o que sobra vira banco do mês seguinte; o que passa é extra.
 function personalLedger(d, ateYm) {
@@ -5387,6 +5413,8 @@ function buildPersonalExtratoHtml(ym) {
 body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#0f172a;margin:0;padding:20px;max-width:760px;margin:0 auto;background:#fff}
 h1{font-size:20px;margin:0 0 2px}h2{font-size:14px;margin:18px 0 4px;border-bottom:2px solid #7c3aed;padding-bottom:3px}
 .sub{color:#64748b;font-size:12px}.tot{font-size:14px;font-weight:700;margin-top:10px}.foot{margin-top:24px;padding-top:10px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:10px;text-align:center}
+.pc{color:#5b21b6;font-weight:700}.ps{color:#64748b}tr.pd td{background:#f5f3ff}
+@page{size:A4 portrait;margin:12mm}@media print{body{padding:0;font-size:11px;max-width:none}table{font-size:10.5px}td,th{padding:3px 6px!important}tr{page-break-inside:avoid}}
 </style></head><body>
 ${exportDocChrome()}
 <h1>Gileno Gestão · SAÚDE</h1>
@@ -5401,17 +5429,14 @@ ${exportDocChrome()}
 <tr><td style="${td}">Banco que segue pro mês seguinte</td><td style="${td}">${r.bancoOut} aula(s)</td></tr>
 </table>
 <div class="tot">Valor a acertar no fim do mês: ${fmtBRL(r.valorExtras)}</div>
-<h2>Aulas do mês (${r.aulas})</h2>
-<table style="${tbl}"><tr><th style="${th}">Data</th><th style="${th}">Sessão</th><th style="${th}">Origem</th></tr>
-${r.lista.slice().reverse().map(a => `<tr><td style="${td}">${formatDataTreino(a.data)}</td><td style="${td}">${escHtml(a.nome)}</td><td style="${td}">${a.tipo === 'avulsa' ? 'avulsa' : 'registro do app'}</td></tr>`).join('') || `<tr><td style="${td}" colspan="3">Nenhuma aula neste mês</td></tr>`}
-</table>
-<div class="foot">Gileno Gestão Saúde · extrato gerado pelo app em ${formatDataTreino(today())} · base de conferência entre aluno e personal</div>
+${personalMesListaHtml(ym, r, { tbl, th, td })}
+<div class="foot">Gileno Gestão Saúde · extrato gerado pelo app em ${formatDataTreino(today())} · base de conferência entre aluno e personal · aula com o personal = conta no acordo; sem o personal = treino por conta própria, só para acompanhamento</div>
 </body></html>`;
 }
 function exportPersonalExtrato(ym) {
     const html = buildPersonalExtratoHtml(ym);
     if (!html) return toast('Mês fora do acordo', true);
-    openExportedDoc(html, 'aulas-personal-' + ym + '.html');
+    openExportedDoc(html, 'aulas-personal-' + ym + '.html', () => buildPersonalExtratoPdf(ym));
 }
 
 // Config do treino (Configurações) — ponto de partida; o ajuste fino é no dedo durante a execução.
@@ -8601,6 +8626,7 @@ h1{font-size:20px;margin:0 0 2px}h2{font-size:14px;margin:18px 0 4px;border-bott
 .ban{margin:12px 0 4px;padding:10px 12px;border-radius:8px;font-size:14px;font-weight:800;letter-spacing:.2px}.ban small{display:block;font-size:11px;font-weight:600;opacity:.85;margin-top:2px}
 .ban.com{background:#ede9fe;color:#5b21b6;border:1px solid #c4b5fd}.ban.sem{background:#f1f5f9;color:#334155;border:1px solid #cbd5e1}
 h2.ext{border-bottom-color:#7c3aed}.tot{font-size:14px;font-weight:700;margin-top:10px}
+.pc{color:#5b21b6;font-weight:700}.ps{color:#64748b}tr.pd td{background:#f5f3ff}
 @page{size:A4 portrait;margin:12mm}
 @media print{body{padding:0;font-size:11px;max-width:none}h1{font-size:16px}h2{font-size:12px;margin:9px 0 3px}.sub{font-size:10.5px}.ban{margin:8px 0 2px;padding:6px 10px;font-size:12px}.ban small{font-size:10px}table{font-size:10.5px}td,th{padding:3px 6px!important}.tot{font-size:12px;margin-top:6px}.foot{margin-top:12px}tr{page-break-inside:avoid}}
 </style></head><body>
@@ -8620,7 +8646,7 @@ ${(t.exercicios || []).map(ex => {
 }).join('')}
 </table>
 ${t.notas ? `<h2>📝 Notas</h2><div style="font-size:12px;white-space:pre-wrap;line-height:1.6">${escHtml(t.notas)}</div>` : ''}
-${personalSessionExtratoHtml(pi, td)}
+${personalSessionExtratoHtml(pi, td, th, t.id)}
 <div class="foot">Gileno Gestão Saúde · registro gerado pelo app · não substitui orientação profissional</div>
 </body></html>`;
 }
@@ -8653,8 +8679,8 @@ function personalSessionBannerHtml(t) {
     const txt = i.com ? `🏋️ AULA COM O PERSONAL${i.p && i.p.nome ? ' · ' + escHtml(i.p.nome) : ''}` : '🏠 TREINO SEM O PERSONAL';
     return `<div style="${st};border-radius:10px;padding:10px 12px;margin-bottom:10px"><div style="font-size:13px;font-weight:800;letter-spacing:.2px">${txt}</div><div style="font-size:11px;opacity:.85;margin-top:2px">${i.sub}</div></div>`;
 }
-// Resumo do extrato do mês da sessão, no PDF do treino (mesmos números de buildPersonalExtratoHtml)
-function personalSessionExtratoHtml(pi, td) {
+// Resumo do extrato do mês da sessão + lista detalhada do mês, no registro exportado (mesmos números de buildPersonalExtratoHtml)
+function personalSessionExtratoHtml(pi, td, th, destaqueId) {
     const r = pi && pi.r, p = pi && pi.p;
     if (!r || !p || !pi.marcada) return ''; // só sessão marcada (com ou sem) dentro do acordo
     const tbl = 'width:100%;border-collapse:collapse;font-size:12px;margin-top:6px';
@@ -8664,7 +8690,8 @@ function personalSessionExtratoHtml(pi, td) {
 <tr><td style="${td}"><b>Mensalidade (dia 1)</b><br>${fmtBRL(r.mensalidade)} = ${p.aulasMes} aulas${r.mensalidadePaga ? ' · paga' : ''}</td><td style="${td}"><b>Banco que entrou do mês anterior</b><br>${r.bancoIn} aula(s)</td><td style="${td}"><b>Aulas disponíveis no mês</b><br>${r.disponiveis}</td></tr>
 <tr><td style="${td}"><b>Aulas dadas${pi.emCurso ? ' até aqui' : ''}</b><br>${r.aulas} (${r.aulasApp} pelo app${r.avulsas ? ' + ' + r.avulsas + ' avulsa(s)' : ''})</td><td style="${td}"><b>Aulas extras</b><br>${r.extras} × ${fmtBRL(p.valorExtra)} = <strong>${fmtBRL(r.valorExtras)}</strong>${(r.extras && r.extrasPagos) ? ' · pagas' : ''}</td><td style="${td}"><b>Banco que segue pro mês seguinte</b><br>${r.bancoOut} aula(s)</td></tr>
 </table>
-<div class="tot">Valor a acertar no fim do mês: ${fmtBRL(r.valorExtras)} <span class="sub" style="font-weight:400">· esta sessão ${pi.com ? '<strong>conta</strong>' : '<strong>não conta</strong>'} como aula com o personal · extrato completo: Personal › 📄 Extrato</span></div>`;
+<div class="tot">Valor a acertar no fim do mês: ${fmtBRL(r.valorExtras)} <span class="sub" style="font-weight:400">· esta sessão ${pi.com ? '<strong>conta</strong>' : '<strong>não conta</strong>'} como aula com o personal · abaixo, todos os treinos do mês, com e sem o personal</span></div>
+${personalMesListaHtml(pi.ym, r, { tbl, th, td }, destaqueId)}`;
 }
 
 function exportTreinoSession() {
@@ -8674,11 +8701,13 @@ function exportTreinoSession() {
     openExportedDoc(buildSessionHtml(t), 'treino-' + (t.data || 'sessao') + '.html', () => buildSessionPdf(t));
 }
 
-// ========== PDF DO TREINO GERADO NO APARELHO (v1.28.2) ==========
-// PDF 1.4 mínimo, escrito à mão: 1 página A4, fontes padrão Helvetica/Helvetica-Bold (WinAnsi, nada embutido),
+// ========== PDF GERADO NO APARELHO (v1.28.2; várias páginas desde a v1.29.0) ==========
+// PDF 1.4 mínimo, escrito à mão: páginas A4, fontes padrão Helvetica/Helvetica-Bold (WinAnsi, nada embutido),
 // texto e linhas. Motivo: no app instalado do iOS a folha de impressão não é confiável (16/09/2026); o personal
-// recebe o arquivo pela folha de compartilhamento. Mesmo conteúdo do buildSessionHtml: faixa com/sem personal,
-// tabela de uma linha por exercício, notas e resumo do extrato do mês.
+// recebe o arquivo pela folha de compartilhamento. Registro de treino = página 1 (faixa com/sem personal, tabela
+// de uma linha por exercício, notas, resumo do extrato) + extrato do mês DETALHADO nas páginas seguintes, com todos
+// os treinos do mês marcados com/sem o personal (pedido do CEO 17/09/2026: "reunir em PDF só o treino e o extrato,
+// bem detalhado, mostrando quando o treino for com personal e sem o personal"). O extrato do Personal usa o mesmo escritor.
 const PDF_MAP = { '–': '-', '—': '-', '…': '...', '‘': "'", '’': "'", '“': '"', '”': '"', '→': '->', ' ': ' ', '•': '·' };
 function pdfTxt(s) { // texto em WinAnsi (1 byte por caractere); o que não existe na tabela sai
     let out = '';
@@ -8724,29 +8753,70 @@ function pdfQuebra(s, size, larg) { // quebra em linhas por largura
     });
     return out;
 }
-function buildSessionPdf(t) {
-    const W = 595, H = 842, M = 40, CW = W - 2 * M;
-    const ops = [];
+const PDF_CINZA = '0.39 0.45 0.55 rg', PDF_ROXO = '0.49 0.23 0.93 RG', PDF_ROXO_TXT = '0.36 0.13 0.71 rg', PDF_VERDE = '0.06 0.72 0.51 RG', PDF_BORDA = '0.89 0.91 0.94 RG', PDF_FUNDO = '0.945 0.96 0.975 rg';
+// v1.29.0: escritor de PDF de VÁRIAS páginas (a v1.28.2 escrevia uma só). Cada página é uma lista de operações;
+// o rodapé com "página i de n" entra na montagem, quando o total é conhecido. Coordenadas em pontos, origem embaixo.
+function pdfDoc() {
+    const W = 595, H = 842, M = 40, CW = W - 2 * M, TOPO = H - 48, RODAPE = 60; // RODAPE = altura reservada no pé da página
+    const pages = [];
+    const d = { W, H, M, CW, TOPO, RODAPE, pages, ops: null, y: TOPO };
+    d.newPage = () => { d.ops = []; pages.push(d.ops); d.y = TOPO; return d; };
+    d.txt = (x, y, s, size, bold, cor) => { d.ops.push(`BT /${bold ? 'F2' : 'F1'} ${size} Tf ${cor || '0 0 0 rg'} 1 0 0 1 ${x.toFixed(1)} ${y.toFixed(1)} Tm (${pdfTxt(s)}) Tj ET`); };
+    // célula que não pode perder dado (reps, cargas, marca): encolhe a fonte até caber, nunca corta
+    d.txtFit = (x, y, s, size, maxW, bold, cor) => { const w = pdfW(s, size); d.txt(x, y, s, w > maxW ? Math.max(5, +(size * maxW / w).toFixed(2)) : size, bold, cor); };
+    d.rect = (x, y, w, h, fill, stroke) => { if (fill) d.ops.push(`${fill} ${x.toFixed(1)} ${y.toFixed(1)} ${w.toFixed(1)} ${h.toFixed(1)} re f`); if (stroke) d.ops.push(`${stroke} 0.5 w ${x.toFixed(1)} ${y.toFixed(1)} ${w.toFixed(1)} ${h.toFixed(1)} re S`); };
+    d.line = (x1, y1, x2, y2, cor, w) => { d.ops.push(`${cor || PDF_BORDA} ${w || 0.5} w ${x1.toFixed(1)} ${y1.toFixed(1)} m ${x2.toFixed(1)} ${y2.toFixed(1)} l S`); };
+    // monta o arquivo: rodapé em todas as páginas (texto à esquerda, "página i de n" à direita)
+    d.build = (rodape) => {
+        const n = pages.length;
+        pages.forEach((ops, i) => {
+            d.ops = ops;
+            d.line(M, 46, W - M, 46);
+            const pg = `página ${i + 1} de ${n}`, wpg = pdfW(pg, 7.5);
+            d.txt(M, 34, pdfCorta('Gileno Gestão Saúde · ' + rodape, 7.5, CW - wpg - 12), 7.5, false, PDF_CINZA);
+            d.txt(W - M - wpg, 34, pg, 7.5, false, PDF_CINZA);
+        });
+        // objetos: 1 catálogo, 2 páginas, 3 e 4 fontes, depois (página, conteúdo) por página: 5/6, 7/8, ...
+        const objs = [
+            '<< /Type /Catalog /Pages 2 0 R >>',
+            `<< /Type /Pages /Kids [${pages.map((_, i) => (5 + 2 * i) + ' 0 R').join(' ')}] /Count ${n} >>`,
+            '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
+            '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>'
+        ];
+        pages.forEach((ops, i) => {
+            const stream = ops.join('\n');
+            objs.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${6 + 2 * i} 0 R >>`);
+            objs.push(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
+        });
+        let pdf = '%PDF-1.4\n%\xe2\xe3\xcf\xd3\n';
+        const offs = [];
+        objs.forEach((o, i) => { offs.push(pdf.length); pdf += `${i + 1} 0 obj\n${o}\nendobj\n`; });
+        const xref = pdf.length;
+        pdf += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` + offs.map(o => String(o).padStart(10, '0') + ' 00000 n \n').join('');
+        pdf += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+        return Uint8Array.from(pdf, c => c.charCodeAt(0) & 0xFF);
+    };
+    return d;
+}
+// Página do registro de treino (a página única da v1.28.2): faixa com/sem personal, tabela de uma linha por
+// exercício, notas e resumo do extrato do mês. Geometria pensada para caber em UMA página A4, com guardas de estouro.
+function pdfSessionPage(d, t) {
+    const { W, M, CW } = d;
     const rgb = (r, g, b) => `${r} ${g} ${b} rg`, RGB = (r, g, b) => `${r} ${g} ${b} RG`;
-    const txt = (x, y, s, size, bold, cor) => { ops.push(`BT /${bold ? 'F2' : 'F1'} ${size} Tf ${cor || '0 0 0 rg'} 1 0 0 1 ${x.toFixed(1)} ${y.toFixed(1)} Tm (${pdfTxt(s)}) Tj ET`); };
-    // célula que não pode perder dado (reps, cargas): encolhe a fonte até caber, nunca corta
-    const txtFit = (x, y, s, size, maxW) => { const w = pdfW(s, size); txt(x, y, s, w > maxW ? Math.max(5, +(size * maxW / w).toFixed(2)) : size); };
-    const rect = (x, y, w, h, fill, stroke) => { if (fill) ops.push(`${fill} ${x.toFixed(1)} ${y.toFixed(1)} ${w.toFixed(1)} ${h.toFixed(1)} re f`); if (stroke) ops.push(`${stroke} 0.5 w ${x.toFixed(1)} ${y.toFixed(1)} ${w.toFixed(1)} ${h.toFixed(1)} re S`); };
-    const line = (x1, y1, x2, y2, cor, w) => { ops.push(`${cor || '0.89 0.91 0.94 RG'} ${w || 0.5} w ${x1.toFixed(1)} ${y1.toFixed(1)} m ${x2.toFixed(1)} ${y2.toFixed(1)} l S`); };
-    const cinza = rgb(0.39, 0.45, 0.55), preto = '0 0 0 rg', verde = RGB(0.06, 0.72, 0.51), roxo = RGB(0.49, 0.23, 0.93);
+    const cinza = PDF_CINZA;
     const stat = treinoStats(t), pi = personalSessionInfo(t), nome = D.userName || '';
-    let y = H - 48;
-    txt(M, y, 'Gileno Gestão · SAÚDE', 16, true); y -= 13;
-    txt(M, y, 'Registro de treino' + (nome ? ' · ' + nome : '') + ' · ' + formatDataTreino(t.data), 9.5, false, cinza); y -= 16;
+    let y = d.y;
+    d.txt(M, y, 'Gileno Gestão · SAÚDE', 16, true); y -= 13;
+    d.txt(M, y, 'Registro de treino' + (nome ? ' · ' + nome : '') + ' · ' + formatDataTreino(t.data), 9.5, false, cinza); y -= 16;
     if (pi.com || pi.sem) {
         const fill = pi.com ? rgb(0.93, 0.91, 0.99) : rgb(0.945, 0.96, 0.975), borda = pi.com ? RGB(0.77, 0.71, 0.99) : RGB(0.8, 0.84, 0.88);
-        rect(M, y - 22, CW, 30, fill, borda);
-        txt(M + 10, y - 4, pi.com ? 'AULA COM O PERSONAL' + (pi.p && pi.p.nome ? ' · ' + pi.p.nome : '') : 'TREINO SEM O PERSONAL', 11, true, pi.com ? rgb(0.36, 0.13, 0.71) : rgb(0.2, 0.25, 0.33));
-        txt(M + 10, y - 16, pi.sub, 8.5, false, pi.com ? rgb(0.36, 0.13, 0.71) : cinza);
+        d.rect(M, y - 22, CW, 30, fill, borda);
+        d.txt(M + 10, y - 4, pi.com ? 'AULA COM O PERSONAL' + (pi.p && pi.p.nome ? ' · ' + pi.p.nome : '') : 'TREINO SEM O PERSONAL', 11, true, pi.com ? PDF_ROXO_TXT : rgb(0.2, 0.25, 0.33));
+        d.txt(M + 10, y - 16, pi.sub, 8.5, false, pi.com ? PDF_ROXO_TXT : cinza);
         y -= 36;
     }
-    txt(M, y, t.nome || 'Sessão', 13, true); y -= 5; line(M, y, W - M, y, verde, 1.5); y -= 13;
-    txt(M, y, `${stat.exercicios} exercício(s) · ${stat.series} série(s) · ${fmtN(stat.volume)} kg de volume${t.duracao ? ' · ' + t.duracao + ' min' : ''}${pi.com ? ' · aula com o personal' : pi.sem ? ' · sem o personal' : ''}`, 9, false, cinza); y -= 12;
+    d.txt(M, y, t.nome || 'Sessão', 13, true); y -= 5; d.line(M, y, W - M, y, PDF_VERDE, 1.5); y -= 13;
+    d.txt(M, y, `${stat.exercicios} exercício(s) · ${stat.series} série(s) · ${fmtN(stat.volume)} kg de volume${t.duracao ? ' · ' + t.duracao + ' min' : ''}${pi.com ? ' · aula com o personal' : pi.sem ? ' · sem o personal' : ''}`, 9, false, cinza); y -= 12;
     // tabela: uma linha por exercício. Reserva: rodapé (60) + extrato (115, se houver) + notas (mín. 24, se houver).
     const exs = t.exercicios || [];
     const temExtrato = !!(pi.r && pi.p && pi.marcada);
@@ -8756,71 +8826,127 @@ function buildSessionPdf(t) {
     if (exs.length > cabe) { rh = Math.max(9, Math.floor((y - reserva) / (exs.length + 1))); fs = Math.max(6, rh - 2.5); }
     const cols = [M, M + 265, M + 305, M + 400, W - M];
     const cab = ['Exercício', 'Séries', 'Reps', 'Carga (kg)'];
-    rect(M, y - rh, CW, rh, rgb(0.945, 0.96, 0.975), RGB(0.89, 0.91, 0.94));
-    cab.forEach((c, i) => txt(cols[i] + 5, y - rh + 4.5, c, fs, true));
+    d.rect(M, y - rh, CW, rh, PDF_FUNDO, PDF_BORDA);
+    cab.forEach((c, i) => d.txt(cols[i] + 5, y - rh + 4.5, c, fs, true));
     y -= rh;
     const iguais = a => a.length > 0 && a.every(x => x === a[0]);
     exs.forEach(ex => {
         const ss = ex.series || [];
         const reps = ss.map(s => String(s.reps || 0)), cargas = ss.map(s => String(fmtCarga(s.carga)));
         const cel = [pdfCorta(ex.nome || '—', fs, cols[1] - cols[0] - 10), String(ss.length), iguais(reps) ? ss.length + ' × ' + reps[0] : reps.join(' · '), iguais(cargas) ? cargas[0] : cargas.join(' · ')];
-        rect(M, y - rh, CW, rh, null, RGB(0.89, 0.91, 0.94));
-        cel.forEach((c, i) => { if (i >= 2) txtFit(cols[i] + 5, y - rh + 4.5, c, fs, cols[i + 1] - cols[i] - 10); else txt(cols[i] + 5, y - rh + 4.5, c, fs, false); });
+        d.rect(M, y - rh, CW, rh, null, PDF_BORDA);
+        cel.forEach((c, i) => { if (i >= 2) d.txtFit(cols[i] + 5, y - rh + 4.5, c, fs, cols[i + 1] - cols[i] - 10); else d.txt(cols[i] + 5, y - rh + 4.5, c, fs, false); });
         y -= rh;
     });
-    for (let i = 1; i < 4; i++) line(cols[i], y, cols[i], y + rh * (exs.length + 1));
+    for (let i = 1; i < 4; i++) d.line(cols[i], y, cols[i], y + rh * (exs.length + 1));
     y -= 16;
     if (t.notas) {
-        txt(M, y, 'Notas', 11, true); y -= 4; line(M, y, W - M, y, verde, 1.2); y -= 12;
+        d.txt(M, y, 'Notas', 11, true); y -= 4; d.line(M, y, W - M, y, PDF_VERDE, 1.2); y -= 12;
         const linhas = pdfQuebra(t.notas, 9, CW);
         const maxLinhas = Math.max(1, Math.floor((y - 60 - (temExtrato ? 115 : 0)) / 11.5)); // o que cabe acima do extrato e do rodapé
         const mostra = linhas.length > maxLinhas ? linhas.slice(0, maxLinhas) : linhas;
         if (linhas.length > maxLinhas) { let u = mostra[mostra.length - 1]; const marca = ' (...)'; while (u.length > 1 && pdfW(u + marca, 9) > CW) u = u.slice(0, -1); mostra[mostra.length - 1] = u + marca; }
-        mostra.forEach(l => { txt(M, y, l, 9); y -= 11.5; });
+        mostra.forEach(l => { d.txt(M, y, l, 9); y -= 11.5; });
         y -= 4;
     }
-    if (pi.r && pi.p && pi.marcada) {
-        const r = pi.r, p = pi.p;
+    if (temExtrato) {
         const rotulo = pi.emCurso ? ' (mês em curso)' : pi.futuro ? ' (mês futuro)' : '';
-        txt(M, y, pdfCorta('Extrato do mês com o personal' + (p.nome ? ' · ' + p.nome : '') + ' · ' + ymLabel(pi.ym) + rotulo, 11, CW), 11, true); y -= 4; line(M, y, W - M, y, roxo, 1.2); y -= 6;
-        const cel = [
-            ['Mensalidade (dia 1)', `${fmtBRL(r.mensalidade)} = ${p.aulasMes} aulas${r.mensalidadePaga ? ' · paga' : ''}`],
-            ['Banco que entrou do mês anterior', `${r.bancoIn} aula(s)`],
-            ['Aulas disponíveis no mês', String(r.disponiveis)],
-            ['Aulas dadas' + (pi.emCurso ? ' até aqui' : ''), `${r.aulas} (${r.aulasApp} pelo app${r.avulsas ? ' + ' + r.avulsas + ' avulsa(s)' : ''})`],
-            ['Aulas extras', `${r.extras} × ${fmtBRL(p.valorExtra)} = ${fmtBRL(r.valorExtras)}${(r.extras && r.extrasPagos) ? ' · pagas' : ''}`],
-            ['Banco que segue pro mês seguinte', `${r.bancoOut} aula(s)`]
-        ];
-        const cw = CW / 3, ch = 27;
-        for (let k = 0; k < 6; k++) {
-            const cx = M + (k % 3) * cw, cy = y - ch * (Math.floor(k / 3) + 1);
-            rect(cx, cy, cw, ch, null, RGB(0.89, 0.91, 0.94));
-            txt(cx + 5, cy + ch - 10, pdfCorta(cel[k][0], 8, cw - 10), 8, true);
-            txt(cx + 5, cy + 5, pdfCorta(cel[k][1], 8.5, cw - 10), 8.5);
-        }
-        y -= ch * 2 + 13;
-        txt(M, y, 'Valor a acertar no fim do mês: ' + fmtBRL(r.valorExtras), 10, true); y -= 12;
-        txt(M, y, 'Esta sessão ' + (pi.com ? 'CONTA' : 'NÃO CONTA') + ' como aula com o personal · extrato completo: Personal > Extrato', 8.5, false, cinza); y -= 8;
+        y = pdfExtratoResumo(d, y, pi.r, pi.p, pi.emCurso, 'Extrato do mês com o personal' + (pi.p.nome ? ' · ' + pi.p.nome : '') + ' · ' + ymLabel(pi.ym) + rotulo);
+        d.txt(M, y, 'Esta sessão ' + (pi.com ? 'CONTA' : 'NÃO CONTA') + ' como aula com o personal · todos os treinos do mês, com e sem o personal, na página seguinte', 8.5, false, cinza); y -= 8;
     }
-    txt(M, 34, pdfCorta('Gileno Gestão Saúde · registro gerado pelo app em ' + formatDataTreino(today()) + ' · não substitui orientação profissional', 7.5, CW), 7.5, false, cinza);
-    line(M, 46, W - M, 46);
-    // monta o arquivo
-    const stream = ops.join('\n');
-    const objs = [
-        '<< /Type /Catalog /Pages 2 0 R >>',
-        '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-        `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>`,
-        '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
-        '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>',
-        `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`
+    d.y = y;
+}
+// Resumo do mês com o personal em 2 linhas × 3 colunas + "Valor a acertar" (os mesmos números de buildPersonalExtratoHtml)
+function pdfExtratoResumo(d, y, r, p, emCurso, titulo) {
+    const { W, M, CW } = d;
+    d.txt(M, y, pdfCorta(titulo, 11, CW), 11, true); y -= 4; d.line(M, y, W - M, y, PDF_ROXO, 1.2); y -= 6;
+    const cel = [
+        ['Mensalidade (dia 1)', `${fmtBRL(r.mensalidade)} = ${p.aulasMes} aulas${r.mensalidadePaga ? ' · paga' : ''}`],
+        ['Banco que entrou do mês anterior', `${r.bancoIn} aula(s)`],
+        ['Aulas disponíveis no mês', String(r.disponiveis)],
+        ['Aulas dadas' + (emCurso ? ' até aqui' : ''), `${r.aulas} (${r.aulasApp} pelo app${r.avulsas ? ' + ' + r.avulsas + ' avulsa(s)' : ''})`],
+        ['Aulas extras', `${r.extras} × ${fmtBRL(p.valorExtra)} = ${fmtBRL(r.valorExtras)}${(r.extras && r.extrasPagos) ? ' · pagas' : ''}`],
+        ['Banco que segue pro mês seguinte', `${r.bancoOut} aula(s)`]
     ];
-    let pdf = '%PDF-1.4\n%\xe2\xe3\xcf\xd3\n';
-    const offs = [];
-    objs.forEach((o, i) => { offs.push(pdf.length); pdf += `${i + 1} 0 obj\n${o}\nendobj\n`; });
-    const xref = pdf.length;
-    pdf += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` + offs.map(o => String(o).padStart(10, '0') + ' 00000 n \n').join('');
-    pdf += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
-    return Uint8Array.from(pdf, c => c.charCodeAt(0) & 0xFF);
+    const cw = CW / 3, ch = 27;
+    for (let k = 0; k < 6; k++) {
+        const cx = M + (k % 3) * cw, cy = y - ch * (Math.floor(k / 3) + 1);
+        d.rect(cx, cy, cw, ch, null, PDF_BORDA);
+        d.txt(cx + 5, cy + ch - 10, pdfCorta(cel[k][0], 8, cw - 10), 8, true);
+        d.txt(cx + 5, cy + 5, pdfCorta(cel[k][1], 8.5, cw - 10), 8.5);
+    }
+    y -= ch * 2 + 13;
+    d.txt(M, y, 'Valor a acertar no fim do mês: ' + fmtBRL(r.valorExtras), 10, true); y -= 12;
+    return y;
+}
+// Extrato do mês, detalhado: resumo + lista de TODOS os treinos do mês com a marca de cada um (aula com o personal,
+// sem o personal, avulsa, sem marca). Começa na página corrente (vazia) e continua em páginas novas se a lista não
+// couber, repetindo o cabeçalho da tabela. Usado pelo PDF do treino (páginas seguintes, sessão em destaque) e pelo
+// extrato do Personal (documento próprio). Devolve false se o mês está fora do acordo.
+function pdfExtratoPages(d, ym, opts) {
+    opts = opts || {};
+    const { W, M, CW } = d;
+    const cinza = PDF_CINZA;
+    const p = normalizePersonalPlan(D.personalPlan);
+    const hoje = today().slice(0, 7);
+    const rows = personalLedger(D, ym > hoje ? ym : hoje);
+    const r = rows.find(x => x.ym === ym);
+    if (!r) return false;
+    const nome = D.userName || '';
+    const emCurso = ym === hoje, futuro = ym > hoje;
+    const rotulo = emCurso ? ' (mês em curso)' : futuro ? ' (mês futuro)' : '';
+    let y = d.y;
+    d.txt(M, y, 'Gileno Gestão · SAÚDE', 16, true); y -= 13;
+    d.txt(M, y, pdfCorta('Extrato de aulas com o personal' + (p.nome ? ' · ' + p.nome : '') + (nome ? ' · aluno: ' + nome : '') + ' · ' + ymLabel(ym) + rotulo, 9.5, CW), 9.5, false, cinza); y -= 20;
+    y = pdfExtratoResumo(d, y, r, p, emCurso, 'Resumo do mês');
+    y -= 6;
+    const lista = personalTreinosDoMes(D, ym);
+    const sem = lista.filter(a => a.tipo === 'sem').length, semMarca = lista.filter(a => a.tipo === 'semmarca').length;
+    d.txt(M, y, `Treinos do mês (${lista.length})`, 11, true); y -= 4; d.line(M, y, W - M, y, PDF_ROXO, 1.2); y -= 12;
+    d.txt(M, y, pdfCorta(`${r.aulas} aula(s) com o personal (${r.aulasApp} pelo app${r.avulsas ? ' + ' + r.avulsas + ' avulsa(s)' : ''}) · ${sem} sem o personal${semMarca ? ' · ' + semMarca + ' sem marca' : ''}`, 8.5, CW), 8.5, false, cinza); y -= 10;
+    const cols = [M, M + 58, M + 238, M + 366, M + 421, M + 483, W - M]; // Data | Sessão | Personal | Ex · séries | Volume | Min
+    const cab = ['Data', 'Sessão', 'Personal', 'Ex · séries', 'Volume (kg)', 'Min'];
+    const rh = 15, fs = 8.5;
+    const cabecalho = () => { d.rect(M, y - rh, CW, rh, PDF_FUNDO, PDF_BORDA); cab.forEach((c, i) => d.txt(cols[i] + 5, y - rh + 4.5, c, fs, true)); y -= rh; };
+    cabecalho();
+    let topo = y + rh; // topo da tabela nesta página, para as linhas verticais
+    const fecha = (ate) => { for (let i = 1; i < cols.length - 1; i++) d.line(cols[i], ate, cols[i], topo); };
+    if (!lista.length) { d.rect(M, y - rh, CW, rh, null, PDF_BORDA); d.txt(M + 5, y - rh + 4.5, 'Nenhum treino neste mês', fs); y -= rh; }
+    lista.forEach(a => {
+        if (y - rh < d.RODAPE) { fecha(y); d.newPage(); y = d.y; cabecalho(); topo = y + rh; }
+        const destaque = !!(opts.destaqueId && a.id === opts.destaqueId);
+        const com = a.tipo === 'com' || a.tipo === 'avulsa';
+        const marca = a.tipo === 'com' ? 'AULA COM O PERSONAL' : a.tipo === 'avulsa' ? 'COM O PERSONAL · avulsa' : a.tipo === 'sem' ? 'sem o personal' : 'não marcado';
+        d.rect(M, y - rh, CW, rh, destaque ? '0.96 0.95 1 rg' : null, PDF_BORDA);
+        d.txt(cols[0] + 5, y - rh + 4.5, formatDataTreino(a.data), fs, destaque);
+        // nome cortado só se não couber na coluna; com o marcador da sessão em destaque, a fonte encolhe em vez de cortar
+        const mk = destaque ? ' (esta sessão)' : '', wSes = cols[2] - cols[1] - 10;
+        d.txtFit(cols[1] + 5, y - rh + 4.5, pdfCorta(a.nome, fs, wSes) + mk, fs, wSes, destaque);
+        d.txtFit(cols[2] + 5, y - rh + 4.5, marca, fs, cols[3] - cols[2] - 10, com, com ? PDF_ROXO_TXT : cinza);
+        d.txt(cols[3] + 5, y - rh + 4.5, a.tipo === 'avulsa' ? '-' : a.exercicios + ' · ' + a.series, fs);
+        d.txt(cols[4] + 5, y - rh + 4.5, a.tipo === 'avulsa' ? '-' : fmtN(a.volume), fs);
+        d.txt(cols[5] + 5, y - rh + 4.5, a.duracao ? String(a.duracao) : '-', fs);
+        y -= rh;
+    });
+    fecha(lista.length ? y : y + rh); // mês sem treino: as verticais param no cabeçalho, sem cortar "Nenhum treino neste mês"
+    y -= 14;
+    d.y = y;
+    return true;
+}
+// PDF do registro de treino: página 1 = a sessão; se ela está marcada (com ou sem personal) dentro do acordo, as
+// páginas seguintes trazem o extrato do mês detalhado com esta sessão em destaque.
+function buildSessionPdf(t) {
+    const d = pdfDoc().newPage();
+    pdfSessionPage(d, t);
+    const pi = personalSessionInfo(t);
+    if (pi.r && pi.p && pi.marcada) { d.newPage(); pdfExtratoPages(d, pi.ym, { destaqueId: t.id }); }
+    return d.build('registro gerado pelo app em ' + formatDataTreino(today()) + ' · não substitui orientação profissional');
+}
+// PDF do extrato do mês (Personal › 📄 Extrato › 📄 PDF): o mesmo conteúdo das páginas seguintes do PDF do treino
+function buildPersonalExtratoPdf(ym) {
+    const d = pdfDoc().newPage();
+    if (!pdfExtratoPages(d, ym, {})) return null;
+    return d.build('extrato gerado pelo app em ' + formatDataTreino(today()) + ' · base de conferência entre aluno e personal');
 }
 
 // ========== TREINO — HISTÓRICO DE SESSÕES ==========
