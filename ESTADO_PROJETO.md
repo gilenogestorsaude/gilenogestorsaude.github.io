@@ -1,7 +1,7 @@
 # Estado do Projeto — Gestão Saúde
 
 **Última atualização:** 2026-09-17 (parte 23, sessão no Mac mini)
-**Versão atual em produção:** v1.31.0 (Relatório para a nutricionista: plano × comido em PDF semanal; commitada 17/09, publicação com ok do CEO, ver parte 23) sobre a v1.30.0 ("o plano manda"; no ar 17/09 15h01, ver parte 22) sobre a v1.29.0 (PDF do treino com o extrato detalhado do mês + extrato em PDF; no ar 17/09 12h02, ver parte 21) sobre a v1.28.2 (PDF gerado no aparelho + impressão por navegação real, 16/09 08h41) e a v1.28.0 (sincronização segura entre cópias: revisão + junção de 3 vias + escuta do documento, no ar 16/09 07h23), push do Mac mini pela deploy key com ok do CEO (ver parte 20). Antes: v1.27.0 (15/09 16h4x), v1.26.0 (14/09 18h08), v1.25.2 (14/09 14h07), v1.25.1 (14/09 09h07), v1.25.0 (14/09 08h07), v1.24.0 (02/09).
+**Versão atual em produção:** v1.31.0 (Relatório para a nutricionista: plano × comido em PDF semanal de 2 páginas; no ar 17/09 19h15, push do Mac mini com ok do CEO, ver parte 23) sobre a v1.30.0 ("o plano manda"; no ar 17/09 15h01, ver parte 22) sobre a v1.29.0 (PDF do treino com o extrato detalhado do mês + extrato em PDF; no ar 17/09 12h02, ver parte 21) sobre a v1.28.2 (PDF gerado no aparelho + impressão por navegação real, 16/09 08h41) e a v1.28.0 (sincronização segura entre cópias: revisão + junção de 3 vias + escuta do documento, no ar 16/09 07h23), push do Mac mini pela deploy key com ok do CEO (ver parte 20). Antes: v1.27.0 (15/09 16h4x), v1.26.0 (14/09 18h08), v1.25.2 (14/09 14h07), v1.25.1 (14/09 09h07), v1.25.0 (14/09 08h07), v1.24.0 (02/09).
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
