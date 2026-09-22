@@ -1,7 +1,7 @@
 # Estado do Projeto — Gestão Saúde
 
 **Última atualização:** 2026-09-17 (parte 23, sessão no Mac mini)
-**Versão atual em produção:** v1.31.0 (Relatório para a nutricionista: plano × comido em PDF semanal de 2 páginas; no ar 17/09 19h15, push do Mac mini com ok do CEO, ver parte 23) sobre a v1.30.0 ("o plano manda"; no ar 17/09 15h01, ver parte 22) sobre a v1.29.0 (PDF do treino com o extrato detalhado do mês + extrato em PDF; no ar 17/09 12h02, ver parte 21) sobre a v1.28.2 (PDF gerado no aparelho + impressão por navegação real, 16/09 08h41) e a v1.28.0 (sincronização segura entre cópias: revisão + junção de 3 vias + escuta do documento, no ar 16/09 07h23), push do Mac mini pela deploy key com ok do CEO (ver parte 20). Antes: v1.27.0 (15/09 16h4x), v1.26.0 (14/09 18h08), v1.25.2 (14/09 14h07), v1.25.1 (14/09 09h07), v1.25.0 (14/09 08h07), v1.24.0 (02/09).
+**Versão atual em produção:** v1.32.0 (página 2 do PDF do treino e extrato do Personal com TODOS os dias do mês, "Descanso" nos dias sem treino e gráfico de evolução; 22/09, push do Mac mini com ok do CEO, ver parte 24) sobre a v1.31.0 (Relatório para a nutricionista: plano × comido em PDF semanal de 2 páginas; no ar 17/09 19h15, ver parte 23) sobre a v1.30.0 ("o plano manda"; no ar 17/09 15h01, ver parte 22) sobre a v1.29.0 (PDF do treino com o extrato detalhado do mês + extrato em PDF; no ar 17/09 12h02, ver parte 21) sobre a v1.28.2 (PDF gerado no aparelho + impressão por navegação real, 16/09 08h41) e a v1.28.0 (sincronização segura entre cópias: revisão + junção de 3 vias + escuta do documento, no ar 16/09 07h23), push do Mac mini pela deploy key com ok do CEO (ver parte 20). Antes: v1.27.0 (15/09 16h4x), v1.26.0 (14/09 18h08), v1.25.2 (14/09 14h07), v1.25.1 (14/09 09h07), v1.25.0 (14/09 08h07), v1.24.0 (02/09).
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
@@ -1123,3 +1123,14 @@ Não relacionados a Gestão Saúde, mas anotados pra você não perder:
 - **VPS 2.0'-D** (`~/Documents/Gileno_Gestao/VPS_Diagnostico/`): instalação CC nativo na VPS Hostinger. Pausada na Fase C (briefing executável pronto, falta executar token longa-duração + smoke DW). Decisão pendente sobre como resolver coleta automatizada do Lado B (extratos bancários) da conciliação Agrodel.
 
 - **Wait state Andressa Chianca:** aguardando resposta dela sobre whitelist IP + CA cert + adesão Bitwarden Send. Email enviado em 22/05 18:05. Deadline 26/05.
+
+## Parte 24 — v1.32.0: todos os dias do mês e gráfico de evolução no extrato do personal (22/09/2026, sessão no Mac mini)
+
+Pedido do CEO 22/09: na página 2 do PDF do treino, todos os dias do mês (inclusive sábado e domingo), "Descanso" nos dias sem treino que o app marca como descanso, e logo abaixo um gráfico evolutivo.
+
+- `personalDiasDoMes(d, ym, hojeDt)`: dia 1 ao último; dia com treino = uma linha por treino (os mesmos de `personalTreinosDoMes`); dia sem treino = uma linha `descanso` (D.dayType ou domingo padrão de getDayType), `semtreino` (dia de treino passado sem sessão), `hoje` (dia corrente de treino ainda sem sessão: "hoje (dia em andamento)") ou `futuro` (em branco; vira descanso só se marcado à mão). `personalDiasResumo` dá o texto do resumo (conta descanso e sem treino; `hoje` não conta).
+- Gráfico: `evolucaoMesDados` (uma coluna por dia, volume empilhado por sessão, roxo = com o personal, cinza = sem, traço roxo na base = avulsa, coluna sombreada = descanso, sáb/dom em negrito), escala `evolucaoEscala`, tudo em mil kg (`fmtMilKg`, `fmtMilKgBarra` mostra "<0,1" abaixo de 50 kg). PDF: `pdfEvolucaoMes` (PDF_EVOL_H 134); HTML: `evolucaoMesSvg`.
+- `pdfExtratoPages`: altura da linha se ajusta para tabela + gráfico caberem numa página (15 a 10,5 pt); se não couber, a tabela continua na página seguinte e o gráfico vem depois. Linhas de dia sem treino sem verticais internas. Coluna Min por `pdfDuracaoCabe` (pior caso real da Helvetica: 0,56 em dígito, 1,02 em o resto).
+- Página 1 muda só a frase que aponta para a página seguinte. Extrato (ledger) inalterado.
+- APP_VERSION/CACHE_VERSION 1.32.0. Kit: `~/Gestao_Saude_Dados/kits/v130_bancada/v132/` (patch_v132.py, harness/verify_v132.js 34/34, roda.py, auditoria1 a 5).
+- Auditoria: 5 rodadas independentes; 1ª a 4ª aprovadas com ressalvas (hoje como "sem treino", unidades do gráfico, "0,0", duração longa e letra larga), todas curadas; 5ª APROVADA sem ressalva (91.896 casos de largura, regressão idêntica). Pré-existente, fora do escopo (decisão do CEO: v1.32.1): nome da sessão/personal/aluno, reps e cargas com muitas séries e palavra gigante nas notas podem passar da margem com texto extremo (pdfW subestima maiúscula larga e negrito).

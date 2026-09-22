@@ -625,7 +625,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.31.0';
+const APP_VERSION = '1.32.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -5146,17 +5146,102 @@ function personalTreinosDoMes(d, ym) {
     ((d.personalPlan && d.personalPlan.avulsas) || []).forEach(a => { if (String(a.data || '').slice(0, 7) === ym) out.push({ id: a.id, data: a.data, nome: a.nota || 'Aula avulsa', tipo: 'avulsa', duracao: null, exercicios: 0, series: 0, volume: 0, createdAt: a.createdAt || 0 }); });
     return out.sort((a, b) => String(a.data).localeCompare(String(b.data)) || ((a.createdAt || 0) - (b.createdAt || 0)));
 }
+// v1.32.0 (pedido do CEO 22/09/2026): TODOS os dias do mês, do dia 1 ao último, inclusive sábados e domingos, em ordem.
+// Dia com treino (sessão do app ou aula avulsa) = uma linha por treino (estado 'treino', com os campos de
+// personalTreinosDoMes). Dia sem treino = UMA linha: 'descanso' quando o app marca descanso nesse dia (escolha do
+// usuário em D.dayType ou o domingo padrão de getDayType), 'semtreino' quando o dia era de treino e nada foi
+// registrado, 'hoje' para o dia corrente de treino ainda sem sessão, 'futuro' para dia que ainda não chegou (só vira
+// 'descanso' se o usuário já marcou à mão).
+// Lê de `d` (testável); `hojeDt` = 'AAAA-MM-DD' de referência.
+function diasNoMes(ym) { const [y, m] = String(ym).split('-').map(Number); return new Date(y, m, 0).getDate(); }
+function personalDiasDoMes(d, ym, hojeDt) {
+    const lista = personalTreinosDoMes(d, ym);
+    const dayType = d.dayType || {};
+    const out = [];
+    for (let i = 1, n = diasNoMes(ym); i <= n; i++) {
+        const dt = ym + '-' + String(i).padStart(2, '0');
+        const doDia = lista.filter(a => String(a.data || '').slice(0, 10) === dt);
+        if (doDia.length) { doDia.forEach(a => out.push(Object.assign({ dia: dt, estado: 'treino' }, a))); continue; }
+        const marcado = dayType[dt];
+        const tipoDia = marcado || (getDayOfWeek(dt) === 0 ? 'descanso' : 'treino');
+        const estado = tipoDia === 'descanso' && (dt <= hojeDt || marcado === 'descanso') ? 'descanso'
+                     : dt > hojeDt ? 'futuro' : dt === hojeDt ? 'hoje' : 'semtreino'; // hoje ainda não acabou: não é "sem treino"
+        out.push({ dia: dt, data: dt, estado });
+    }
+    return out;
+}
+// Contagens da lista de dias (mesmo texto no HTML e no PDF)
+function personalDiasResumo(dias, r) {
+    const tr = dias.filter(x => x.estado === 'treino');
+    const sem = tr.filter(a => a.tipo === 'sem').length, semMarca = tr.filter(a => a.tipo === 'semmarca').length;
+    const desc = dias.filter(x => x.estado === 'descanso').length, semTreino = dias.filter(x => x.estado === 'semtreino').length;
+    return { treinos: tr.length, sem, semMarca, desc, semTreino,
+             texto: `${r.aulas} aula(s) com o personal (${r.aulasApp} pelo app${r.avulsas ? ' + ' + r.avulsas + ' avulsa(s)' : ''}) · ${sem} sem o personal${semMarca ? ' · ' + semMarca + ' sem marca' : ''} · ${desc} dia(s) de descanso${semTreino ? ' · ' + semTreino + ' sem treino registrado' : ''}` };
+}
+// Gráfico de evolução do mês: uma coluna por dia, barra = volume (kg) do dia, empilhada se houve mais de uma sessão;
+// roxo = com o personal, cinza = sem o personal; aula avulsa (sem volume no app) = traço roxo na base; dia de descanso =
+// coluna sombreada. Geometria comum ao PDF e ao SVG do HTML (escala "redonda" acima do maior volume do mês).
+function evolucaoEscala(max) {
+    if (!(max > 0)) return 1000;
+    const p = Math.pow(10, Math.floor(Math.log10(max)));
+    for (const f of [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) if (f * p >= max) return f * p;
+    return 10 * p;
+}
+function evolucaoMesDados(dias, ym) {
+    const n = diasNoMes(ym), cols = [];
+    for (let i = 1; i <= n; i++) {
+        const dt = ym + '-' + String(i).padStart(2, '0');
+        const itens = dias.filter(x => x.dia === dt);
+        const tr = itens.filter(x => x.estado === 'treino');
+        cols.push({ dt, dia: i, dow: getDayOfWeek(dt), descanso: itens.some(x => x.estado === 'descanso'), futuro: itens.some(x => x.estado === 'futuro'),
+                    barras: tr.filter(x => x.tipo !== 'avulsa' && (x.volume || 0) > 0).map(x => ({ v: x.volume, com: x.tipo === 'com' })),
+                    avulsa: tr.some(x => x.tipo === 'avulsa'), volume: tr.reduce((s, x) => s + (x.tipo === 'avulsa' ? 0 : (x.volume || 0)), 0) });
+    }
+    return { cols, topo: evolucaoEscala(Math.max(0, ...cols.map(c => c.volume))) };
+}
+const fmtMilKg = v => (Math.round(v / 100) / 10).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+// rótulo sobre a barra: volume positivo abaixo de 50 kg arredondaria para "0,0"; mostra "<0,1"
+const fmtMilKgBarra = v => (v > 0 && v < 50) ? '<0,1' : fmtMilKg(v);
+function evolucaoMesSvg(dias, ym) {
+    const { cols, topo } = evolucaoMesDados(dias, ym);
+    const W = 640, gx = 44, gw = W - gx - 4, gh = 110, top = 14, base = top + gh, cw = gw / cols.length, bw = Math.min(14, cw * 0.62);
+    let s = `<svg viewBox="0 0 ${W} ${base + 16}" width="100%" style="display:block;margin-top:6px;font-family:inherit" role="img" aria-label="Volume de treino por dia do mês">`;
+    [0, 0.5, 1].forEach(f => { const yy = base - gh * f; s += `<line x1="${gx}" x2="${gx + gw}" y1="${yy}" y2="${yy}" stroke="#e2e8f0"/><text x="${gx - 4}" y="${yy + 3}" font-size="9" text-anchor="end" fill="#64748b">${fmtMilKg(topo * f)}</text>`; });
+    cols.forEach((c, k) => {
+        const cx = gx + cw * k;
+        if (c.descanso) s += `<rect x="${(cx + 0.5).toFixed(1)}" y="${top}" width="${(cw - 1).toFixed(1)}" height="${gh}" fill="#eef2f7"/>`;
+        let yy = base;
+        c.barras.forEach(b => { const h = gh * b.v / topo; yy -= h; s += `<rect x="${(cx + (cw - bw) / 2).toFixed(1)}" y="${yy.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="${b.com ? '#7c3aed' : '#94a3b8'}"/>`; });
+        if (c.avulsa) { s += `<rect x="${(cx + (cw - bw) / 2).toFixed(1)}" y="${base - 3}" width="${bw.toFixed(1)}" height="3" fill="#7c3aed"/>`; yy = Math.min(yy, base - 3); }
+        if (c.volume > 0) s += `<text x="${(cx + cw / 2).toFixed(1)}" y="${(yy - 2).toFixed(1)}" font-size="8" text-anchor="middle" fill="#64748b">${escHtml(fmtMilKgBarra(c.volume))}</text>`;
+        s += `<text x="${(cx + cw / 2).toFixed(1)}" y="${base + 11}" font-size="9" text-anchor="middle" fill="${c.futuro ? '#cbd5e1' : '#64748b'}"${c.dow === 0 || c.dow === 6 ? ' font-weight="700"' : ''}>${c.dia}</text>`;
+    });
+    s += `<line x1="${gx}" x2="${gx + gw}" y1="${base}" y2="${base}" stroke="#64748b"/></svg>`;
+    const q = cor => `<span style="display:inline-block;width:9px;height:9px;background:${cor};border:1px solid #cbd5e1;box-sizing:border-box;margin:0 3px 0 10px;vertical-align:-1px"></span>`;
+    return s + `<div class="sub" style="font-size:10.5px">${q('#7c3aed')}com o personal${q('#94a3b8')}sem o personal${q('#eef2f7')}descanso · traço roxo na base = aula avulsa (sem volume no app) · sábado e domingo em negrito</div>`;
+}
 // Lista detalhada do mês em HTML (extrato exportado e registro de treino): a mesma do PDF. `destaqueId` marca a sessão do registro.
+// v1.32.0: todos os dias do mês (treino, descanso, sem treino, a vir) + gráfico de evolução.
 function personalMesListaHtml(ym, r, st, destaqueId) {
-    const lista = personalTreinosDoMes(D, ym);
-    const sem = lista.filter(a => a.tipo === 'sem').length, semMarca = lista.filter(a => a.tipo === 'semmarca').length;
+    const dias = personalDiasDoMes(D, ym, today());
+    const rs = personalDiasResumo(dias, r);
     const marca = a => a.tipo === 'com' ? '<span class="pc">AULA COM O PERSONAL</span>' : a.tipo === 'avulsa' ? '<span class="pc">COM O PERSONAL · avulsa</span>' : a.tipo === 'sem' ? '<span class="ps">sem o personal</span>' : '<span class="ps">não marcado</span>';
-    const resumo = `${r.aulas} aula(s) com o personal (${r.aulasApp} pelo app${r.avulsas ? ' + ' + r.avulsas + ' avulsa(s)' : ''}) · ${sem} sem o personal${semMarca ? ' · ' + semMarca + ' sem marca' : ''}`;
-    return `<h2 class="ext">Treinos do mês (${lista.length})</h2>
-<div class="sub">${resumo}</div>
+    const linha = a => {
+        if (a.estado !== 'treino') {
+            const txt = a.estado === 'descanso' ? 'Descanso' : a.estado === 'semtreino' ? 'sem treino registrado' : a.estado === 'hoje' ? 'hoje (dia em andamento)' : '';
+            const bg = a.estado === 'descanso' ? ';background:#f1f5f9' : '';
+            return `<tr><td style="${st.td}${bg}${a.estado === 'futuro' ? ';color:#cbd5e1' : ''}">${formatDataTreino(a.dia)}</td><td style="${st.td}${bg};color:#64748b" colspan="5">${txt}</td></tr>`;
+        }
+        const dq = !!(destaqueId && a.id === destaqueId);
+        return `<tr${dq ? ' class="pd"' : ''}><td style="${st.td}">${formatDataTreino(a.dia)}</td><td style="${st.td}">${escHtml(a.nome)}${dq ? ' <b>(esta sessão)</b>' : ''}</td><td style="${st.td}">${marca(a)}</td><td style="${st.td};text-align:center">${a.tipo === 'avulsa' ? '—' : a.exercicios + ' · ' + a.series}</td><td style="${st.td};text-align:right">${a.tipo === 'avulsa' ? '—' : fmtN(a.volume)}</td><td style="${st.td};text-align:right">${a.duracao ? escHtml(a.duracao) : '—'}</td></tr>`;
+    };
+    return `<h2 class="ext">Todos os dias do mês · ${rs.treinos} treino(s)</h2>
+<div class="sub">${rs.texto}</div>
 <table style="${st.tbl}"><tr><th style="${st.th}">Data</th><th style="${st.th}">Sessão</th><th style="${st.th}">Personal</th><th style="${st.th};text-align:center">Ex · séries</th><th style="${st.th};text-align:right">Volume (kg)</th><th style="${st.th};text-align:right">Min</th></tr>
-${lista.map(a => { const dq = !!(destaqueId && a.id === destaqueId); return `<tr${dq ? ' class="pd"' : ''}><td style="${st.td}">${formatDataTreino(a.data)}</td><td style="${st.td}">${escHtml(a.nome)}${dq ? ' <b>(esta sessão)</b>' : ''}</td><td style="${st.td}">${marca(a)}</td><td style="${st.td};text-align:center">${a.tipo === 'avulsa' ? '—' : a.exercicios + ' · ' + a.series}</td><td style="${st.td};text-align:right">${a.tipo === 'avulsa' ? '—' : fmtN(a.volume)}</td><td style="${st.td};text-align:right">${a.duracao ? escHtml(a.duracao) : '—'}</td></tr>`; }).join('') || `<tr><td style="${st.td}" colspan="6">Nenhum treino neste mês</td></tr>`}
-</table>`;
+${dias.map(linha).join('')}
+</table>
+<h2 class="ext">Evolução do mês · volume de cada dia (mil kg)</h2>
+${evolucaoMesSvg(dias, ym)}`;
 }
 // Extrato mês a mês do início do acordo até `ateYm` (inclusive). O banco entra, as aulas consomem
 // primeiro o banco e depois as do mês; o que sobra vira banco do mês seguinte; o que passa é extra.
@@ -8735,7 +8820,7 @@ function personalSessionExtratoHtml(pi, td, th, destaqueId) {
 <tr><td style="${td}"><b>Mensalidade (dia 1)</b><br>${fmtBRL(r.mensalidade)} = ${p.aulasMes} aulas${r.mensalidadePaga ? ' · paga' : ''}</td><td style="${td}"><b>Banco que entrou do mês anterior</b><br>${r.bancoIn} aula(s)</td><td style="${td}"><b>Aulas disponíveis no mês</b><br>${r.disponiveis}</td></tr>
 <tr><td style="${td}"><b>Aulas dadas${pi.emCurso ? ' até aqui' : ''}</b><br>${r.aulas} (${r.aulasApp} pelo app${r.avulsas ? ' + ' + r.avulsas + ' avulsa(s)' : ''})</td><td style="${td}"><b>Aulas extras</b><br>${r.extras} × ${fmtBRL(p.valorExtra)} = <strong>${fmtBRL(r.valorExtras)}</strong>${(r.extras && r.extrasPagos) ? ' · pagas' : ''}</td><td style="${td}"><b>Banco que segue pro mês seguinte</b><br>${r.bancoOut} aula(s)</td></tr>
 </table>
-<div class="tot">Valor a acertar no fim do mês: ${fmtBRL(r.valorExtras)} <span class="sub" style="font-weight:400">· esta sessão ${pi.com ? '<strong>conta</strong>' : '<strong>não conta</strong>'} como aula com o personal · abaixo, todos os treinos do mês, com e sem o personal</span></div>
+<div class="tot">Valor a acertar no fim do mês: ${fmtBRL(r.valorExtras)} <span class="sub" style="font-weight:400">· esta sessão ${pi.com ? '<strong>conta</strong>' : '<strong>não conta</strong>'} como aula com o personal · abaixo, todos os dias do mês e a evolução</span></div>
 ${personalMesListaHtml(pi.ym, r, { tbl, th, td }, destaqueId)}`;
 }
 
@@ -8897,7 +8982,7 @@ function pdfSessionPage(d, t) {
     if (temExtrato) {
         const rotulo = pi.emCurso ? ' (mês em curso)' : pi.futuro ? ' (mês futuro)' : '';
         y = pdfExtratoResumo(d, y, pi.r, pi.p, pi.emCurso, 'Extrato do mês com o personal' + (pi.p.nome ? ' · ' + pi.p.nome : '') + ' · ' + ymLabel(pi.ym) + rotulo);
-        d.txt(M, y, 'Esta sessão ' + (pi.com ? 'CONTA' : 'NÃO CONTA') + ' como aula com o personal · todos os treinos do mês, com e sem o personal, na página seguinte', 8.5, false, cinza); y -= 8;
+        d.txt(M, y, 'Esta sessão ' + (pi.com ? 'CONTA' : 'NÃO CONTA') + ' como aula com o personal · todos os dias do mês (treino e descanso) e a evolução, na página seguinte', 8.5, false, cinza); y -= 8;
     }
     d.y = y;
 }
@@ -8945,38 +9030,98 @@ function pdfExtratoPages(d, ym, opts) {
     d.txt(M, y, pdfCorta('Extrato de aulas com o personal' + (p.nome ? ' · ' + p.nome : '') + (nome ? ' · aluno: ' + nome : '') + ' · ' + ymLabel(ym) + rotulo, 9.5, CW), 9.5, false, cinza); y -= 20;
     y = pdfExtratoResumo(d, y, r, p, emCurso, 'Resumo do mês');
     y -= 6;
-    const lista = personalTreinosDoMes(D, ym);
-    const sem = lista.filter(a => a.tipo === 'sem').length, semMarca = lista.filter(a => a.tipo === 'semmarca').length;
-    d.txt(M, y, `Treinos do mês (${lista.length})`, 11, true); y -= 4; d.line(M, y, W - M, y, PDF_ROXO, 1.2); y -= 12;
-    d.txt(M, y, pdfCorta(`${r.aulas} aula(s) com o personal (${r.aulasApp} pelo app${r.avulsas ? ' + ' + r.avulsas + ' avulsa(s)' : ''}) · ${sem} sem o personal${semMarca ? ' · ' + semMarca + ' sem marca' : ''}`, 8.5, CW), 8.5, false, cinza); y -= 10;
+    // v1.32.0: todos os dias do mês (treino, descanso, sem treino registrado, a vir) e o gráfico de evolução logo abaixo
+    const dias = personalDiasDoMes(D, ym, today());
+    const rs = personalDiasResumo(dias, r);
+    d.txt(M, y, `Todos os dias do mês · ${rs.treinos} treino(s)`, 11, true); y -= 4; d.line(M, y, W - M, y, PDF_ROXO, 1.2); y -= 12;
+    d.txt(M, y, pdfCorta(rs.texto, 8.5, CW), 8.5, false, cinza); y -= 10;
     const cols = [M, M + 58, M + 238, M + 366, M + 421, M + 483, W - M]; // Data | Sessão | Personal | Ex · séries | Volume | Min
     const cab = ['Data', 'Sessão', 'Personal', 'Ex · séries', 'Volume (kg)', 'Min'];
-    const rh = 15, fs = 8.5;
-    const cabecalho = () => { d.rect(M, y - rh, CW, rh, PDF_FUNDO, PDF_BORDA); cab.forEach((c, i) => d.txt(cols[i] + 5, y - rh + 4.5, c, fs, true)); y -= rh; };
+    // altura da linha: o mês inteiro + o gráfico na mesma página quando cabe (15 pt, encolhe até 10,5); se não
+    // couber nem assim, a tabela segue na página seguinte com o cabeçalho repetido e o gráfico vem depois dela
+    const livre = y - d.RODAPE - PDF_EVOL_H - 16; // 14 do respiro abaixo da tabela + folga
+    const rh = Math.max(10.5, Math.min(15, Math.floor(livre / (dias.length + 1) * 10) / 10));
+    const fs = rh >= 14 ? 8.5 : rh >= 12 ? 8 : 7.5, off = +((rh - fs * 0.72) / 2).toFixed(2);
+    const cabecalho = () => { d.rect(M, y - rh, CW, rh, PDF_FUNDO, PDF_BORDA); cab.forEach((c, i) => d.txt(cols[i] + 5, y - rh + off, c, fs, true)); y -= rh; };
     cabecalho();
     let topo = y + rh; // topo da tabela nesta página, para as linhas verticais
     const fecha = (ate) => { for (let i = 1; i < cols.length - 1; i++) d.line(cols[i], ate, cols[i], topo); };
-    if (!lista.length) { d.rect(M, y - rh, CW, rh, null, PDF_BORDA); d.txt(M + 5, y - rh + 4.5, 'Nenhum treino neste mês', fs); y -= rh; }
-    lista.forEach(a => {
-        if (y - rh < d.RODAPE) { fecha(y); d.newPage(); y = d.y; cabecalho(); topo = y + rh; }
+    let corrido = 0; // > 0 = estamos num bloco de linhas de dia sem treino (as verticais das colunas não atravessam)
+    dias.forEach(a => {
+        if (y - rh < d.RODAPE) { if (corrido === 0) fecha(y); corrido = 0; d.newPage(); y = d.y; cabecalho(); topo = y + rh; }
+        if (a.estado !== 'treino') {
+            // uma linha só: "Descanso" (sombreada), "sem treino registrado" ou vazia (dia que ainda não chegou)
+            const txt = a.estado === 'descanso' ? 'Descanso' : a.estado === 'semtreino' ? 'sem treino registrado' : a.estado === 'hoje' ? 'hoje (dia em andamento)' : '';
+            if (corrido === 0) fecha(y); // fecha as verticais das linhas de treino acima
+            d.rect(M, y - rh, CW, rh, a.estado === 'descanso' ? PDF_DESCANSO : null, PDF_BORDA);
+            d.txt(cols[0] + 5, y - rh + off, formatDataTreino(a.dia), fs, false, a.estado === 'futuro' ? PDF_FUTURO : '0 0 0 rg');
+            if (txt) d.txt(cols[1] + 5, y - rh + off, txt, fs, false, cinza);
+            d.line(cols[1], y - rh, cols[1], y);
+            corrido += rh; topo = y - rh; y -= rh;
+            return;
+        }
+        corrido = 0;
         const destaque = !!(opts.destaqueId && a.id === opts.destaqueId);
         const com = a.tipo === 'com' || a.tipo === 'avulsa';
         const marca = a.tipo === 'com' ? 'AULA COM O PERSONAL' : a.tipo === 'avulsa' ? 'COM O PERSONAL · avulsa' : a.tipo === 'sem' ? 'sem o personal' : 'não marcado';
         d.rect(M, y - rh, CW, rh, destaque ? '0.96 0.95 1 rg' : null, PDF_BORDA);
-        d.txt(cols[0] + 5, y - rh + 4.5, formatDataTreino(a.data), fs, destaque);
+        d.txt(cols[0] + 5, y - rh + off, formatDataTreino(a.dia), fs, destaque);
         // nome cortado só se não couber na coluna; com o marcador da sessão em destaque, a fonte encolhe em vez de cortar
         const mk = destaque ? ' (esta sessão)' : '', wSes = cols[2] - cols[1] - 10;
-        d.txtFit(cols[1] + 5, y - rh + 4.5, pdfCorta(a.nome, fs, wSes) + mk, fs, wSes, destaque);
-        d.txtFit(cols[2] + 5, y - rh + 4.5, marca, fs, cols[3] - cols[2] - 10, com, com ? PDF_ROXO_TXT : cinza);
-        d.txt(cols[3] + 5, y - rh + 4.5, a.tipo === 'avulsa' ? '-' : a.exercicios + ' · ' + a.series, fs);
-        d.txt(cols[4] + 5, y - rh + 4.5, a.tipo === 'avulsa' ? '-' : fmtN(a.volume), fs);
-        d.txt(cols[5] + 5, y - rh + 4.5, a.duracao ? String(a.duracao) : '-', fs);
+        d.txtFit(cols[1] + 5, y - rh + off, pdfCorta(a.nome, fs, wSes) + mk, fs, wSes, destaque);
+        d.txtFit(cols[2] + 5, y - rh + off, marca, fs, cols[3] - cols[2] - 10, com, com ? PDF_ROXO_TXT : cinza);
+        d.txt(cols[3] + 5, y - rh + off, a.tipo === 'avulsa' ? '-' : a.exercicios + ' · ' + a.series, fs);
+        d.txt(cols[4] + 5, y - rh + off, a.tipo === 'avulsa' ? '-' : fmtN(a.volume), fs);
+        d.txt(cols[5] + 5, y - rh + off, ...pdfDuracaoCabe(a.duracao ? String(a.duracao) : '-', fs, cols[6] - cols[5] - 10), false);
         y -= rh;
     });
-    fecha(lista.length ? y : y + rh); // mês sem treino: as verticais param no cabeçalho, sem cortar "Nenhum treino neste mês"
+    if (corrido === 0) fecha(y);
     y -= 14;
+    if (y - PDF_EVOL_H < d.RODAPE) { d.newPage(); y = d.y; }
+    y = pdfEvolucaoMes(d, y, ym, dias);
     d.y = y;
     return true;
+}
+// v1.32.0: gráfico de evolução do mês no PDF (os mesmos dados de evolucaoMesSvg). Devolve o y abaixo da legenda.
+// Duração na coluna Min: pdfW subestima letra larga (W, @, Æ reais passam de 1 em), então aqui a medida é o PIOR caso
+// real da Helvetica: 0,56 em para dígito, ponto, vírgula, hífen e espaço; 1,02 em para o resto. Cabe na fonte da
+// tabela = sai igual; senão encolhe até 5 pt; se nem assim couber, corta com "...". Devolve [texto, fonte].
+function pdfDuracaoCabe(s, fs, larg) {
+    const w = (t, f) => Array.from(t).reduce((acc, c) => acc + (/[0-9.,\- ]/.test(c) ? 0.56 : 1.02) * f, 0);
+    if (w(s, fs) <= larg) return [s, fs];
+    if (w(s, 5) <= larg) return [s, Math.max(5, Math.floor(fs * larg / w(s, fs) * 100) / 100)];
+    const cs = Array.from(s); let n = cs.length;
+    while (n > 0 && w(cs.slice(0, n).join('') + '...', 5) > larg) n--;
+    return [cs.slice(0, n).join('') + '...', 5];
+}
+const PDF_EVOL_H = 134, PDF_DESCANSO = '0.933 0.949 0.969 rg', PDF_FUTURO = '0.8 0.84 0.88 rg';
+function pdfEvolucaoMes(d, y, ym, dias) {
+    const { W, M, CW } = d;
+    const cinza = PDF_CINZA;
+    const { cols, topo } = evolucaoMesDados(dias, ym);
+    d.txt(M, y, 'Evolução do mês · volume de cada dia (mil kg)', 11, true); y -= 4; d.line(M, y, W - M, y, PDF_VERDE, 1.2); y -= 14;
+    const gx = M + 30, gw = CW - 30, gh = 80, base = y - gh, cw = gw / cols.length, bw = Math.min(11, cw * 0.62);
+    cols.forEach((c, k) => { if (c.descanso) d.rect(gx + cw * k + 0.5, base, cw - 1, gh, PDF_DESCANSO, null); });
+    [0, 0.5, 1].forEach(f => { const yy = base + gh * f, lab = fmtMilKg(topo * f); d.line(gx, yy, gx + gw, yy, PDF_BORDA, 0.4); d.txt(gx - 4 - pdfW(lab, 6.5), yy - 2.2, lab, 6.5, false, cinza); });
+    cols.forEach((c, k) => {
+        const cx = gx + cw * k, bx = cx + (cw - bw) / 2;
+        let yy = base;
+        c.barras.forEach(b => { const h = gh * b.v / topo; d.rect(bx, yy, bw, h, b.com ? '0.49 0.23 0.93 rg' : '0.58 0.64 0.72 rg', null); yy += h; });
+        if (c.avulsa) { d.rect(bx, base, bw, 3, '0.49 0.23 0.93 rg', null); yy = Math.max(yy, base + 3); }
+        if (c.volume > 0) { const lab = fmtMilKgBarra(c.volume); d.txt(cx + cw / 2 - pdfW(lab, 5.5) / 2, yy + 2, lab, 5.5, false, cinza); }
+        const fimSem = c.dow === 0 || c.dow === 6, lab = String(c.dia);
+        d.txt(cx + cw / 2 - pdfW(lab, 6.5) * (fimSem ? 1.07 : 1) / 2, base - 9, lab, 6.5, fimSem, c.futuro ? PDF_FUTURO : cinza);
+    });
+    d.line(gx, base, gx + gw, base, '0.39 0.45 0.55 RG', 0.6);
+    y = base - 22;
+    // legenda numa linha: quadradinho + texto
+    let x = M;
+    [['0.49 0.23 0.93 rg', 'com o personal'], ['0.58 0.64 0.72 rg', 'sem o personal'], [PDF_DESCANSO, 'descanso']].forEach(([cor, t]) => {
+        d.rect(x, y - 0.5, 7, 7, cor, cor === PDF_DESCANSO ? PDF_BORDA : null); d.txt(x + 10, y, t, 7, false, cinza); x += 10 + pdfW(t, 7) + 12;
+    });
+    d.txt(x, y, pdfCorta('traço roxo na base = aula avulsa (sem volume no app) · sábado e domingo em negrito', 7, W - M - x), 7, false, cinza);
+    y -= 12;
+    return y;
 }
 // PDF do registro de treino: página 1 = a sessão; se ela está marcada (com ou sem personal) dentro do acordo, as
 // páginas seguintes trazem o extrato do mês detalhado com esta sessão em destaque.
