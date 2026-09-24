@@ -625,7 +625,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.33.0';
+const APP_VERSION = '1.33.1';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -9061,7 +9061,17 @@ function pdfSessionPage(d, t) {
         // a frase só se completa no fim (buildSessionPdf): "na página seguinte" com 2 páginas, "nas páginas seguintes" com mais
         d.fraseP1 = { idx: d.ops.length, x: M, y, txt: 'Esta sessão ' + (pi.com ? 'CONTA' : 'NÃO CONTA') + ' como aula com o personal · ' + (cabem ? 'todos os dias do mês (treino e descanso), ' : 'todos os dias do mês, a evolução e a distribuição (%), ') };
         y -= 8;
-        if (cabem) { y -= 14; y = pdfEvolucaoMes(d, y, pi.ym, dias); y -= 2; y = pdfDistribuicaoMes(d, y, ds, lay); d.graficosNaP1 = true; }
+        if (cabem) {
+            // v1.33.1 (pedido do CEO 24/09/2026): a pizza cresce no espaço que sobra na página 1, até PDF_PIZZA_R_MAX; a legenda
+            // cresce junto e também tem que caber (o bloco nunca passa do que sobrou)
+            const sobra = y - 14 - PDF_EVOL_USA - 2 - lay.h - 0.5 - d.RODAPE; // aqui o y já desceu os 8 pt da frase
+            let layG = lay; // mês sem nada contado não tem pizza: fica a frase no tamanho de sempre
+            if (ds.total > 0) {
+                layG = pdfDistribuicaoLayout(d, ds, Math.max(PDF_PIZZA_R, Math.min(PDF_PIZZA_R_MAX, Math.floor((lay.corpo + sobra) / 2))));
+                while (layG.r > PDF_PIZZA_R && layG.h > lay.h + sobra) layG = pdfDistribuicaoLayout(d, ds, layG.r - 1);
+            }
+            y -= 14; y = pdfEvolucaoMes(d, y, pi.ym, dias); y -= 2; y = pdfDistribuicaoMes(d, y, ds, layG); d.graficosNaP1 = true;
+        }
     }
     d.y = y;
 }
@@ -9231,6 +9241,11 @@ function pdfEvolucaoMes(d, y, ym, dias) {
 // Embaixo da legenda, a base em linhas curtas, quebradas pela largura (nunca cortadas). Mês sem nada = só a frase.
 // A altura do bloco sai do conteúdo (pdfDistribuicaoLayout), para a tabela reservar exatamente o que ele usa.
 const PDF_PIZZA_R = 34, PDF_PIZZA_PASSO = 12.5, PDF_PIZZA_LBASE = 9;
+// v1.33.1 (pedido do CEO 24/09/2026): na página 1 a pizza cresce até ocupar o espaço livre, com teto de PDF_PIZZA_R_MAX; a legenda
+// cresce junto, na escala pdfPizzaEscala (1 no raio base, até 1,2 no teto). Com 2r + 291 × escala <= 515, a legenda nunca passa
+// da margem (a coluna do % fica em lx + 265 × escala, lx = M + 2r + 26 × escala)
+const PDF_PIZZA_R_MAX = 80;
+function pdfPizzaEscala(r) { return 1 + 0.2 * Math.max(0, Math.min(1, (r - PDF_PIZZA_R) / (PDF_PIZZA_R_MAX - PDF_PIZZA_R))); }
 function pdfCor(hex, op) { const v = [1, 3, 5].map(i => +(parseInt(hex.slice(i, i + 2), 16) / 255).toFixed(3)); return v.join(' ') + ' ' + (op || 'rg'); }
 function pdfArco(cx, cy, r, a0, a1) { // curvas do ponto de ângulo a0 ao de a1 (radianos, anti-horário positivo); o ponto inicial já está na pena
     const n = Math.max(1, Math.ceil(Math.abs(a1 - a0) / (Math.PI / 2) - 1e-9)), da = (a1 - a0) / n, k = 4 / 3 * Math.tan(da / 4), f = v => v.toFixed(2);
@@ -9242,17 +9257,20 @@ function pdfArco(cx, cy, r, a0, a1) { // curvas do ponto de ângulo a0 ao de a1 
     }
     return s;
 }
-// geometria do bloco: legenda (linhas de fatia + fio + base) ao lado da pizza, a mais alta das duas manda na altura
-function pdfDistribuicaoLayout(d, ds) {
-    const vivo = ds.total > 0, lx = vivo ? d.M + 2 * PDF_PIZZA_R + 26 : d.M;
-    const linhas = [].concat(...ds.baseLinhas.map(l => pdfQuebra(l, 7.5, d.W - d.M - lx)));
-    const leg = vivo ? ds.fatias.length * PDF_PIZZA_PASSO + 5 + linhas.length * PDF_PIZZA_LBASE : linhas.length * PDF_PIZZA_LBASE;
-    const corpo = vivo ? Math.max(2 * PDF_PIZZA_R, leg) : leg;
-    return { lx, linhas, leg, corpo, h: 12 + corpo + 1 }; // 12 = título e fio verde; 1 = meio traço do contorno e descida da letra (o bloco é sempre o último da página)
+// geometria do bloco: legenda (linhas de fatia + fio + base) ao lado da pizza, a mais alta das duas manda na altura.
+// v1.33.1: `r` (raio) opcional, padrão PDF_PIZZA_R; a legenda escala junto (s = pdfPizzaEscala(r)); no raio base, idêntico à v1.33.0
+function pdfDistribuicaoLayout(d, ds, r) {
+    r = r || PDF_PIZZA_R;
+    const s = pdfPizzaEscala(r), passo = PDF_PIZZA_PASSO * s, fB = +(7.5 * s).toFixed(2), lB = PDF_PIZZA_LBASE * s; // letra com 2 casas, como o txtFit
+    const vivo = ds.total > 0, lx = vivo ? d.M + 2 * r + 26 * s : d.M;
+    const linhas = [].concat(...ds.baseLinhas.map(l => pdfQuebra(l, fB, d.W - d.M - lx)));
+    const leg = vivo ? ds.fatias.length * passo + 5 * s + linhas.length * lB : linhas.length * lB;
+    const corpo = vivo ? Math.max(2 * r, leg) : leg;
+    return { r, s, passo, fB, lB, lx, linhas, leg, corpo, h: 12 + corpo + 1 }; // 12 = título e fio verde; 1 = meio traço do contorno e descida da letra (o bloco é sempre o último da página)
 }
 function pdfDistribuicaoMes(d, y, ds, lay) {
     const { W, M } = d;
-    const cinza = PDF_CINZA, topoBloco = y, r = PDF_PIZZA_R;
+    const cinza = PDF_CINZA, topoBloco = y, r = lay.r || PDF_PIZZA_R, s = lay.s || 1;
     d.txt(M, y, 'Distribuição do mês · treino com e sem o personal e descanso (%)', 11, true); y -= 4; d.line(M, y, W - M, y, PDF_VERDE, 1.2); y -= 8;
     const legTopo = y - (lay.corpo - lay.leg) / 2;
     let ly;
@@ -9263,26 +9281,28 @@ function pdfDistribuicaoMes(d, y, ds, lay) {
         vivas.forEach(f => d.ops.push(`${pdfCor(f.cor)} ${f2(cx)} ${f2(cy)} m ${pt(f.a0)} l${pdfArco(cx, cy, r, f.a0, f.a1)} h f`));
         if (vivas.length > 1) vivas.forEach(f => d.line(cx, cy, cx + r * Math.cos(f.a0), cy + r * Math.sin(f.a0), '1 1 1 RG', 1.5));
         d.ops.push(`0.8 0.84 0.88 RG 0.8 w ${pt(0)} m${pdfArco(cx, cy, r, 0, 2 * Math.PI)} h S`);
-        vivas.forEach(f => { // % dentro da fatia quando cabe, em 7,5 pt ou, se não, 6,5 pt (a legenda ao lado traz todos)
-            for (const fs of [7.5, 6.5]) {
+        const fsA = +Math.min(11.5, 7.5 * r / PDF_PIZZA_R).toFixed(2); // v1.33.1: a letra do % cresce com a pizza (7,5 pt no raio base, até 11,5)
+        vivas.forEach(f => { // % dentro da fatia quando cabe, na letra cheia ou, se não, 1 pt menor (a legenda ao lado traz todos)
+            for (const fs of [fsA, +(fsA - 1).toFixed(2)]) {
                 const w = pctW(f.pct, fs), pos = distribuicaoRotulo(r, f, w, fs * 0.72, 1.5, vivas.length === 1);
                 if (pos) { d.txt(cx + pos[0] - w / 2, cy + pos[1] - fs * 0.36, f.pct, fs, true, pdfCor(f.txt)); break; }
             }
         });
         // legenda: quadradinho + nome | quantidade | %, centrada na altura da pizza; fio fino; base embaixo
-        const lx = lay.lx, cN = lx + 215, cP = lx + 265;
-        ly = legTopo - 8.5;
+        // v1.33.1: tamanhos e posições da legenda multiplicados pela escala s (1 no raio base); espessuras de traço fixas
+        const lx = lay.lx, cN = lx + 215 * s, cP = lx + 265 * s, fL = +(9 * s).toFixed(2);
+        ly = legTopo - 8.5 * s;
         ds.fatias.forEach(f => {
-            d.rect(lx, ly - 0.5, 8, 8, pdfCor(f.cor), '0.8 0.84 0.88 RG');
-            d.txt(lx + 12, ly, pdfCorta(f.rot, 9, cN - lx - 70), 9);
-            d.txt(cN - pdfW(f.qtd, 9), ly, f.qtd, 9);
-            d.txt(cP - pctW(f.pct, 9), ly, f.pct, 9, true);
-            ly -= PDF_PIZZA_PASSO;
+            d.rect(lx, ly - 0.5 * s, 8 * s, 8 * s, pdfCor(f.cor), '0.8 0.84 0.88 RG');
+            d.txt(lx + 12 * s, ly, pdfCorta(f.rot, fL, cN - lx - 70 * s), fL);
+            d.txt(cN - pdfW(f.qtd, fL), ly, f.qtd, fL);
+            d.txt(cP - pctW(f.pct, fL), ly, f.pct, fL, true);
+            ly -= PDF_PIZZA_PASSO * s;
         });
-        d.line(lx, ly + 8, cP, ly + 8, PDF_BORDA, 0.5);
-        ly -= 3.5; // 1ª linha da base 11,5 pt abaixo do fio
-    } else ly = legTopo - 7;
-    lay.linhas.forEach(l => { d.txt(lay.lx, ly, l, 7.5, false, cinza); ly -= PDF_PIZZA_LBASE; });
+        d.line(lx, ly + 8 * s, cP, ly + 8 * s, PDF_BORDA, 0.5);
+        ly -= 3.5 * s; // 1ª linha da base 11,5 pt (× escala) abaixo do fio
+    } else ly = legTopo - 7 * s;
+    lay.linhas.forEach(l => { d.txt(lay.lx, ly, l, lay.fB || 7.5, false, cinza); ly -= PDF_PIZZA_LBASE * s; });
     return topoBloco - lay.h;
 }
 // PDF do registro de treino: página 1 = a sessão (e, v1.33.0, os gráficos do mês quando cabem); se ela está marcada (com ou
