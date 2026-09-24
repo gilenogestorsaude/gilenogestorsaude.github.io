@@ -625,7 +625,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.32.0';
+const APP_VERSION = '1.33.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -5220,8 +5220,121 @@ function evolucaoMesSvg(dias, ym) {
     const q = cor => `<span style="display:inline-block;width:9px;height:9px;background:${cor};border:1px solid #cbd5e1;box-sizing:border-box;margin:0 3px 0 10px;vertical-align:-1px"></span>`;
     return s + `<div class="sub" style="font-size:10.5px">${q('#7c3aed')}com o personal${q('#94a3b8')}sem o personal${q('#eef2f7')}descanso · traço roxo na base = aula avulsa (sem volume no app) · sábado e domingo em negrito</div>`;
 }
-// Lista detalhada do mês em HTML (extrato exportado e registro de treino): a mesma do PDF. `destaqueId` marca a sessão do registro.
-// v1.32.0: todos os dias do mês (treino, descanso, sem treino, a vir) + gráfico de evolução.
+// v1.33.0 (pedido do CEO 24/09/2026): distribuição do mês em % (pizza), contada na MESMA lista de dias da tabela:
+// treino com o personal (sessão marcada ou aula avulsa), treino sem o personal e dia de descanso. Conta só até hoje
+// (`hojeDt`): o dia de hoje entra como na tabela (sessão = treino; descanso marcado ou domingo = descanso) e o dia de
+// treino de hoje ainda sem sessão fica de fora, como tudo o que vem depois. Treino não marcado e dia sem treino
+// registrado NÃO viram descanso nem "sem o personal": entram como fatias próprias, só quando existem. As três fatias
+// pedidas aparecem sempre na legenda (0 = 0,0%). Base = soma das fatias (treinos + dias). Percentual com uma casa
+// pelo maior resto (resto INTEIRO; empate = a ordem das fatias): a soma dá sempre 100,0%. `semDia` = treinos do mês
+// com data que não cai em nenhum dia do calendário (a tabela também não os mostra): nunca somem calados, vão para a base.
+const DISTRIB_CATS = [
+    { k: 'com', rot: 'Treino com o personal', cor: '#7c3aed', txt: '#ffffff', fixa: true },
+    { k: 'sem', rot: 'Treino sem o personal', cor: '#94a3b8', txt: '#1e293b', fixa: true },
+    { k: 'desc', rot: 'Dia de descanso', cor: '#eef2f7', txt: '#334155', fixa: true },
+    { k: 'semmarca', rot: 'Treino não marcado', cor: '#475569', txt: '#ffffff', fixa: false },
+    { k: 'semtreino', rot: 'Dia sem treino registrado', cor: '#f59e0b', txt: '#1e293b', fixa: false }
+];
+function treinosForaDoCalendario(d, ym, dias) { return Math.max(0, personalTreinosDoMes(d, ym).length - dias.filter(x => x.estado === 'treino').length); }
+function distribuicaoMes(dias, hojeDt, semDia) {
+    const hj = hojeDt || '9999-12-31';
+    const conta = dias.filter(x => String(x.dia) <= hj && (x.estado === 'treino' || x.estado === 'descanso' || x.estado === 'semtreino'));
+    const tr = conta.filter(x => x.estado === 'treino');
+    const n = { com: tr.filter(a => a.tipo === 'com' || a.tipo === 'avulsa').length, sem: tr.filter(a => a.tipo === 'sem').length,
+                desc: conta.filter(x => x.estado === 'descanso').length, semmarca: tr.filter(a => a.tipo === 'semmarca').length,
+                semtreino: conta.filter(x => x.estado === 'semtreino').length };
+    const fatias = DISTRIB_CATS.filter(c => c.fixa || n[c.k] > 0).map(c => Object.assign({}, c, { n: n[c.k], decimos: 0 }));
+    const total = fatias.reduce((acc, f) => acc + f.n, 0);
+    if (total > 0) { // décimos de ponto percentual: piso inteiro + 1 para os maiores restos inteiros
+        fatias.forEach(f => { f.decimos = Math.floor(f.n * 1000 / total); });
+        const falta = 1000 - fatias.reduce((acc, f) => acc + f.decimos, 0);
+        fatias.map((f, i) => [(f.n * 1000) % total, i]).sort((a, b) => b[0] - a[0] || a[1] - b[1]).slice(0, falta).forEach(([, i]) => { fatias[i].decimos++; });
+    }
+    let acc = 0; // ângulos em radianos no sentido matemático (anti-horário, 0 = direita): fatia de a0 (topo do setor) até a1, no sentido horário
+    fatias.forEach(f => {
+        f.pct = (f.decimos / 10).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%';
+        f.qtd = f.n + (f.k === 'desc' || f.k === 'semtreino' ? ' dia(s)' : ' treino(s)');
+        if (total > 0 && f.n > 0) { f.a0 = Math.PI / 2 - 2 * Math.PI * acc / total; acc += f.n; f.a1 = Math.PI / 2 - 2 * Math.PI * acc / total; }
+    });
+    // "do dia 1 ao dia N": todo dia antes de hoje sempre conta (treino, descanso ou sem treino registrado), então N é o último contado
+    const ultimo = conta.length ? Number(String(conta[conta.length - 1].dia).slice(8, 10)) : 0;
+    const nDias = dias.length ? diasNoMes(String(dias[0].dia).slice(0, 7)) : 0;
+    const baseLinhas = total
+        ? [`Base: ${total} = ${tr.length} treino(s) + ${n.desc} dia(s) de descanso${n.semtreino ? ' + ' + n.semtreino + ' dia(s) sem treino registrado' : ''}`,
+           `do dia 1 ao dia ${ultimo}${ultimo < nDias ? ' (o resto do mês ainda não conta)' : ''}`]
+        : ['Nenhum treino nem dia de descanso contado no mês até aqui'];
+    if (semDia > 0) baseLinhas.push(`${semDia} treino(s) com data fora do calendário do mês não entram na conta`);
+    return { fatias, total, treinos: tr.length, desc: n.desc, semtreino: n.semtreino, ultimo, baseLinhas, base: baseLinhas.join(', ') };
+}
+// Onde vai o % dentro da fatia: o retângulo do texto (w × h, centrado) tem que caber inteiro no setor, a `folga` da borda
+// e dos dois raios (onde passa o traço branco). Tenta 7 distâncias do centro, da do meio para as pontas; nenhuma cabe =
+// null (o % fica só na legenda).
+// largura REAL do % na Helvetica (normal e negrito iguais aqui): dígito 0,556 em, vírgula 0,278, "%" 0,889 (pdfW subestima o "%")
+function pctW(s, fs) { return Array.from(String(s)).reduce((acc, c) => acc + (c === '%' ? 0.889 : c === ',' ? 0.278 : 0.556), 0) * fs; }
+// largura PESSIMISTA na Helvetica (nunca menor que a real): maiúscula 0,778 em (W 0,944, M 0,833, Æ 1), minúscula
+// 0,556 (m 0,833, w 0,722), minúscula acentuada 0,611 (ß e ø; æ 0,889), dígito 0,556, espaço e pontuação estreita 0,278;
+// qualquer outro caractere 1,015 (o "@", o mais largo da fonte)
+function pdfWPior(s, fs) {
+    let w = 0;
+    for (const ch of String(s || '')) {
+        const c = ch.codePointAt(0);
+        if (' .,:;·'.indexOf(ch) >= 0) w += 0.278;
+        else if (ch >= '0' && ch <= '9') w += 0.556;
+        else if (ch >= 'a' && ch <= 'z') w += ch === 'm' ? 0.833 : ch === 'w' ? 0.722 : 0.556;
+        else if (ch >= 'A' && ch <= 'Z') w += ch === 'W' ? 0.944 : ch === 'M' ? 0.833 : 0.778;
+        else if (c >= 0xC0 && c <= 0xDE && c !== 0xD7) w += c === 0xC6 ? 1 : 0.778;
+        else if (c >= 0xDF && c <= 0xFF && c !== 0xF7) w += c === 0xE6 ? 0.889 : 0.611;
+        else w += 1.015;
+    }
+    return w * fs;
+}
+// largura EXATA da Helvetica normal (tabela AFM da fonte padrão, WinAnsi 32 a 255, em 1/1000 em). Caractere fora da
+// tabela (abaixo de 32, 127 a 159, acima de 255) conta pela medida pessimista, que nunca é menor que o que o pdfTxt
+// escreve no lugar dele ("…" vira "...", "→" vira "->", controle vira espaço, o resto some); o espaço inquebrável, único
+// trocado dentro da tabela, vira espaço comum, com a mesma largura (278). Resultado: nunca menor que o texto impresso.
+const PDF_LARG_HELV = [278,278,355,556,556,889,667,191,333,333,389,584,278,333,278,278,556,556,556,556,556,556,556,556,556,556,278,278,584,584,584,556,1015,667,667,722,722,667,611,778,722,278,500,667,556,833,722,778,667,778,722,667,611,722,667,944,667,667,611,278,278,278,469,556,333,556,556,500,556,556,278,556,556,222,222,500,222,833,556,556,556,556,333,500,278,556,500,722,500,500,500,334,260,334,584,350,556,350,222,556,333,1000,556,556,333,1000,667,333,1000,350,611,350,350,222,222,333,333,350,556,1000,333,1000,500,333,944,350,500,667,278,333,556,556,556,556,260,556,333,737,370,556,584,333,737,333,400,584,333,333,333,556,537,278,333,333,365,556,834,834,834,611,667,667,667,667,667,667,1000,722,667,667,667,667,278,278,278,278,722,722,778,778,778,778,778,584,778,722,722,722,722,667,667,611,556,556,556,556,556,556,889,500,556,556,556,556,278,278,278,278,556,556,556,556,556,556,556,584,611,556,556,556,556,500,556,500];
+function pdfWExata(s, fs) {
+    let w = 0;
+    for (const ch of String(s || '')) { const c = ch.codePointAt(0); w += (c >= 32 && c <= 255 && (c < 127 || c > 159)) ? PDF_LARG_HELV[c - 32] * fs / 1000 : pdfWPior(ch, fs); }
+    return w;
+}
+function distribuicaoRotulo(r, f, w, h, folga, sozinha) {
+    if (sozinha) return [0, 0];
+    const span = f.a0 - f.a1, am = (f.a0 + f.a1) / 2;
+    const dRaio = (px, py, a) => (px * Math.cos(a) + py * Math.sin(a)) >= 0 ? Math.abs(px * Math.sin(a) - py * Math.cos(a)) : Math.hypot(px, py);
+    for (const k of [0.6, 0.55, 0.65, 0.5, 0.7, 0.45, 0.75]) {
+        const x = r * k * Math.cos(am), y = r * k * Math.sin(am);
+        const ok = [[-1, -1], [-1, 1], [1, -1], [1, 1]].every(([sx, sy]) => {
+            const px = x + sx * w / 2, py = y + sy * h / 2;
+            if (Math.hypot(px, py) > r - folga) return false;
+            const t = ((f.a0 - Math.atan2(py, px)) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+            return t <= span && dRaio(px, py, f.a0) >= folga && dRaio(px, py, f.a1) >= folga;
+        });
+        if (ok) return [x, y];
+    }
+    return null;
+}
+function distribuicaoMesSvg(dias, hojeDt, semDia) {
+    const ds = distribuicaoMes(dias, hojeDt, semDia);
+    const baseHtml = `<div class="sub" style="font-size:10.5px;margin-top:4px">${ds.baseLinhas.map(escHtml).join('<br>')}</div>`;
+    if (!ds.total) return baseHtml;
+    const r = 58, cx = 64, cy = 64, vivas = ds.fatias.filter(f => f.n > 0), p = a => `${(cx + r * Math.cos(a)).toFixed(2)} ${(cy - r * Math.sin(a)).toFixed(2)}`;
+    let s = `<svg viewBox="0 0 128 128" width="128" height="128" style="flex:none" role="img" aria-label="Distribuição do mês em porcentagem">`;
+    if (vivas.length === 1) s += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${vivas[0].cor}"/>`;
+    else vivas.forEach(f => { s += `<path d="M ${cx} ${cy} L ${p(f.a0)} A ${r} ${r} 0 ${f.a0 - f.a1 > Math.PI ? 1 : 0} 1 ${p(f.a1)} Z" fill="${f.cor}" stroke="#ffffff" stroke-width="1.5" stroke-linejoin="round"/>`; });
+    s += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#cbd5e1" stroke-width="0.8"/>`;
+    vivas.forEach(f => { // % dentro da fatia quando cabe (a legenda ao lado traz todos)
+        const pos = distribuicaoRotulo(r, f, pctW(f.pct, 11) * 1.05, 9, 2, vivas.length === 1);
+        if (pos) s += `<text x="${(cx + pos[0]).toFixed(1)}" y="${(cy - pos[1] + 4).toFixed(1)}" font-size="11" font-weight="700" text-anchor="middle" fill="${f.txt}">${f.pct}</text>`;
+    });
+    s += '</svg>';
+    const q = cor => `<span style="display:inline-block;width:10px;height:10px;background:${cor};border:1px solid #cbd5e1;box-sizing:border-box;margin-right:6px;vertical-align:-1px"></span>`;
+    const linhas = ds.fatias.map(f => `<tr><td style="padding:3px 8px 3px 0">${q(f.cor)}${escHtml(f.rot)}</td><td style="padding:3px 8px;text-align:right">${f.qtd}</td><td style="padding:3px 0 3px 8px;text-align:right;font-weight:700">${f.pct}</td></tr>`).join('');
+    return `<div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-top:6px">${s}<div><table style="border-collapse:collapse;font-size:12.5px">${linhas}</table>${baseHtml}</div></div>`;
+}
+// Lista detalhada do mês em HTML (registro de treino): a mesma do PDF. `destaqueId` marca a sessão do registro.
+// v1.32.0: todos os dias do mês (treino, descanso, sem treino, a vir) + gráfico de evolução. v1.33.0: + pizza do mês, e os
+// dois gráficos vêm ANTES da tabela, como no PDF (gráficos na página 1, tabela na página 2).
 function personalMesListaHtml(ym, r, st, destaqueId) {
     const dias = personalDiasDoMes(D, ym, today());
     const rs = personalDiasResumo(dias, r);
@@ -5235,13 +5348,15 @@ function personalMesListaHtml(ym, r, st, destaqueId) {
         const dq = !!(destaqueId && a.id === destaqueId);
         return `<tr${dq ? ' class="pd"' : ''}><td style="${st.td}">${formatDataTreino(a.dia)}</td><td style="${st.td}">${escHtml(a.nome)}${dq ? ' <b>(esta sessão)</b>' : ''}</td><td style="${st.td}">${marca(a)}</td><td style="${st.td};text-align:center">${a.tipo === 'avulsa' ? '—' : a.exercicios + ' · ' + a.series}</td><td style="${st.td};text-align:right">${a.tipo === 'avulsa' ? '—' : fmtN(a.volume)}</td><td style="${st.td};text-align:right">${a.duracao ? escHtml(a.duracao) : '—'}</td></tr>`;
     };
-    return `<h2 class="ext">Todos os dias do mês · ${rs.treinos} treino(s)</h2>
+    return `<h2 class="ext">Evolução do mês · volume de cada dia (mil kg)</h2>
+${evolucaoMesSvg(dias, ym)}
+<h2 class="ext">Distribuição do mês · treino com e sem o personal e descanso (%)</h2>
+${distribuicaoMesSvg(dias, today(), treinosForaDoCalendario(D, ym, dias))}
+<h2 class="ext">Todos os dias do mês · ${rs.treinos} treino(s)</h2>
 <div class="sub">${rs.texto}</div>
 <table style="${st.tbl}"><tr><th style="${st.th}">Data</th><th style="${st.th}">Sessão</th><th style="${st.th}">Personal</th><th style="${st.th};text-align:center">Ex · séries</th><th style="${st.th};text-align:right">Volume (kg)</th><th style="${st.th};text-align:right">Min</th></tr>
 ${dias.map(linha).join('')}
-</table>
-<h2 class="ext">Evolução do mês · volume de cada dia (mil kg)</h2>
-${evolucaoMesSvg(dias, ym)}`;
+</table>`;
 }
 // Extrato mês a mês do início do acordo até `ateYm` (inclusive). O banco entra, as aulas consomem
 // primeiro o banco e depois as do mês; o que sobra vira banco do mês seguinte; o que passa é extra.
@@ -5476,7 +5591,6 @@ function rPersonal() {
             </div>
             <div style="display:flex;gap:8px;margin-top:12px">
                 <button class="btn btn-primary" style="flex:1" onclick="openPersonalAvulsa()">+ Aula avulsa</button>
-                <button class="btn btn-outline" style="flex:1" onclick="exportPersonalExtrato('${atual.ym}')">📄 Extrato</button>
             </div>
         </div>`;
     const mesHtml = rows.slice().reverse().map(r => {
@@ -5512,7 +5626,6 @@ function rPersonal() {
                     </div>` : ''}
                     <div style="font-size:11px;color:var(--text3);font-weight:700;margin-top:6px">AULAS (${r.aulas})</div>
                     ${lista || '<div style="font-size:12px;color:var(--text3);padding:6px 0">Nenhuma aula neste mês</div>'}
-                    <button class="btn btn-outline btn-sm w-full" style="margin-top:8px" onclick="exportPersonalExtrato('${r.ym}')">📄 Extrato de ${ymLabel(r.ym)}</button>
                 </div>` : ''}
             </div>`;
     }).join('');
@@ -5522,51 +5635,8 @@ function rPersonal() {
 }
 function togglePersonalMes(ym) { personalOpenYm = (personalOpenYm === ym) ? null : ym; rPersonal(); }
 
-// Extrato do mês em documento autocontido (mesmo caminho seguro do registro de treino) — pra
-// conferir com o personal no fim do mês. Sem @media print no app (incidente 24/06); só no exportado.
-function buildPersonalExtratoHtml(ym) {
-    const p = normalizePersonalPlan(D.personalPlan);
-    const hoje = today().slice(0, 7);
-    const rows = personalLedger(D, ym > hoje ? ym : hoje);
-    const r = rows.find(x => x.ym === ym);
-    if (!r) return '';
-    const nome = escHtml(D.userName || '');
-    const tbl = 'width:100%;border-collapse:collapse;font-size:12px;margin-top:6px';
-    const th = 'text-align:left;padding:5px 8px;background:#f1f5f9;font-weight:700;border:1px solid #e2e8f0';
-    const td = 'padding:5px 8px;border:1px solid #e2e8f0';
-    const fechado = ym < hoje;
-    return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Aulas com o personal · ${ymLabel(ym)}</title>
-<style>
-body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#0f172a;margin:0;padding:20px;max-width:760px;margin:0 auto;background:#fff}
-h1{font-size:20px;margin:0 0 2px}h2{font-size:14px;margin:18px 0 4px;border-bottom:2px solid #7c3aed;padding-bottom:3px}
-.sub{color:#64748b;font-size:12px}.tot{font-size:14px;font-weight:700;margin-top:10px}.foot{margin-top:24px;padding-top:10px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:10px;text-align:center}
-.pc{color:#5b21b6;font-weight:700}.ps{color:#64748b}tr.pd td{background:#f5f3ff}
-@page{size:A4 portrait;margin:12mm}@media print{body{padding:0;font-size:11px;max-width:none}table{font-size:10.5px}td,th{padding:3px 6px!important}tr{page-break-inside:avoid}}
-</style></head><body>
-${exportDocChrome()}
-<h1>Gileno Gestão · SAÚDE</h1>
-<div class="sub">Extrato de aulas com o personal${p.nome ? ' · ' + escHtml(p.nome) : ''}${nome ? ' · aluno: ' + nome : ''} · ${ymLabel(ym)}${fechado ? '' : ' (mês em curso)'}</div>
-<h2>Resumo do mês</h2>
-<table style="${tbl}">
-<tr><td style="${td}">Mensalidade (dia 1)</td><td style="${td}">${fmtBRL(r.mensalidade)} = ${p.aulasMes} aulas${r.mensalidadePaga ? ' · paga' : ''}</td></tr>
-<tr><td style="${td}">Banco que entrou do mês anterior</td><td style="${td}">${r.bancoIn} aula(s)</td></tr>
-<tr><td style="${td}">Aulas disponíveis no mês</td><td style="${td}">${r.disponiveis}</td></tr>
-<tr><td style="${td}">Aulas dadas</td><td style="${td}">${r.aulas} (${r.aulasApp} pelo app${r.avulsas ? ' + ' + r.avulsas + ' avulsa(s)' : ''})</td></tr>
-<tr><td style="${td}">Aulas extras</td><td style="${td}">${r.extras} × ${fmtBRL(p.valorExtra)} = <strong>${fmtBRL(r.valorExtras)}</strong>${(r.extras && r.extrasPagos) ? ' · pagas' : ''}</td></tr>
-<tr><td style="${td}">Banco que segue pro mês seguinte</td><td style="${td}">${r.bancoOut} aula(s)</td></tr>
-</table>
-<div class="tot">Valor a acertar no fim do mês: ${fmtBRL(r.valorExtras)}</div>
-${personalMesListaHtml(ym, r, { tbl, th, td })}
-<div class="foot">Gileno Gestão Saúde · extrato gerado pelo app em ${formatDataTreino(today())} · base de conferência entre aluno e personal · aula com o personal = conta no acordo; sem o personal = treino por conta própria, só para acompanhamento</div>
-</body></html>`;
-}
-function exportPersonalExtrato(ym) {
-    const html = buildPersonalExtratoHtml(ym);
-    if (!html) return toast('Mês fora do acordo', true);
-    openExportedDoc(html, 'aulas-personal-' + ym + '.html', () => buildPersonalExtratoPdf(ym));
-}
+// v1.33.0 (decisão do CEO 24/09/2026): o Extrato separado do Personal (botões 📄 Extrato, documento HTML e PDF) saiu;
+// o extrato do mês vai no registro de treino (página 1: resumo e gráficos do mês; página 2: todos os dias do mês).
 
 // Config do treino (Configurações) — ponto de partida; o ajuste fino é no dedo durante a execução.
 function adjustRestDefault(delta) {
@@ -6855,7 +6925,7 @@ function exportDocChrome() {
 function __voltarApp(){try{window.close()}catch(e){}setTimeout(function(){if(!window.closed)location.replace(__APP_URL)},200)}<\/script>`;
 }
 
-// Abre um documento autocontido (Relatório Semanal, registro de treino, extrato do personal).
+// Abre um documento autocontido (Relatório Semanal, registro de treino; v1.33.0: o extrato separado do personal saiu).
 // v1.28.0: no app INSTALADO (iOS/Android) a janela nova é bloqueada ou toma a própria janela do
 // app (v1.12.1); agora o documento abre num visor DENTRO do app, com Imprimir / Salvar PDF
 // (folha de impressão do sistema), Compartilhar (arquivo) e Voltar. No navegador comum segue
@@ -8809,7 +8879,7 @@ function personalSessionBannerHtml(t) {
     const txt = i.com ? `🏋️ AULA COM O PERSONAL${i.p && i.p.nome ? ' · ' + escHtml(i.p.nome) : ''}` : '🏠 TREINO SEM O PERSONAL';
     return `<div style="${st};border-radius:10px;padding:10px 12px;margin-bottom:10px"><div style="font-size:13px;font-weight:800;letter-spacing:.2px">${txt}</div><div style="font-size:11px;opacity:.85;margin-top:2px">${i.sub}</div></div>`;
 }
-// Resumo do extrato do mês da sessão + lista detalhada do mês, no registro exportado (mesmos números de buildPersonalExtratoHtml)
+// Resumo do extrato do mês da sessão + gráficos e lista detalhada do mês, no registro exportado (mesmos números do PDF)
 function personalSessionExtratoHtml(pi, td, th, destaqueId) {
     const r = pi && pi.r, p = pi && pi.p;
     if (!r || !p || !pi.marcada) return ''; // só sessão marcada (com ou sem) dentro do acordo
@@ -8820,7 +8890,7 @@ function personalSessionExtratoHtml(pi, td, th, destaqueId) {
 <tr><td style="${td}"><b>Mensalidade (dia 1)</b><br>${fmtBRL(r.mensalidade)} = ${p.aulasMes} aulas${r.mensalidadePaga ? ' · paga' : ''}</td><td style="${td}"><b>Banco que entrou do mês anterior</b><br>${r.bancoIn} aula(s)</td><td style="${td}"><b>Aulas disponíveis no mês</b><br>${r.disponiveis}</td></tr>
 <tr><td style="${td}"><b>Aulas dadas${pi.emCurso ? ' até aqui' : ''}</b><br>${r.aulas} (${r.aulasApp} pelo app${r.avulsas ? ' + ' + r.avulsas + ' avulsa(s)' : ''})</td><td style="${td}"><b>Aulas extras</b><br>${r.extras} × ${fmtBRL(p.valorExtra)} = <strong>${fmtBRL(r.valorExtras)}</strong>${(r.extras && r.extrasPagos) ? ' · pagas' : ''}</td><td style="${td}"><b>Banco que segue pro mês seguinte</b><br>${r.bancoOut} aula(s)</td></tr>
 </table>
-<div class="tot">Valor a acertar no fim do mês: ${fmtBRL(r.valorExtras)} <span class="sub" style="font-weight:400">· esta sessão ${pi.com ? '<strong>conta</strong>' : '<strong>não conta</strong>'} como aula com o personal · abaixo, todos os dias do mês e a evolução</span></div>
+<div class="tot">Valor a acertar no fim do mês: ${fmtBRL(r.valorExtras)} <span class="sub" style="font-weight:400">· esta sessão ${pi.com ? '<strong>conta</strong>' : '<strong>não conta</strong>'} como aula com o personal · abaixo, a evolução, a distribuição (%) e todos os dias do mês</span></div>
 ${personalMesListaHtml(pi.ym, r, { tbl, th, td }, destaqueId)}`;
 }
 
@@ -8837,7 +8907,7 @@ function exportTreinoSession() {
 // recebe o arquivo pela folha de compartilhamento. Registro de treino = página 1 (faixa com/sem personal, tabela
 // de uma linha por exercício, notas, resumo do extrato) + extrato do mês DETALHADO nas páginas seguintes, com todos
 // os treinos do mês marcados com/sem o personal (pedido do CEO 17/09/2026: "reunir em PDF só o treino e o extrato,
-// bem detalhado, mostrando quando o treino for com personal e sem o personal"). O extrato do Personal usa o mesmo escritor.
+// bem detalhado, mostrando quando o treino for com personal e sem o personal"). v1.33.0: o extrato separado do Personal saiu; o mês vai só aqui.
 const PDF_MAP = { '–': '-', '—': '-', '…': '...', '‘': "'", '’': "'", '“': '"', '”': '"', '→': '->', ' ': ' ', '•': '·' };
 function pdfTxt(s) { // texto em WinAnsi (1 byte por caractere); o que não existe na tabela sai
     let out = '';
@@ -8982,11 +9052,20 @@ function pdfSessionPage(d, t) {
     if (temExtrato) {
         const rotulo = pi.emCurso ? ' (mês em curso)' : pi.futuro ? ' (mês futuro)' : '';
         y = pdfExtratoResumo(d, y, pi.r, pi.p, pi.emCurso, 'Extrato do mês com o personal' + (pi.p.nome ? ' · ' + pi.p.nome : '') + ' · ' + ymLabel(pi.ym) + rotulo);
-        d.txt(M, y, 'Esta sessão ' + (pi.com ? 'CONTA' : 'NÃO CONTA') + ' como aula com o personal · todos os dias do mês (treino e descanso) e a evolução, na página seguinte', 8.5, false, cinza); y -= 8;
+        // v1.33.0 (pedido do CEO 24/09/2026): os dois gráficos do mês (evolução e pizza) vêm na PÁGINA 1, logo abaixo, quando
+        // cabem sem mexer na sessão (decisão pelo espaço: com notas curtas, até 16 exercícios; acima de 18 a tabela de
+        // exercícios encolhe, regra da 1.28, e eles podem voltar a caber); senão vão para a página 2, depois da tabela
+        const dias = personalDiasDoMes(D, pi.ym, today());
+        const ds = distribuicaoMes(dias, today(), treinosForaDoCalendario(D, pi.ym, dias)), lay = pdfDistribuicaoLayout(d, ds);
+        const cabem = y - 8 - 14 - PDF_EVOL_USA - 2 - lay.h - 0.5 >= d.RODAPE; // frase, respiro, evolução, respiro, pizza, folga
+        // a frase só se completa no fim (buildSessionPdf): "na página seguinte" com 2 páginas, "nas páginas seguintes" com mais
+        d.fraseP1 = { idx: d.ops.length, x: M, y, txt: 'Esta sessão ' + (pi.com ? 'CONTA' : 'NÃO CONTA') + ' como aula com o personal · ' + (cabem ? 'todos os dias do mês (treino e descanso), ' : 'todos os dias do mês, a evolução e a distribuição (%), ') };
+        y -= 8;
+        if (cabem) { y -= 14; y = pdfEvolucaoMes(d, y, pi.ym, dias); y -= 2; y = pdfDistribuicaoMes(d, y, ds, lay); d.graficosNaP1 = true; }
     }
     d.y = y;
 }
-// Resumo do mês com o personal em 2 linhas × 3 colunas + "Valor a acertar" (os mesmos números de buildPersonalExtratoHtml)
+// Resumo do mês com o personal em 2 linhas × 3 colunas + "Valor a acertar" (os mesmos números do registro em HTML)
 function pdfExtratoResumo(d, y, r, p, emCurso, titulo) {
     const { W, M, CW } = d;
     d.txt(M, y, pdfCorta(titulo, 11, CW), 11, true); y -= 4; d.line(M, y, W - M, y, PDF_ROXO, 1.2); y -= 6;
@@ -9011,8 +9090,8 @@ function pdfExtratoResumo(d, y, r, p, emCurso, titulo) {
 }
 // Extrato do mês, detalhado: resumo + lista de TODOS os treinos do mês com a marca de cada um (aula com o personal,
 // sem o personal, avulsa, sem marca). Começa na página corrente (vazia) e continua em páginas novas se a lista não
-// couber, repetindo o cabeçalho da tabela. Usado pelo PDF do treino (páginas seguintes, sessão em destaque) e pelo
-// extrato do Personal (documento próprio). Devolve false se o mês está fora do acordo.
+// couber, repetindo o cabeçalho da tabela. Usado pelo PDF do treino (páginas seguintes, sessão em destaque); v1.33.0:
+// com `opts.semGraficos` (os gráficos já foram na página 1) só a tabela. Devolve false se o mês está fora do acordo.
 function pdfExtratoPages(d, ym, opts) {
     opts = opts || {};
     const { W, M, CW } = d;
@@ -9037,10 +9116,16 @@ function pdfExtratoPages(d, ym, opts) {
     d.txt(M, y, pdfCorta(rs.texto, 8.5, CW), 8.5, false, cinza); y -= 10;
     const cols = [M, M + 58, M + 238, M + 366, M + 421, M + 483, W - M]; // Data | Sessão | Personal | Ex · séries | Volume | Min
     const cab = ['Data', 'Sessão', 'Personal', 'Ex · séries', 'Volume (kg)', 'Min'];
-    // altura da linha: o mês inteiro + o gráfico na mesma página quando cabe (15 pt, encolhe até 10,5); se não
-    // couber nem assim, a tabela segue na página seguinte com o cabeçalho repetido e o gráfico vem depois dela
-    const livre = y - d.RODAPE - PDF_EVOL_H - 16; // 14 do respiro abaixo da tabela + folga
-    const rh = Math.max(10.5, Math.min(15, Math.floor(livre / (dias.length + 1) * 10) / 10));
+    // altura da linha: o mês inteiro + os dois gráficos na mesma página quando cabe (15 pt, encolhe até 10,5; v1.33.0:
+    // até 10 quando só assim a pizza fica na página); se não couber nem assim, a tabela segue na página seguinte com o
+    // cabeçalho repetido e os gráficos vêm depois dela
+    const ds = distribuicaoMes(dias, today(), treinosForaDoCalendario(D, ym, dias)), lay = pdfDistribuicaoLayout(d, ds);
+    const livre = opts.semGraficos ? y - d.RODAPE - 2 // gráficos já na página 1: só a tabela
+                : y - d.RODAPE - 14 - PDF_EVOL_USA - 2 - lay.h - 0.5; // conta exata: 14 de respiro abaixo da tabela, a evolução, 2 antes da pizza, o bloco dela e 0,5 de folga
+    const rhCabe = Math.floor(livre / (dias.length + 1) * 10) / 10;
+    // pizza não cabe nem com linha de 10 pt: vai para a página seguinte e a tabela fica exatamente como na 1.32.0
+    const rh = opts.semGraficos ? Math.max(10.5, Math.min(15, rhCabe)) : rhCabe >= 10.5 ? Math.min(15, rhCabe) : rhCabe >= 10 ? rhCabe
+             : Math.max(10.5, Math.min(15, Math.floor((y - d.RODAPE - PDF_EVOL_H - 16) / (dias.length + 1) * 10) / 10));
     const fs = rh >= 14 ? 8.5 : rh >= 12 ? 8 : 7.5, off = +((rh - fs * 0.72) / 2).toFixed(2);
     const cabecalho = () => { d.rect(M, y - rh, CW, rh, PDF_FUNDO, PDF_BORDA); cab.forEach((c, i) => d.txt(cols[i] + 5, y - rh + off, c, fs, true)); y -= rh; };
     cabecalho();
@@ -9076,9 +9161,25 @@ function pdfExtratoPages(d, ym, opts) {
         y -= rh;
     });
     if (corrido === 0) fecha(y);
+    if (opts.semGraficos) { d.y = y; return true; } // v1.33.0: os gráficos já foram na página 1
     y -= 14;
     if (y - PDF_EVOL_H < d.RODAPE) { d.newPage(); y = d.y; }
     y = pdfEvolucaoMes(d, y, ym, dias);
+    // v1.33.0: pizza do mês logo abaixo da evolução; se não couber, página nova com o mês identificado
+    y -= 2;
+    if (y - lay.h < d.RODAPE) {
+        d.newPage(); y = d.y;
+        // só o nome do personal encolhe: o mês e o "continuação" saem sempre inteiros. Mede o que é IMPRESSO (o texto
+        // depois do pdfTxt, sem o escape de parênteses e barra: ’ vira ', … vira ..., o que não existe some) com pdfWExata
+        // (exata na tabela da Helvetica, pessimista fora dela): a linha nunca passa da margem e o nome só encolhe se preciso
+        const ini = 'Extrato de aulas com o personal', fim = ' · ' + ymLabel(ym) + rotulo + ' · continuação';
+        const wImp = x => pdfWExata(pdfTxt(x).replace(/\\([()\\])/g, '$1'), 9.5);
+        let nome = String(p.nome || '');
+        const cabeNome = CW - wImp(ini + ' · ' + fim) - 4;
+        if (wImp(nome) > cabeNome) { while (nome.length > 1 && wImp(nome + '...') > cabeNome) nome = nome.slice(0, -1); nome = nome.trimEnd().replace(/[.…]+$/, '').trimEnd() + '...'; } // sem espaço nem ponto antes das reticências do corte
+        d.txt(M, y, ini + (nome ? ' · ' + nome : '') + fim, 9.5, false, cinza); y -= 20; // sem pdfCorta: a conta pessimista já garante que cabe
+    }
+    y = pdfDistribuicaoMes(d, y, ds, lay);
     d.y = y;
     return true;
 }
@@ -9095,6 +9196,7 @@ function pdfDuracaoCabe(s, fs, larg) {
     return [cs.slice(0, n).join('') + '...', 5];
 }
 const PDF_EVOL_H = 134, PDF_DESCANSO = '0.933 0.949 0.969 rg', PDF_FUTURO = '0.8 0.84 0.88 rg';
+const PDF_EVOL_USA = 132; // v1.33.0: altura que pdfEvolucaoMes consome de fato (4 + 14 + 80 + 22 + 12), para a tabela reservar o exato
 function pdfEvolucaoMes(d, y, ym, dias) {
     const { W, M, CW } = d;
     const cinza = PDF_CINZA;
@@ -9123,20 +9225,79 @@ function pdfEvolucaoMes(d, y, ym, dias) {
     y -= 12;
     return y;
 }
-// PDF do registro de treino: página 1 = a sessão; se ela está marcada (com ou sem personal) dentro do acordo, as
-// páginas seguintes trazem o extrato do mês detalhado com esta sessão em destaque.
+// v1.33.0: pizza do mês no PDF (os mesmos dados de distribuicaoMesSvg). Fatias em curvas de Bézier (no máximo 90° por
+// curva), sentido horário a partir do topo, separadas por traço branco; contorno cinza para o descanso (cor clara) não
+// sumir no papel. À direita, a legenda com quantidade e %; o % também vai dentro da fatia quando o texto cabe nela.
+// Embaixo da legenda, a base em linhas curtas, quebradas pela largura (nunca cortadas). Mês sem nada = só a frase.
+// A altura do bloco sai do conteúdo (pdfDistribuicaoLayout), para a tabela reservar exatamente o que ele usa.
+const PDF_PIZZA_R = 34, PDF_PIZZA_PASSO = 12.5, PDF_PIZZA_LBASE = 9;
+function pdfCor(hex, op) { const v = [1, 3, 5].map(i => +(parseInt(hex.slice(i, i + 2), 16) / 255).toFixed(3)); return v.join(' ') + ' ' + (op || 'rg'); }
+function pdfArco(cx, cy, r, a0, a1) { // curvas do ponto de ângulo a0 ao de a1 (radianos, anti-horário positivo); o ponto inicial já está na pena
+    const n = Math.max(1, Math.ceil(Math.abs(a1 - a0) / (Math.PI / 2) - 1e-9)), da = (a1 - a0) / n, k = 4 / 3 * Math.tan(da / 4), f = v => v.toFixed(2);
+    let s = '';
+    for (let i = 0; i < n; i++) {
+        const t0 = a0 + da * i, t1 = t0 + da;
+        const x0 = cx + r * Math.cos(t0), y0 = cy + r * Math.sin(t0), x3 = cx + r * Math.cos(t1), y3 = cy + r * Math.sin(t1);
+        s += ` ${f(x0 - k * r * Math.sin(t0))} ${f(y0 + k * r * Math.cos(t0))} ${f(x3 + k * r * Math.sin(t1))} ${f(y3 - k * r * Math.cos(t1))} ${f(x3)} ${f(y3)} c`;
+    }
+    return s;
+}
+// geometria do bloco: legenda (linhas de fatia + fio + base) ao lado da pizza, a mais alta das duas manda na altura
+function pdfDistribuicaoLayout(d, ds) {
+    const vivo = ds.total > 0, lx = vivo ? d.M + 2 * PDF_PIZZA_R + 26 : d.M;
+    const linhas = [].concat(...ds.baseLinhas.map(l => pdfQuebra(l, 7.5, d.W - d.M - lx)));
+    const leg = vivo ? ds.fatias.length * PDF_PIZZA_PASSO + 5 + linhas.length * PDF_PIZZA_LBASE : linhas.length * PDF_PIZZA_LBASE;
+    const corpo = vivo ? Math.max(2 * PDF_PIZZA_R, leg) : leg;
+    return { lx, linhas, leg, corpo, h: 12 + corpo + 1 }; // 12 = título e fio verde; 1 = meio traço do contorno e descida da letra (o bloco é sempre o último da página)
+}
+function pdfDistribuicaoMes(d, y, ds, lay) {
+    const { W, M } = d;
+    const cinza = PDF_CINZA, topoBloco = y, r = PDF_PIZZA_R;
+    d.txt(M, y, 'Distribuição do mês · treino com e sem o personal e descanso (%)', 11, true); y -= 4; d.line(M, y, W - M, y, PDF_VERDE, 1.2); y -= 8;
+    const legTopo = y - (lay.corpo - lay.leg) / 2;
+    let ly;
+    if (ds.total > 0) {
+        const cx = M + r + 2, cy = y - lay.corpo / 2, f2 = v => v.toFixed(2);
+        const pt = a => `${f2(cx + r * Math.cos(a))} ${f2(cy + r * Math.sin(a))}`;
+        const vivas = ds.fatias.filter(f => f.n > 0);
+        vivas.forEach(f => d.ops.push(`${pdfCor(f.cor)} ${f2(cx)} ${f2(cy)} m ${pt(f.a0)} l${pdfArco(cx, cy, r, f.a0, f.a1)} h f`));
+        if (vivas.length > 1) vivas.forEach(f => d.line(cx, cy, cx + r * Math.cos(f.a0), cy + r * Math.sin(f.a0), '1 1 1 RG', 1.5));
+        d.ops.push(`0.8 0.84 0.88 RG 0.8 w ${pt(0)} m${pdfArco(cx, cy, r, 0, 2 * Math.PI)} h S`);
+        vivas.forEach(f => { // % dentro da fatia quando cabe, em 7,5 pt ou, se não, 6,5 pt (a legenda ao lado traz todos)
+            for (const fs of [7.5, 6.5]) {
+                const w = pctW(f.pct, fs), pos = distribuicaoRotulo(r, f, w, fs * 0.72, 1.5, vivas.length === 1);
+                if (pos) { d.txt(cx + pos[0] - w / 2, cy + pos[1] - fs * 0.36, f.pct, fs, true, pdfCor(f.txt)); break; }
+            }
+        });
+        // legenda: quadradinho + nome | quantidade | %, centrada na altura da pizza; fio fino; base embaixo
+        const lx = lay.lx, cN = lx + 215, cP = lx + 265;
+        ly = legTopo - 8.5;
+        ds.fatias.forEach(f => {
+            d.rect(lx, ly - 0.5, 8, 8, pdfCor(f.cor), '0.8 0.84 0.88 RG');
+            d.txt(lx + 12, ly, pdfCorta(f.rot, 9, cN - lx - 70), 9);
+            d.txt(cN - pdfW(f.qtd, 9), ly, f.qtd, 9);
+            d.txt(cP - pctW(f.pct, 9), ly, f.pct, 9, true);
+            ly -= PDF_PIZZA_PASSO;
+        });
+        d.line(lx, ly + 8, cP, ly + 8, PDF_BORDA, 0.5);
+        ly -= 3.5; // 1ª linha da base 11,5 pt abaixo do fio
+    } else ly = legTopo - 7;
+    lay.linhas.forEach(l => { d.txt(lay.lx, ly, l, 7.5, false, cinza); ly -= PDF_PIZZA_LBASE; });
+    return topoBloco - lay.h;
+}
+// PDF do registro de treino: página 1 = a sessão (e, v1.33.0, os gráficos do mês quando cabem); se ela está marcada (com ou
+// sem personal) dentro do acordo, as páginas seguintes trazem o extrato do mês detalhado com esta sessão em destaque.
 function buildSessionPdf(t) {
     const d = pdfDoc().newPage();
     pdfSessionPage(d, t);
     const pi = personalSessionInfo(t);
-    if (pi.r && pi.p && pi.marcada) { d.newPage(); pdfExtratoPages(d, pi.ym, { destaqueId: t.id }); }
+    if (pi.r && pi.p && pi.marcada) { d.newPage(); pdfExtratoPages(d, pi.ym, { destaqueId: t.id, semGraficos: !!d.graficosNaP1 }); }
+    if (d.fraseP1) { // completa a frase da página 1 no lugar dela (mesma ordem no conteúdo da página), já sabendo quantas páginas vieram
+        const f = d.fraseP1, atual = d.ops, tmp = [];
+        d.ops = tmp; d.txt(f.x, f.y, f.txt + (d.pages.length > 2 ? 'nas páginas seguintes' : 'na página seguinte'), 8.5, false, PDF_CINZA); d.ops = atual;
+        d.pages[0].splice(f.idx, 0, ...tmp);
+    }
     return d.build('registro gerado pelo app em ' + formatDataTreino(today()) + ' · não substitui orientação profissional');
-}
-// PDF do extrato do mês (Personal › 📄 Extrato › 📄 PDF): o mesmo conteúdo das páginas seguintes do PDF do treino
-function buildPersonalExtratoPdf(ym) {
-    const d = pdfDoc().newPage();
-    if (!pdfExtratoPages(d, ym, {})) return null;
-    return d.build('extrato gerado pelo app em ' + formatDataTreino(today()) + ' · base de conferência entre aluno e personal');
 }
 
 // ========== RELATÓRIO PARA A NUTRICIONISTA (v1.31.0) ==========
