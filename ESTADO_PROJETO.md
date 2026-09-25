@@ -1157,3 +1157,33 @@ Pedido do CEO 24/09, depois da prova de campo da v1.33.0: "O gráfico pizza pode
 - PDF real de 24/09: pizza no teto (160 pt de diâmetro, era 68), % em 11,5 pt, legenda em 10,8 pt.
 - APP_VERSION/CACHE_VERSION 1.33.1. Kit: `~/Gestao_Saude_Dados/kits/v130_bancada/v1331/` (patch_v1331.py; harness/verify_v133.js parametrizado, 92/92; valida_v1331.py 145.570/145.570, roda também a 1.33.0 e a 1.32.0 nos mesmos cenários; auditoria1 a auditoria3).
 - Auditoria: 3 rodadas independentes; 1ª e 2ª com ressalvas BAIXAS (mês vazio crescendo a frase; tamanhos de letra com resíduo de ponto flutuante, inclusive a letra reserva no raio 38), curadas com prova reversa; 3ª APROVADA sem ressalva.
+
+## Parte 27: v1.34.0, Apple Watch dentro do app (25/09/2026, sessão no Mac mini)
+
+Pedido do CEO 25/09: "trazer para dentro do app os dados do Apple Watch que sincronizamos com o app Auto Export".
+Cadeia: Apple Watch › Saúde › Health Auto Export › iCloud › `apple_saude_espelho` (mini, 21/09) › `diario.csv` +
+`treinos.csv` › **`apple_saude_publica` (robô novo do mini)** › Firestore `users/{uid}/watch/AAAA-MM` + `watch/_meta` › app.
+
+- **Modelo de dados:** um documento por mês FORA do documento principal (`users/{uid}` beira o limite de 1 MiB):
+  `{v:1, mes, fonte, robo, geradoEm, tabelasEm, dias:{'AAAA-MM-DD':{passos, distKm, kcalAtiva, kcalRepouso, kcalTotal,
+  exercMin, emPeH, andares, fcMin, fcMed, fcMax, fcRep, fcCam, vfcMs, spo2, vo2max, respMin, luzMin, pesoKg, sonoMin,
+  sonoProfMin, sonoRemMin, sonoEssMin, sonoAcordMin, sonoCamaMin, parcial, gravadoEm}}, treinos:[{id, data, ini, fim, tipo,
+  durMin, kcalAtiva, kcalTotal, fcMed, fcMin, fcMax, distKm, interno}]}`. Medida ausente = chave ausente (nunca 0).
+  `_meta`: `{v, atualizadoEm, ultimoDia, ultimoGravadoEm, meses, robo, tabelasEm}`. ~14 KB por mês.
+- **App:** bloco `WATCH` (escuta `_meta` + mês em vista + anterior, teto de 4 meses, erro marca a escuta e só o
+  religamento de 5 min reabre); `watchCardHtml(dt)` no Início antes das Refeições (tiles só do que foi medido, treinos do
+  relógio, dia parcial, hora do arquivo do iPhone, cache); `watchSessaoHtml` na sessão selada; `watchChipHtml` no histórico;
+  `watchEstadoTexto` em Ajustes › Sincronização. Nada entra em D nem em save(). Conta sem documento: card não existe.
+- **Regras:** `match /users/{userId}/watch/{doc}` leitura do dono/admin, escrita nunca (robô grava por credencial de serviço).
+- **Robô** `com.gileno.apple-saude-publica` (a cada 30 min + WatchPaths na pasta das tabelas): publica só o mês cujo
+  conteúdo mudou (sha256 no estado), credencial de escrita própria (`apple-watch-escritor`, papel Cloud Datastore User),
+  exit 0/1/2/3/4, Telegram 1x/dia, healthcheck (exit + pulso 70 min). Kit `~/Gestao_Saude_Dados/kits/apple_saude_publica_v1/`
+  (191 checks contra Firestore falso + 17 mutantes pegos; instalador com desfazer; ensaio em HOME falsa).
+- Kit do app `~/Gestao_Saude_Dados/kits/v130_bancada/v134/` (`valida_v134.py`: 117 checks no jsc com o documento real
+  montado pelo robô + 5 de arquivo; `bench/build_bench.py` prévias com Chrome headless). Auditoria independente: 4 rodadas.
+- ☠️ Achado pela bancada: render em estado de erro religava a escuta em laço (rajada ao Firestore); curado antes de publicar.
+- ☠️ Arredondamento duplo (auditoria): o robô arredonda UMA vez e o app mostra o que recebe (sono em minutos, km/peso com 2 casas;
+  duração vai com 2 casas e o app arredonda para o minuto); ☠️ com `enablePersistence` o 1º snapshot vem do cache e a confirmação do servidor chega só por metadado:
+  escuta com `includeMetadataChanges`, rótulo por documento; ☠️ `--seco` não pode tocar trava nem pulso (calaria o healthcheck).
+- Gestos do CEO: credencial no console do Google Cloud, `instalar.sh`, publicar regras, push. Pendência: compra do Health
+  Auto Export até ~28/09 (sem ela a exportação para).

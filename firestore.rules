@@ -42,6 +42,16 @@ service cloud.firestore {
                     || isAdmin();
     }
 
+    // v1.34.0 (25/09/2026): dados do Apple Watch, um documento por mês (users/{uid}/watch/AAAA-MM) e um resumo
+    // (users/{uid}/watch/_meta), gravados pelo robô do Mac mini com credencial de serviço (que não passa por
+    // estas regras). Pelo app e por qualquer cliente autenticado: SÓ leitura, do próprio dono (ou admin).
+    // Ninguém grava por aqui: o documento principal continua sendo o único que o app escreve.
+    match /users/{userId}/watch/{doc} {
+      allow read: if (request.auth != null && request.auth.uid == userId)
+                  || isAdmin();
+      allow write: if false;
+    }
+
     // Default deny: qualquer outro path retorna falso
     match /{document=**} {
       allow read, write: if false;

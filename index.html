@@ -625,7 +625,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.33.1';
+const APP_VERSION = '1.34.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1519,10 +1519,221 @@ function normalizeLoadedD() {
             }
 }
 
+// ---- Apple Watch (v1.34.0) ------------------------------------------------------------------------
+// O robô do Mac mini (apple_saude_publica) grava um documento por mês em users/{uid}/watch/{AAAA-MM} e um
+// resumo em users/{uid}/watch/_meta, a partir do que o Health Auto Export exporta do relógio. O app SÓ LÊ
+// (regras do Firestore): nada daqui entra em D nem passa por save(), porque o documento principal já beira
+// o limite de 1 MiB. Sem documento, o card não existe (conta sem relógio); erro de leitura vira aviso,
+// nunca número; desconhecido nunca vira zero (watchNum). O app ouve o mês em vista e o anterior.
+const WATCH = { docs: {}, meta: null, erro: null, ultimoErro: null, unsubs: {}, falhou: {}, cache: {}, retry: null, refreshPendente: false };
+const WATCH_MAX_OUVIDOS = 4; // meses ouvidos ao mesmo tempo (o em vista, o anterior e mais 2 de navegação)
+function watchYm(dt) { return String(dt || today()).slice(0, 7); }
+function watchYmAnterior(ym) { const [y, m] = String(ym).split('-').map(Number); const d = new Date(y, m - 2, 1); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
+function watchMesesNecessarios(dt) { const ym = watchYm(dt); return [ym, watchYmAnterior(ym)]; }
+function watchDocValido(s) { return (isPlainObj(s) && s.v === 1 && isPlainObj(s.dias) && (s.treinos === undefined || Array.isArray(s.treinos))) ? s : null; }
+// Re-render por microtarefa: snapshots que chegam no mesmo giro (no jsc da bancada, todos; no SDK real, os que vierem
+// juntos) viram 1 render; os demais custam 1 render cada, como qualquer mudança de dado
+function watchRefresh() {
+    if (WATCH.refreshPendente) return;
+    WATCH.refreshPendente = true;
+    Promise.resolve().then(() => {
+        WATCH.refreshPendente = false;
+        if (!D) return;
+        if (cPage === 'dash') rDash();
+        else if (cPage === 'treino-history') rTreinoHistory();
+        else if (cPage === 'treino-session') rTreinoSession();
+    });
+}
+// Só limpa o erro quando nada do que a tela precisa (_meta, mês em vista e anterior) está marcado como falho
+function watchNecessarioFalhou(dt) { return ['_meta'].concat(watchMesesNecessarios(dt || curDate())).some(k => WATCH.falhou[k]); }
+function watchOuvir(nome) {
+    // escuta que falhou fica marcada: só watchReligar (5 min) a reabre; senão cada render religaria e o erro
+    // voltaria em laço (rajada de pedidos ao Firestore)
+    if (!U || WATCH.unsubs[nome] || WATCH.falhou[nome]) return;
+    const ref = db.collection('users').doc(U.uid).collection('watch').doc(nome);
+    // includeMetadataChanges: com a persistência ligada o 1º snapshot vem do cache e a confirmação do servidor
+    // (mesmo conteúdo) chega só como metadado; sem isso o rótulo "guardados neste aparelho" ficaria preso
+    WATCH.unsubs[nome] = ref.onSnapshot({ includeMetadataChanges: true }, snap => {
+        const s = snap.exists ? snap.data() : null;
+        const antes = JSON.stringify(nome === '_meta' ? WATCH.meta : WATCH.docs[nome]), cacheAntes = !!WATCH.cache[nome];
+        if (nome === '_meta') WATCH.meta = (isPlainObj(s) && s.v === 1) ? s : null;
+        else WATCH.docs[nome] = s ? (watchDocValido(s) || { formato: s.v === undefined ? null : s.v }) : null; // formato que este app não conhece (ou sem v): avisa, não inventa
+        WATCH.cache[nome] = !!(snap.metadata && snap.metadata.fromCache);
+        const mudou = JSON.stringify(nome === '_meta' ? WATCH.meta : WATCH.docs[nome]) !== antes || cacheAntes !== WATCH.cache[nome];
+        if (WATCH.erro && !watchNecessarioFalhou()) { WATCH.erro = null; watchRefresh(); return; } // N-3: outro doc falho segura o erro
+        if (mudou) watchRefresh();
+    }, err => {
+        console.warn('Apple Watch (' + nome + '):', err);
+        WATCH.erro = WATCH.ultimoErro = (err && err.code) || 'erro';
+        WATCH.falhou[nome] = true;
+        delete WATCH.unsubs[nome]; // o SDK encerra a escuta depois de um erro
+        watchRefresh();
+        if (!WATCH.retry) WATCH.retry = setTimeout(watchReligar, 300000); // as regras podem ter sido publicadas, ou a rede voltado
+    });
+}
+// Religamento (timer de 5 min): limpa as marcas e o erro de forma otimista (a escuta que falhar de novo o repõe),
+// reabre o que a tela precisa e re-renderiza (o erro pode ter vindo de um mês navegado que já não está em vista).
+function watchReligar() { WATCH.retry = null; WATCH.falhou = {}; WATCH.erro = null; WATCH.ultimoErro = null; if (U && D) { watchGarantir(curDate()); watchRefresh(); } }
+function startWatch() { stopWatch(); if (!U) return; watchGarantir(curDate()); }
+// A tela pede um mês (troca de mês, dia anterior): ouve o que falta e solta o que sobra, para a navegação
+// para trás não acumular escutas.
+function watchGarantir(dt) {
+    if (!U) return;
+    const precisa = watchMesesNecessarios(dt);
+    watchOuvir('_meta');
+    precisa.forEach(watchOuvir);
+    // voltar a um mês cuja escuta falhou (o erro foi limpo por outro mês bom): o aviso volta até o religamento
+    if (!WATCH.erro && WATCH.ultimoErro && watchNecessarioFalhou(dt)) WATCH.erro = WATCH.ultimoErro;
+    const hoje = watchMesesNecessarios(today());
+    const ouvidos = Object.keys(WATCH.unsubs).filter(k => k !== '_meta').sort();
+    while (ouvidos.length > WATCH_MAX_OUVIDOS) {
+        const k = ouvidos.find(x => precisa.indexOf(x) === -1 && hoje.indexOf(x) === -1);
+        if (!k) break;
+        try { WATCH.unsubs[k](); } catch (e) {}
+        delete WATCH.unsubs[k]; delete WATCH.docs[k]; delete WATCH.cache[k]; ouvidos.splice(ouvidos.indexOf(k), 1);
+    }
+}
+function stopWatch() {
+    Object.keys(WATCH.unsubs).forEach(k => { try { WATCH.unsubs[k](); } catch (e) {} });
+    if (WATCH.retry) { clearTimeout(WATCH.retry); WATCH.retry = null; }
+    WATCH.unsubs = {}; WATCH.falhou = {}; WATCH.docs = {}; WATCH.cache = {}; WATCH.meta = null; WATCH.erro = null; WATCH.ultimoErro = null; WATCH.refreshPendente = false;
+}
+function watchNum(v) { return (typeof v === 'number' && Number.isFinite(v)) ? v : null; } // desconhecido nunca vira 0
+function watchDia(dt) { const doc = WATCH.docs[watchYm(dt)]; if (!doc || !isPlainObj(doc.dias)) return null; const d = doc.dias[dt]; return isPlainObj(d) ? d : null; }
+function watchTreinosDia(dt) {
+    const doc = WATCH.docs[watchYm(dt)];
+    if (!doc || !Array.isArray(doc.treinos)) return [];
+    return doc.treinos.filter(t => isPlainObj(t) && t.data === dt).slice().sort((a, b) => String(a.ini || '').localeCompare(String(b.ini || '')));
+}
+function watchTemDados() { return Object.keys(WATCH.docs).some(k => { const d = WATCH.docs[k]; return !!(d && isPlainObj(d.dias) && (Object.keys(d.dias).length > 0 || (Array.isArray(d.treinos) && d.treinos.length > 0))); }); }
+function watchFormatoNovo() { return Object.keys(WATCH.docs).some(k => WATCH.docs[k] && Object.prototype.hasOwnProperty.call(WATCH.docs[k], 'formato')); }
+// sono chega em MINUTOS inteiros (o robô arredonda uma vez só); km e peso chegam com 2 casas e saem com 2 casas
+function watchMin(m) { const n = watchNum(m); return n == null ? null : formatSleepDuration(Math.round(n)); }
+const watchFmt2 = v => Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+// 'AAAA-MM-DD HH:MM' ou ISO -> 'HH:MM' se for hoje, senão 'DD/MM HH:MM'
+function watchHora(s) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(String(s || ''));
+    if (!m) return '';
+    const dia = m[1] + '-' + m[2] + '-' + m[3], hm = m[4] + ':' + m[5];
+    return dia === today() ? hm : m[3] + '/' + m[2] + ' ' + hm;
+}
+function watchDiaBR(d) { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(d || '')); return m ? m[3] + '/' + m[2] : ''; }
+function watchTile(emo, valor, rot, sub) {
+    return `<div style="background:var(--bg);border-radius:10px;padding:8px 4px;text-align:center;min-width:0">
+                    <div style="font-size:14px">${emo}</div>
+                    <div style="font-size:16px;font-weight:800;color:var(--text);line-height:1.2">${valor}</div>
+                    <div style="font-size:10px;color:var(--text3)">${rot}</div>
+                    ${sub ? `<div style="font-size:9px;color:var(--text3);margin-top:1px">${sub}</div>` : ''}
+                </div>`;
+}
+function watchTreinoLinhaHtml(t) {
+    const partes = [];
+    const dur = watchNum(t.durMin), kcal = watchNum(t.kcalAtiva), fm = watchNum(t.fcMed), fx = watchNum(t.fcMax), km = watchNum(t.distKm);
+    if (dur != null) partes.push(fmtN(dur) + ' min');
+    if (kcal != null) partes.push(fmtN(kcal) + ' kcal');
+    if (fm != null || fx != null) partes.push('FC ' + (fm != null ? 'méd ' + fmtN(fm) : '') + (fm != null && fx != null ? ' · ' : '') + (fx != null ? 'máx ' + fmtN(fx) : ''));
+    if (km != null) partes.push(watchFmt2(km) + ' km');
+    const ini = typeof t.ini === 'string' ? t.ini : '', fim = typeof t.fim === 'string' ? t.fim : '';
+    const hora = ini ? escHtml(ini) + (fim ? '–' + escHtml(fim) : '') : '';
+    const tipo = (typeof t.tipo === 'string' && t.tipo) ? t.tipo : 'Treino';
+    return `<div style="padding:6px 8px;background:var(--bg);border-radius:8px;margin-top:4px">
+                    <div style="font-size:12px;font-weight:700;color:var(--text)">${hora ? hora + ' · ' : ''}${escHtml(tipo)}${t.interno === true ? ' <span style="font-weight:400;color:var(--text3)">(interno)</span>' : ''}</div>
+                    <div style="font-size:11px;color:var(--text2)">${partes.length ? partes.join(' · ') : 'sem medidas'}</div>
+                </div>`;
+}
+// Card do Início, para o dia em vista. Conta sem relógio (nenhum documento): card não existe.
+function watchCardHtml(dt) {
+    if (!watchTemDados() && !WATCH.erro && !watchFormatoNovo()) return '';
+    const dia = watchDia(dt), treinos = watchTreinosDia(dt);
+    const collapsed = isCollapsed('watch');
+    let summary, body;
+    if (WATCH.erro && !dia && !treinos.length) {
+        const msg = WATCH.erro === 'permission-denied'
+            ? 'o servidor ainda não libera a leitura destes dados (regras do Firestore)'
+            : 'não consegui ler os dados do relógio (' + escHtml(WATCH.erro) + ')';
+        summary = '⚠️ sem leitura';
+        body = `<div class="alert alert-warn" style="margin:0"><div class="alert-icon">⚠️</div><div><div class="alert-title">Sem leitura do relógio</div><div class="alert-text">${msg}. Nada se perdeu: o Mac mini guarda tudo.</div></div></div>`;
+    } else if (watchFormatoNovo() && !dia && !treinos.length) {
+        summary = '⚠️ formato novo';
+        body = `<div style="font-size:12px;color:var(--text3);padding:8px 0">O robô publicou num formato que esta versão do app não conhece. Atualize o app.</div>`;
+    } else if (!dia && !treinos.length) {
+        const ehHoje = dt === today();
+        summary = ehHoje ? 'ainda sem dados de hoje' : 'sem dados neste dia';
+        body = `<div style="font-size:12px;color:var(--text3);text-align:center;padding:10px 0">${ehHoje ? 'O iPhone manda os dados de hora em hora, quando está desbloqueado. Nada chegou de hoje ainda.' : 'Nenhum dado do relógio chegou para este dia.'}</div>`;
+    } else {
+        const d = dia || {};
+        const passos = watchNum(d.passos), km = watchNum(d.distKm), ativa = watchNum(d.kcalAtiva), total = watchNum(d.kcalTotal), rep = watchNum(d.kcalRepouso);
+        const ex = watchNum(d.exercMin), pe = watchNum(d.emPeH), fcRep = watchNum(d.fcRep), fcMed = watchNum(d.fcMed), fcMax = watchNum(d.fcMax), fcMin = watchNum(d.fcMin);
+        const vfc = watchNum(d.vfcMs), spo2 = watchNum(d.spo2), sono = watchMin(d.sonoMin), prof = watchMin(d.sonoProfMin), rem = watchMin(d.sonoRemMin), cama = watchMin(d.sonoCamaMin);
+        const tiles = [];
+        if (passos != null) tiles.push(watchTile('🚶', fmtN(passos), 'passos', km != null ? watchFmt2(km) + ' km' : ''));
+        if (ativa != null) tiles.push(watchTile('🔥', fmtN(ativa), 'kcal ativas', total != null ? 'total ' + fmtN(total) : (rep != null ? 'repouso ' + fmtN(rep) : '')));
+        if (ex != null) tiles.push(watchTile('⏱', fmtN(ex), 'min exercício', pe != null ? fmtN(pe) + ' h em pé' : ''));
+        if (fcRep != null || fcMed != null) tiles.push(watchTile('❤️', fmtN(fcRep != null ? fcRep : fcMed), fcRep != null ? 'bpm repouso' : 'bpm média',
+            [(fcRep != null && fcMed != null) ? 'méd ' + fmtN(fcMed) : '', fcMax != null ? 'máx ' + fmtN(fcMax) : ''].filter(Boolean).join(' · ')));
+        if (vfc != null) tiles.push(watchTile('📈', fmt(vfc), 'ms VFC', ''));
+        if (spo2 != null) tiles.push(watchTile('🫁', fmt(spo2) + '%', 'SpO₂', ''));
+        if (sono) tiles.push(watchTile('😴', sono, 'sono', [prof ? 'prof ' + prof : '', rem ? 'REM ' + rem : ''].filter(Boolean).join(' · ') || (cama ? 'na cama ' + cama : '')));
+        const extras = [];
+        const andares = watchNum(d.andares), luz = watchNum(d.luzMin), fcCam = watchNum(d.fcCam), resp = watchNum(d.respMin), vo2 = watchNum(d.vo2max), peso = watchNum(d.pesoKg);
+        if (andares != null) extras.push(fmtN(andares) + ' andar' + (andares === 1 ? '' : 'es'));
+        if (luz != null) extras.push(fmtN(luz) + ' min de luz do dia');
+        if (fcCam != null) extras.push('FC caminhada ' + fmtN(fcCam));
+        if (fcMin != null && fcRep == null && fcMed == null) extras.push('FC mín ' + fmtN(fcMin));
+        if (resp != null) extras.push('resp. ' + fmt(resp) + '/min');
+        if (vo2 != null) extras.push('VO₂máx ' + fmt(vo2));
+        if (peso != null) extras.push('peso ' + watchFmt2(peso) + ' kg');
+        const n = tiles.length;
+        const grid = n ? `<div style="display:grid;grid-template-columns:repeat(${n >= 3 ? 3 : n},1fr);gap:6px">${tiles.join('')}</div>` : '';
+        const trHtml = treinos.length ? `<div style="margin-top:8px"><div style="font-size:11px;font-weight:700;color:var(--text2)">Treinos do relógio</div>${treinos.map(watchTreinoLinhaHtml).join('')}</div>` : '';
+        const rodape = [];
+        if (dia && dia.parcial === true) rodape.push('⏳ dia parcial');
+        if (dia && dia.gravadoEm) rodape.push('arquivo do iPhone ' + escHtml(watchHora(dia.gravadoEm)));
+        if (WATCH.cache[watchYm(dt)]) rodape.push('dados guardados neste aparelho');
+        if (WATCH.erro) rodape.push('⚠️ leitura interrompida (' + escHtml(WATCH.erro) + '), mostrando o último dado recebido');
+        body = `${grid}${extras.length ? `<div style="font-size:10px;color:var(--text3);margin-top:6px">${extras.join(' · ')}</div>` : ''}${trHtml}
+                <div style="font-size:10px;color:var(--text3);margin-top:8px">${rodape.length ? rodape.join(' · ') + ' · ' : ''}fonte: Apple Watch via Health Auto Export</div>`;
+        summary = [passos != null ? fmtN(passos) + ' passos' : '', ativa != null ? fmtN(ativa) + ' kcal' : '', treinos.length ? treinos.length + ' treino' + (treinos.length === 1 ? '' : 's') : ''].filter(Boolean).join(' • ') || 'dados do dia';
+    }
+    return `
+            <div class="card mb-12" id="card-watch">
+                <div onclick="toggleCollapse('watch')" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;${collapsed ? '' : 'margin-bottom:10px'}">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0">
+                        <span style="font-size:14px;transition:transform .2s;display:inline-block;${collapsed ? '' : 'transform:rotate(90deg)'}">▶</span>
+                        <span class="card-title" style="margin:0">⌚ Apple Watch</span>
+                        ${collapsed ? `<span style="font-size:11px;color:var(--text3);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${summary}</span>` : ''}
+                    </div>
+                </div>
+                ${collapsed ? '' : body}
+            </div>`;
+}
+function watchSessaoHtml(data) {
+    const ts = watchTreinosDia(data);
+    if (!ts.length) return '';
+    return `<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border)"><div style="font-size:11px;font-weight:700;color:var(--text2)">⌚ Apple Watch neste dia</div>${ts.map(watchTreinoLinhaHtml).join('')}</div>`;
+}
+function watchChipHtml(data) {
+    const ts = watchTreinosDia(data);
+    if (!ts.length) return '';
+    const t = ts.slice().sort((a, b) => (watchNum(b.durMin) || 0) - (watchNum(a.durMin) || 0))[0]; // o mais longo do dia
+    const dur = watchNum(t.durMin), kcal = watchNum(t.kcalAtiva);
+    const txt = [dur != null ? fmtN(dur) + ' min' : '', kcal != null ? fmtN(kcal) + ' kcal' : ''].filter(Boolean).join(' · ');
+    return `<span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(59,130,246,.16);color:#3b82f6">⌚ ${txt || 'relógio'}</span>`;
+}
+function watchEstadoTexto() {
+    if (WATCH.erro === 'permission-denied') return '🚫 o servidor ainda não libera a leitura (regras do Firestore)';
+    if (WATCH.erro) return '❌ erro de leitura: ' + escHtml(WATCH.erro);
+    const m = WATCH.meta;
+    if (m && typeof m.ultimoDia === 'string') return '✅ último dia ' + escHtml(watchDiaBR(m.ultimoDia)) + (m.atualizadoEm ? ' · publicado ' + escHtml(watchHora(m.atualizadoEm)) : '');
+    if (watchTemDados()) return '✅ dados recebidos';
+    return '⏳ sem dados nesta conta (o robô do Mac mini ainda não publicou nada para ela)';
+}
+
 // Pós-carga: o que o login faz depois de ter os dados (v1.28.0: extraído do onAuthStateChanged para o
 // "Tentar de novo" repetir exatamente o mesmo caminho).
 function afterLoadOk() {
     startSync(); // ouve o documento; mudança de outra cópia entra sem recarregar
+    startWatch(); // v1.34.0: ouve os documentos do Apple Watch (users/{uid}/watch/*), gravados pelo robô do Mac mini
     restoreExecution(); // treino em andamento sobrevive a reload do PWA (v1.12.0)
     showPage('dash');
     $('bottom-nav').classList.remove('hidden');
@@ -1577,6 +1788,7 @@ function stopSync() {
 }
 function syncResetState() {
     stopSync();
+    stopWatch(); // v1.34.0
     SYNC.rev = 0; SYNC.updatedAtMs = 0; SYNC.baseJson = null; SYNC.basePersistedRev = -1;
     SYNC.pending = false; SYNC.queued = false; SYNC.offlineAvisado = false;
     SYNC.lastWriter = null; SYNC.writers = []; SYNC.fromCache = false; SYNC.loadError = false;
@@ -1674,6 +1886,7 @@ function settingsSyncHtml() {
             </div>
             <div class="cfg-item"><div><div class="cfg-label">Este aparelho</div><div class="cfg-desc">${escHtml(SYNC.label)} · id ${escHtml(SYNC.cid)}</div></div></div>
             <div class="cfg-item"><div><div class="cfg-label">Estado</div><div class="cfg-desc">${estado} · revisão ${SYNC.rev}</div></div></div>
+            <div class="cfg-item"><div><div class="cfg-label">⌚ Apple Watch</div><div class="cfg-desc">${watchEstadoTexto()}</div></div></div>
             <div class="cfg-item"><div><div class="cfg-label">Última gravação no banco</div><div class="cfg-desc">${w ? fmtWriter(w) : 'sem registro ainda (versões anteriores à 1.28.0 não gravavam quem escreveu)'}</div></div></div>
             <div class="cfg-item"><div style="min-width:0;flex:1"><div class="cfg-label">Últimas gravações</div><div class="cfg-desc" style="line-height:1.6">${lst.length ? lst.map(fmtWriter).join('<br>') : '—'}</div></div></div>
             <div class="cfg-item" style="border:none"><div style="min-width:0;flex:1"><div class="cfg-label">Eventos desta cópia</div><div class="cfg-desc" style="line-height:1.6">${logHtml || '—'}</div></div></div>
@@ -2691,6 +2904,7 @@ function rDash() {
     const { totalKcal, totalProt, totalCarbo, totalGord } = getDayMeals(dt);
     const totalWater = getDayWater(dt);
     const vitals = D.vitals[dt] || {};
+    watchGarantir(dt); // v1.34.0: o mês em vista pode não estar sendo ouvido (navegação para trás, virada de mês)
 
     // Vitais do DIA EM VISUALIZAÇÃO (curDate), com fallback p/ a medição mais recente
     // ANTERIOR a esse dia; recência sempre relativa ao dia visto (sugestão da família 28/mai;
@@ -3008,6 +3222,9 @@ function rDash() {
                 </div>
             </div>
         </div>`}
+
+        <!-- Apple Watch (v1.34.0): só existe quando há documento do relógio nesta conta -->
+        ${watchCardHtml(dt)}
 
         <!-- Refeições -->
         ${!isModuleEnabled('refeicao') ? '' : (() => {
@@ -8790,6 +9007,7 @@ function rTreinoSession() {
                 <div style="flex:1;padding:8px;background:var(--bg);border-radius:8px"><div style="font-size:18px;font-weight:800;color:var(--primary)">${fmtN(stat.volume)}</div><div style="font-size:10px;color:var(--text3)">kg volume</div></div>
             </div>
             ${t.notas ? `<div style="font-size:12px;color:var(--text2);margin-top:10px;padding-top:8px;border-top:1px solid var(--border);white-space:pre-wrap">📝 ${escHtml(t.notas)}</div>` : ''}
+            ${watchSessaoHtml(t.data)}
             ${personalSessionToggleHtml(t)}
         </div>
         ${exHtml}
@@ -9794,6 +10012,7 @@ function rTreinoHistory() {
         const chipsHtml = groups.map(g => `<span style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;background:${g.color}22;color:${g.color}">${g.label}</span>`).join(' ');
         const prChip = pr ? `<span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(251,191,36,.18);color:#f59e0b">🏆 PR</span>` : '';
         const persoChip = t.personal === true ? `<span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(124,58,237,.16);color:#7c3aed">🏋️ personal</span>` : '';
+        const watchChip = watchChipHtml(t.data); // v1.34.0
         const exNomes = t.exercicios.slice(0, 3).map(e => e.nome).filter(Boolean).join(', ') + (t.exercicios.length > 3 ? '…' : '');
         listHtml += `
             <div class="card mb-8" onclick="openTreinoSession('${t.id}')" style="cursor:pointer${pr ? ';border-left:3px solid #f59e0b' : ''}">
@@ -9804,7 +10023,7 @@ function rTreinoHistory() {
                     </div>
                     <button class="btn btn-outline btn-sm" onclick="event.stopPropagation();duplicateTreino('${t.id}')" title="Duplicar pra hoje">📋</button>
                 </div>
-                ${(chipsHtml || prChip || persoChip) ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px">${chipsHtml}${prChip}${persoChip}</div>` : ''}
+                ${(chipsHtml || prChip || persoChip || watchChip) ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px">${chipsHtml}${prChip}${persoChip}${watchChip}</div>` : ''}
                 <div style="font-size:11px;color:var(--text2);margin-bottom:4px">${exNomes || '—'}</div>
                 <div style="font-size:11px;color:var(--text3)">
                     ${stat.exercicios} ex • ${stat.series} séries • ${fmtN(stat.volume)}kg volume
