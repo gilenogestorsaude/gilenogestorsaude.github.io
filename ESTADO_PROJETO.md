@@ -1,7 +1,7 @@
 # Estado do Projeto — Gestão Saúde
 
 **Última atualização:** 2026-09-17 (parte 23, sessão no Mac mini)
-**Versão atual em produção:** v1.34.0 (Apple Watch dentro do app: card ⌚ no Início, bloco na sessão selada, chip no histórico e linha em Ajustes › Sincronização, lendo os documentos `users/{uid}/watch/AAAA-MM` publicados pelo robô do Mac mini; no ar 25/09 15h39, push do Mac mini com ok do CEO, regras publicadas 15h37, ver parte 27) sobre a v1.33.1 (na página 1 do registro de treino a pizza cresce até ocupar o espaço livre, até 160 pt, com legenda e % maiores; 24/09, push do Mac mini com ok do CEO, ver parte 26) sobre a v1.33.0 (pizza do mês em % e os dois gráficos do mês na página 1 do registro de treino; o Extrato separado do Personal saiu; 24/09, ver parte 25) sobre a v1.32.0 (página 2 do PDF do treino e extrato do Personal com TODOS os dias do mês, "Descanso" nos dias sem treino e gráfico de evolução; 22/09, ver parte 24) sobre a v1.31.0 (Relatório para a nutricionista: plano × comido em PDF semanal de 2 páginas; no ar 17/09 19h15, ver parte 23) sobre a v1.30.0 ("o plano manda"; no ar 17/09 15h01, ver parte 22) sobre a v1.29.0 (PDF do treino com o extrato detalhado do mês + extrato em PDF; no ar 17/09 12h02, ver parte 21) sobre a v1.28.2 (PDF gerado no aparelho + impressão por navegação real, 16/09 08h41) e a v1.28.0 (sincronização segura entre cópias: revisão + junção de 3 vias + escuta do documento, no ar 16/09 07h23), push do Mac mini pela deploy key com ok do CEO (ver parte 20). Antes: v1.27.0 (15/09 16h4x), v1.26.0 (14/09 18h08), v1.25.2 (14/09 14h07), v1.25.1 (14/09 09h07), v1.25.0 (14/09 08h07), v1.24.0 (02/09).
+**Versão atual em produção:** v1.35.0 (Apple Watch no PDF do registro de treino, descanso em popup pela hora do relógio, Cardio na sessão do relógio ou manual, relógio na análise da semana no lugar dos prints; commitada 25/09 20h1x, publicação com ok do CEO, ver parte 28) sobre a v1.34.0 (Apple Watch dentro do app: card ⌚ no Início, bloco na sessão selada, chip no histórico e linha em Ajustes › Sincronização, lendo os documentos `users/{uid}/watch/AAAA-MM` publicados pelo robô do Mac mini; no ar 25/09 15h39, push do Mac mini com ok do CEO, regras publicadas 15h37, ver parte 27) sobre a v1.33.1 (na página 1 do registro de treino a pizza cresce até ocupar o espaço livre, até 160 pt, com legenda e % maiores; 24/09, push do Mac mini com ok do CEO, ver parte 26) sobre a v1.33.0 (pizza do mês em % e os dois gráficos do mês na página 1 do registro de treino; o Extrato separado do Personal saiu; 24/09, ver parte 25) sobre a v1.32.0 (página 2 do PDF do treino e extrato do Personal com TODOS os dias do mês, "Descanso" nos dias sem treino e gráfico de evolução; 22/09, ver parte 24) sobre a v1.31.0 (Relatório para a nutricionista: plano × comido em PDF semanal de 2 páginas; no ar 17/09 19h15, ver parte 23) sobre a v1.30.0 ("o plano manda"; no ar 17/09 15h01, ver parte 22) sobre a v1.29.0 (PDF do treino com o extrato detalhado do mês + extrato em PDF; no ar 17/09 12h02, ver parte 21) sobre a v1.28.2 (PDF gerado no aparelho + impressão por navegação real, 16/09 08h41) e a v1.28.0 (sincronização segura entre cópias: revisão + junção de 3 vias + escuta do documento, no ar 16/09 07h23), push do Mac mini pela deploy key com ok do CEO (ver parte 20). Antes: v1.27.0 (15/09 16h4x), v1.26.0 (14/09 18h08), v1.25.2 (14/09 14h07), v1.25.1 (14/09 09h07), v1.25.0 (14/09 08h07), v1.24.0 (02/09).
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
@@ -1191,3 +1191,60 @@ Cadeia: Apple Watch › Saúde › Health Auto Export › iCloud › `apple_saud
   `72908a7..6e1f9d0` 15h38 pela deploy key (index `68fe7567`, sw `14e17ae1`). Prova de campo 15h42 (print do iPhone: card ⌚ com o dia
   parcial) em `Gileno (1) Academia /`. Health Auto Export comprado 25/09 09h2x. Fica para a v1.34.1: 3 notas verdes da auditoria 4
   (aviso restaurado preso num mês são; config não texto derruba com exit 1; código de erro restaurado é o último).
+
+## Parte 28: v1.35.0, Apple Watch no PDF, descanso em popup, Cardio na sessão e relógio na análise da semana (25/09/2026, sessão no Mac mini)
+
+Depois da v1.34.0 no ar (15h39), o CEO viu o `treino-2026-09-25.pdf` ("Pensei que os dados do Apple Watch apareceriam
+no relatório") e, com a versão segurada, pediu três melhorias, uma de cada vez, com prévia de cada uma na pasta
+`Gileno (1) Academia /04 App Saude - previas e provas/`. Começou como 1.34.1 (só o PDF) e virou 1.35.0.
+Kit único: `~/Gestao_Saude_Dados/kits/v130_bancada/v1341/` (`patch_v1341.py` sobre a 1.34.0, seções 1 a 9).
+
+- **PDF do registro de treino** (`pdfWatchBloco` em `pdfSessionPage`): bloco "Apple Watch neste dia" abaixo da tabela de
+  exercícios e antes das Notas, na mesma fonte da sessão selada (`WATCH`, os documentos do robô do Mac mini em memória):
+  uma linha por treino do relógio (hora, tipo, minutos, kcal, FC, km; no máximo 4), "Dia: ..." com as medidas do dia (quebra
+  por ITEM), rodapé com "dia parcial" e "arquivo do iPhone HH:MM" relativo à DATA DA SESSÃO. Altura medida antes da tabela;
+  larguras por `pdfWExata`; sem dado: PDF byte a byte igual ao da 1.34.0; escuta em erro ou formato desconhecido: linha
+  de aviso. Sessão selada pede o mês da sessão (`rTreinoSession` → `watchGarantir`, só data AAAA-MM-DD).
+- **Descanso em popup pela hora do relógio** (pedido: "quando clicar que concluiu, abrir o cronômetro em popup, mesmo se
+  fecharmos o app ele continua"): o fim do descanso é um INSTANTE (`restEndsAt` + `restCtx` no snapshot da execução), não
+  um contador que congelava com o app suspenso; `restAlvo` lê "Intervalo Ns" das notas do exercício (plano importado),
+  −15s/+15s lembrados por exercício (`restDelta`, com piso); popup grande (`openRestPopup`) + barra no rodapé; `restResume`
+  no Retomar/reload/`visibilitychange` (tempo certo ou "terminou há X"); aviso sonoro por WebAudio (contexto criado no
+  toque do ✓) + vibração onde existe; 1 gravação por série; remover/trocar exercício em descanso encerra o descanso dele.
+  Limite: sem servidor de push, o iOS não avisa com o app fechado (o popup diz).
+- **Cardio na sessão** (pedido: "+ Adicionar exercício" com Cardio "direto do Apple Watch"): item `{tipo:'cardio',
+  series:[], grupo:'aerob', cardio:{durMin, distKm, kcalAtiva, kcalTotal, fcMed, fcMax, ini, fim, fonte, watchId}}`; seletor
+  com "CARDIO · do Apple Watch, hoje" (treinos do relógio do dia; já adicionado fica desligado) e "CARDIO · manual" (tipo,
+  minutos 1 a 600, km 0,01 a 500); aparece na execução, no registro selado, no editor (só leitura + 🗑, `saveTreino` não
+  descarta), no PDF (Reps = min · ritmo; Carga = km · kcal · FC) e na exportação HTML; chip Aeróbico; "Duplicar pra hoje"
+  não copia cardio. Todo consumidor de `exercicios[]` tolera `series: []`.
+- **Relógio na análise da semana, prints aposentados** (opção A do CEO): `reportWatchForAI` monta o bloco `relogio` (7
+  dias: passos, km, kcal, exercício, em pé, FC, VFC, SpO2, sono em horas, respiração, VO2máx, peso, andares, diaParcial;
+  treinos com horário, tipo, minutos, km, ritmo, kcal, FC; `resumo` com médias) nos agregados que vão à VPS, sem
+  `printsWatch`; sem dado o bloco não vai; leitura falha: `{indisponivel, motivo}`. Card com a linha "⌚ Apple Watch: N
+  dias e M treinos ... entram na análise automaticamente"; prosa guarda `relogio {dias, treinos}`; análise antiga compara a
+  impressão digital SEM o relógio (`proseFingerprintPara`: a atualização não libera regeração paga); abrir/trocar a semana
+  pede o mês ao relógio; código dos prints inerte (só a faxina do IndexedDB roda). **Serviço VPS `relatorio_ia_service`
+  v2.3** (`Operacoes_VPS/relatorio_ia_service/app.py`): SYSTEM com "DADOS DO APPLE WATCH" (fonte primária, "no Watch",
+  diaParcial, ausente = não medido, indisponivel = dizer; prints legado), `_valida_relogio` (400 `relogio_invalido`), aviso
+  no texto; `test_endpoint.py` 56/56 (`~/venv-relatorio`); `deploy_v23.sh` sem root (app.py é bind-mount de arquivo:
+  `cat >` preservando o inode + kill do PID por `REL_PORT=8774`, PID antes/depois e md5 como prova). Compatível com o app
+  anterior: vai ao ar ANTES do app.
+- **Robô `apple_saude_publica` v1.0.1** (nota 4.2 da auditoria 4): projeto/uid não texto no config = rc 2 sem traceback;
+  `atualizar.sh` novo (troca só o robô instalado, com backup e kickstart; confere a plist); `selar.sh` sela o healthcheck do
+  backup quando instalado; bancada 199/199; mutantes regerados 17/17.
+- **Auditorias da 1.34.0 (notas verdes 4.1 e 4.3):** `WATCH.falhou[nome]` guarda o CÓDIGO do erro; `watchGarantir` restaura
+  o do documento necessário que falhou e limpa o aviso ao ir para um mês são; Ajustes › Sincronização decide pelos
+  documentos de HOJE.
+- **Bancada** (`valida_v1341.py`, rc != 0 se algo falhar): `verify_v1341.js` 152 checks no jsc sobre a 1.35.0 (10 etapas:
+  PDF, geometria, erro, sessão, curas 4.1/4.3, Ajustes, descanso, cardio, análise) e sobre a 1.34.0 (prova reversa: 97
+  [cura] reprovam lá e nenhum outro); `verify_v134_sobre_1341.js` 117/117; fitz 16.500 medições (margens, rodapé com texto e
+  tinta, ordem dos blocos, igualdade byte a byte onde não há bloco); `bench/build_bench_exec.py` (Chrome headless) gera as
+  prévias. Auditorias independentes: 1 (3 🟡, curada), 2 (aprovada sem ressalva), 3 (auditor novo: 5 🟡 e 7 🟢, curadas)
+  e 3b (ver LEIA-ME do kit). 12 prévias na pasta 04 do CEO.
+- ☠️ Aprendizados: âncora de `rep()` com `\n` literal em template string pede `\\n` no patch; check de harness que toca
+  campo só da versão nova sem guarda derruba o jsc da versão antiga; `escHtml` escapa aspas (desescapar antes de procurar);
+  a duração do relógio vem com 2 casas (ritmo pela exata); a hora do arquivo do iPhone é do dia seguinte; Chrome headless
+  não fecha com `setInterval` vivo (matar por PID).
+- Publicação: (preencher) serviço v2.3 na VPS com "sim" do CEO; push do Mac mini com "pode"; robô por `selar.sh` +
+  `atualizar.sh` com "pode".

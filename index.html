@@ -625,7 +625,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.34.0';
+const APP_VERSION = '1.35.0';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1542,6 +1542,7 @@ function watchRefresh() {
         if (cPage === 'dash') rDash();
         else if (cPage === 'treino-history') rTreinoHistory();
         else if (cPage === 'treino-session') rTreinoSession();
+        else if (cPage === 'report') rReport(); // v1.35.0: a análise da semana mostra o que o relógio deu
     });
 }
 // Só limpa o erro quando nada do que a tela precisa (_meta, mês em vista e anterior) está marcado como falho
@@ -1564,8 +1565,8 @@ function watchOuvir(nome) {
         if (mudou) watchRefresh();
     }, err => {
         console.warn('Apple Watch (' + nome + '):', err);
-        WATCH.erro = WATCH.ultimoErro = (err && err.code) || 'erro';
-        WATCH.falhou[nome] = true;
+        WATCH.falhou[nome] = (err && err.code) || 'erro'; // v1.35.0: o código fica por documento (auditoria 4, nota 4.3)
+        WATCH.erro = WATCH.ultimoErro = WATCH.falhou[nome];
         delete WATCH.unsubs[nome]; // o SDK encerra a escuta depois de um erro
         watchRefresh();
         if (!WATCH.retry) WATCH.retry = setTimeout(watchReligar, 300000); // as regras podem ter sido publicadas, ou a rede voltado
@@ -1582,8 +1583,12 @@ function watchGarantir(dt) {
     const precisa = watchMesesNecessarios(dt);
     watchOuvir('_meta');
     precisa.forEach(watchOuvir);
-    // voltar a um mês cuja escuta falhou (o erro foi limpo por outro mês bom): o aviso volta até o religamento
-    if (!WATCH.erro && WATCH.ultimoErro && watchNecessarioFalhou(dt)) WATCH.erro = WATCH.ultimoErro;
+    // v1.35.0 (auditoria 4, notas 4.1 e 4.3): o aviso segue o mês em vista nos DOIS sentidos. Voltar a um mês cuja escuta
+    // falhou traz o aviso de volta com o código DAQUELE documento (_meta primeiro, depois o mês em vista, depois o anterior);
+    // ir a um mês são limpa o aviso restaurado. Nada aqui religa escuta: só watchReligar (5 min) faz isso.
+    const falhoNecessario = ['_meta'].concat(precisa).find(k => WATCH.falhou[k]);
+    if (falhoNecessario) WATCH.erro = WATCH.falhou[falhoNecessario];
+    else if (WATCH.erro) WATCH.erro = null;
     const hoje = watchMesesNecessarios(today());
     const ouvidos = Object.keys(WATCH.unsubs).filter(k => k !== '_meta').sort();
     while (ouvidos.length > WATCH_MAX_OUVIDOS) {
@@ -1721,8 +1726,11 @@ function watchChipHtml(data) {
     return `<span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(59,130,246,.16);color:#3b82f6">⌚ ${txt || 'relógio'}</span>`;
 }
 function watchEstadoTexto() {
-    if (WATCH.erro === 'permission-denied') return '🚫 o servidor ainda não libera a leitura (regras do Firestore)';
-    if (WATCH.erro) return '❌ erro de leitura: ' + escHtml(WATCH.erro);
+    // v1.35.0 (auditoria 1, nota 9): Ajustes não é uma vista de mês; o estado é o dos documentos de HOJE (_meta, mês atual, anterior)
+    const falhoHoje = ['_meta'].concat(watchMesesNecessarios(today())).find(k => WATCH.falhou[k]);
+    const erroHoje = falhoHoje ? WATCH.falhou[falhoHoje] : null;
+    if (erroHoje === 'permission-denied') return '🚫 o servidor ainda não libera a leitura (regras do Firestore)';
+    if (erroHoje) return '❌ erro de leitura: ' + escHtml(erroHoje);
     const m = WATCH.meta;
     if (m && typeof m.ultimoDia === 'string') return '✅ último dia ' + escHtml(watchDiaBR(m.ultimoDia)) + (m.atualizadoEm ? ' · publicado ' + escHtml(watchHora(m.atualizadoEm)) : '');
     if (watchTemDados()) return '✅ dados recebidos';
@@ -1839,6 +1847,12 @@ document.addEventListener('visibilitychange', () => {
     else if (SYNC.remote) tryAdoptRemote();
 });
 window.addEventListener('online', () => { if (U && D && SYNC.pending && !SYNC.saving) save(); });
+// v1.35.0: o app volta do segundo plano com o descanso armado: recalcula pela hora do relógio (na tela da execução reabre o
+// popup; fora dela só fecha o descanso que já acabou, com o aviso)
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || !activeExecution || typeof activeExecution.restEndsAt !== 'number') return;
+    if (cPage === 'treino-execute') restResume(); else tickRest();
+});
 
 function renderLoadError() {
     const el = $('dash-body');
@@ -6515,8 +6529,8 @@ const escHtml = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':
 
 function openWeeklyReport() {
     reportWeekStart = weekStartOf(today());
-    hydrateProseImgs(reportWeekStart);
-    printsIdbSweep();
+    printsIdbSweep(); // faxina dos prints antigos guardados no aparelho (o anexo foi aposentado na v1.35.0)
+    watchGarantir(addDaysStr(reportWeekStart, 6)); // v1.35.0: o relógio da semana em vista (mês final e o anterior)
     showPage('report');
 }
 function shiftReportWeek(delta) {
@@ -6524,7 +6538,7 @@ function shiftReportWeek(delta) {
     let ns = addDaysStr(cur, delta * 7);
     if (ns > weekStartOf(today())) ns = weekStartOf(today());
     reportWeekStart = ns;
-    hydrateProseImgs(ns);
+    watchGarantir(addDaysStr(ns, 6)); // v1.35.0
     rReport();
 }
 function saveWeeklyNotes(startIso, val) {
@@ -6594,7 +6608,8 @@ function reportProseFor(startIso) {
     return (D.weeklyProse && D.weeklyProse[startIso]) || null;
 }
 
-// ===== Prints do Apple Watch (v1.22.0) =====
+// ===== Prints do Apple Watch (v1.22.0; APOSENTADOS na v1.35.0: o relógio chega em número pelo robô do Mac mini) =====
+// O que fica abaixo não tem mais botão na interface nem entra no payload; só a faxina do IndexedDB continua rodando.
 // Capturas do app Fitness que acompanham a análise por IA. O Gileno anexa
 // 2+ por DIA de treino, ao longo da semana; então elas persistem no
 // IndexedDB DESTE aparelho até a análise de domingo. Firestore não serve:
@@ -6652,13 +6667,80 @@ function hydrateProseImgs(startIso) {
     });
 }
 
-// Agregados + prints anexados. Os prints entram no payload E na impressão
-// digital: anexar um print conta como "os dados mudaram" (o servidor faz o
-// mesmo com o sha256), então dá direito à regeração.
+// ===== Apple Watch na análise da semana (v1.35.0, melhoria 3 do CEO 25/09/2026) =====
+// Os prints do Fitness foram aposentados: o que a inteligência lia neles (FC, calorias, ritmo, duração) agora vai em
+// número, dos documentos que o robô do Mac mini publica (users/{uid}/watch), e com o que print nenhum trazia (passos,
+// sono, VFC, SpO2, kcal do dia inteiro), para os 7 dias da semana. Só leitura de WATCH; medida ausente fica ausente.
+// Devolve null quando não há nada do relógio para a semana (o bloco não vai); quando a leitura do mês falhou, devolve
+// {indisponivel: true, motivo} (ausência de dado nunca vira "não treinou"). O bloco entra na impressão digital dos
+// agregados: dado novo do relógio conta como "os dados mudaram" (regeração legítima, como era com os prints).
+function reportWatchForAI(rep) {
+    const r1 = n => (typeof n === 'number' && isFinite(n)) ? Math.round(n * 10) / 10 : null;
+    const dias = [], treinos = [], meses = {};
+    for (let i = 0; i < 7; i++) {
+        const dt = addDaysStr(rep.startIso, i);
+        meses[watchYm(dt)] = true;
+        const d = watchDia(dt);
+        if (d) {
+            const o = { dia: dt };
+            [['passos', 'passos'], ['distKm', 'km'], ['kcalAtiva', 'kcalAtivas'], ['kcalTotal', 'kcalTotal'], ['exercMin', 'minExercicio'], ['emPeH', 'horasEmPe'], ['fcRep', 'fcRepouso'], ['fcMed', 'fcMedia'], ['fcMax', 'fcMax'], ['vfcMs', 'vfcMs'], ['spo2', 'spo2Pct'], ['respMin', 'respiracaoPorMin'], ['vo2max', 'vo2max'], ['pesoKg', 'pesoKg'], ['andares', 'andares']]
+                .forEach(([k, nome]) => { const v = watchNum(d[k]); if (v != null) o[nome] = v; });
+            const sono = watchNum(d.sonoMin); if (sono != null) o.sonoHoras = r1(sono / 60);
+            const prof = watchNum(d.sonoProfMin); if (prof != null) o.sonoProfundoMin = prof;
+            const rem = watchNum(d.sonoRemMin); if (rem != null) o.sonoRemMin = rem;
+            if (d.parcial === true) o.diaParcial = true;
+            dias.push(o);
+        }
+        watchTreinosDia(dt).forEach(t => {
+            const o = { dia: dt, tipo: (typeof t.tipo === 'string' && t.tipo) ? t.tipo : 'Treino' };
+            if (typeof t.ini === 'string') o.inicio = t.ini;
+            if (typeof t.fim === 'string') o.fim = t.fim;
+            if (t.interno === true) o.interno = true;
+            const dur = watchNum(t.durMin), km = watchNum(t.distKm);
+            if (dur != null) o.minutos = r1(dur);
+            if (km != null) o.km = km;
+            const rit = cardioRitmo(dur, km); if (rit) o.ritmoPorKm = rit;
+            [['kcalAtiva', 'kcalAtivas'], ['kcalTotal', 'kcalTotal'], ['fcMed', 'fcMedia'], ['fcMax', 'fcMax']].forEach(([k, nome]) => { const v = watchNum(t[k]); if (v != null) o[nome] = v; });
+            treinos.push(o);
+        });
+    }
+    const falhos = Object.keys(meses).filter(ym => WATCH.falhou[ym]);
+    if (!dias.length && !treinos.length) {
+        if (falhos.length) return { indisponivel: true, motivo: 'leitura dos dados do relógio falhou nesta semana', fonte: 'Apple Watch via Health Auto Export' }; // sem o código: ele mudaria a impressão digital entre erros
+        return null;
+    }
+    const media = (arr, k) => { const v = arr.map(x => x[k]).filter(x => typeof x === 'number'); return v.length ? r1(v.reduce((a, b) => a + b, 0) / v.length) : null; };
+    const out = {
+        fonte: 'Apple Watch via Health Auto Export (robô do Mac mini); campo ausente = não medido, nunca zero',
+        resumo: { diasComDados: dias.length, treinosDoRelogio: treinos.length, mediaPassos: media(dias, 'passos'), mediaSonoHoras: media(dias, 'sonoHoras'), mediaFcRepouso: media(dias, 'fcRepouso'), mediaVfcMs: media(dias, 'vfcMs'), mediaKcalAtivas: media(dias, 'kcalAtivas') },
+        dias, treinos
+    };
+    if (falhos.length) out.aviso = 'parte da semana sem leitura do relógio (' + falhos.join(', ') + ')';
+    return out;
+}
+// Linha de estado do relógio no card da análise, no lugar do "Anexar prints" (aposentado na v1.35.0)
+function proseWatchHtml(rep) {
+    const rel = reportWatchForAI(rep);
+    let txt, cor = 'var(--text3)';
+    if (!rel) txt = watchTemDados() ? 'nenhum dado do relógio nesta semana' : 'sem dados do relógio nesta conta (o robô do Mac mini ainda não publicou)';
+    else if (rel.indisponivel) { const cod = ['_meta'].concat(watchMesesNecessarios(rep.endIso)).map(k => WATCH.falhou[k]).find(Boolean); txt = 'sem leitura do relógio agora: ' + escHtml(rel.motivo) + (cod ? ' (' + escHtml(String(cod)) + ')' : ''); cor = 'var(--red)'; }
+    else txt = `${rel.dias.length} dia${rel.dias.length === 1 ? '' : 's'} e ${rel.treinos.length} treino${rel.treinos.length === 1 ? '' : 's'} do relógio desta semana entram na análise automaticamente` + (rel.aviso ? ' · ' + escHtml(rel.aviso) : '');
+    return `<div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--border);font-size:11px;color:${cor};line-height:1.5">⌚ Apple Watch: ${txt}</div>`;
+}
+// Impressão digital para comparar com uma análise já gerada: análise feita antes da 1.35.0 (sem o campo relogio) não
+// conhecia o bloco do relógio, então compara SEM ele; senão a simples atualização do app liberaria uma regeração paga
+// em toda semana antiga com dado do relógio. Análise nova (campo relogio presente, mesmo null) compara com tudo.
+function proseFingerprintPara(rep, p) {
+    const agg = reportPayloadForAI(rep);
+    if (p && !('relogio' in p)) delete agg.relogio;
+    return aggregatesFingerprint(agg);
+}
+// Agregados da semana + o bloco do relógio (v1.35.0: no lugar dos prints, que não vão mais). O bloco entra na impressão
+// digital: dado novo do relógio conta como "os dados mudaram" (o servidor faz o mesmo com o sha256).
 function reportPayloadForAI(rep) {
     const agg = reportAggregatesForAI(rep);
-    const imgs = proseImgsFor(rep.startIso);
-    if (imgs.length) agg.printsWatch = imgs.map(x => ({ tipo: x.tipo, b64: x.b64 }));
+    const rel = reportWatchForAI(rep);
+    if (rel) agg.relogio = rel;
     return agg;
 }
 
@@ -6761,8 +6843,9 @@ const PROSE_GATE_MSG = {
 // Resposta do serviço -> objeto gravado em D.weeklyProse[startIso]. Pura
 // (testável sem rede): guarda a prosa, a impressão digital dos agregados
 // enviados (baseline do "os números mudaram?") e o contador de regerações.
-function proseFromResponse(data, fp, force, prev, nPrints) {
+function proseFromResponse(data, fp, force, prev, nPrints, relogio) {
     return {
+        relogio: relogio || null, // v1.35.0: {dias, treinos} lidos do relógio nesta análise
         resumo: String(data.prosa.resumo || ''),
         analise: String(data.prosa.analise || ''),
         plano: Array.isArray(data.prosa.plano) ? data.prosa.plano.map(String) : [],
@@ -6787,8 +6870,10 @@ async function gerarProsaIA(force) {
     const p = reportProseFor(rep.startIso);
     const agg = reportPayloadForAI(rep);
     const nPrints = (agg.printsWatch || []).length;
+    const relLido = (agg.relogio && !agg.relogio.indisponivel) ? { dias: agg.relogio.dias.length, treinos: agg.relogio.treinos.length } : null; // v1.35.0
     const fp = aggregatesFingerprint(agg);
-    const gate = proseGate(rep, p, force, fp);
+    const fpGate = proseFingerprintPara(rep, p); // v1.35.0: o porteiro compara como a análise foi feita (antiga: sem o relógio)
+    const gate = proseGate(rep, p, force, fpGate); // v1.35.0
     if (!gate.ok) {
         const msg = PROSE_GATE_MSG[gate.motivo];
         return msg ? toast(msg, true) : undefined;
@@ -6811,7 +6896,7 @@ async function gerarProsaIA(force) {
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok || !data.ok) throw new Error(data.erro || `HTTP ${resp.status}`);
         if (!D.weeklyProse) D.weeklyProse = {};
-        D.weeklyProse[rep.startIso] = proseFromResponse(data, fp, force, p, nPrints);
+        D.weeklyProse[rep.startIso] = proseFromResponse(data, fp, force, p, nPrints, relLido);
         delete proseImgs[rep.startIso];
         printsIdbSet(rep.startIso, null);   // prints consumidos: libera o espaço
         save();
@@ -6860,7 +6945,7 @@ function proseCardHtml(rep) {
         // análise, e no máximo 1 vez. Regerar sobre dados idênticos produziria
         // um texto diferente sobre a mesma realidade: gasto sem informação.
         // v1.22.0: a impressão digital inclui os prints anexados.
-        const fp = aggregatesFingerprint(reportPayloadForAI(rep));
+        const fp = proseFingerprintPara(rep, p); // v1.35.0: análise antiga (sem o campo relogio) compara sem o bloco do relógio
         const mudou = !!p.hash && p.hash !== fp;
         const regenOk = proseGate(rep, p, true, fp).ok;
         const status = regenOk
@@ -6874,18 +6959,19 @@ function proseCardHtml(rep) {
             <div style="font-size:12px;color:var(--text2);line-height:1.55;margin-top:10px">${escHtml(p.analise).replace(/\n+/g, '<br><br>')}</div>
             ${p.plano.length ? `<div style="font-size:11px;font-weight:700;color:var(--text3);letter-spacing:.4px;margin:12px 0 6px">PLANO DA PRÓXIMA SEMANA</div>
             <ol style="margin:0;padding-left:18px;font-size:12px;color:var(--text2);line-height:1.6">${p.plano.map(x => `<li>${escHtml(x)}</li>`).join('')}</ol>` : ''}
-            ${p.prints ? `<div style="font-size:10px;color:var(--text3);margin-top:8px">⌚️ ${p.prints} print(s) do Apple Watch lidos nesta análise</div>` : ''}
+            ${p.relogio ? `<div style="font-size:10px;color:var(--text3);margin-top:8px">⌚ dados do relógio lidos nesta análise: ${p.relogio.dias} dia(s) · ${p.relogio.treinos} treino(s)</div>` : ''}
+            ${p.prints ? `<div style="font-size:10px;color:var(--text3);margin-top:8px">⌚️ ${p.prints} print(s) do Apple Watch lidos nesta análise (análise antiga)</div>` : ''}
             ${status}
-            ${podeRegen ? proseAttachHtml(rep) : ''}`;
+            ${proseWatchHtml(rep)}`;
     } else if (!fechada) {
         corpo = `<div style="font-size:12px;color:var(--text3);line-height:1.5">Esta semana ainda está em andamento. A análise abre <strong style="color:var(--text2)">no domingo</strong>, com a semana completa: analisar pela metade daria um veredito enganoso.</div>
-            ${configurado ? proseAttachHtml(rep) : ''}`;
+            ${configurado ? proseWatchHtml(rep) : ''}`;
     } else if (!configurado) {
         corpo = `<div style="font-size:12px;color:var(--text3);line-height:1.5">Ligue em Ajustes, seção <strong style="color:var(--text2)">Relatório por IA</strong>, para o app comentar a semana além dos números.</div>`;
     } else {
         corpo = `<button class="btn btn-primary" style="width:100%" onclick="gerarProsaIA()">✨ Analisar esta semana</button>
             <div style="font-size:10px;color:var(--text3);text-align:center;margin-top:8px">1 análise por semana fechada · reabrir depois não gasta nada</div>
-            ${proseAttachHtml(rep)}`;
+            ${proseWatchHtml(rep)}`;
     }
     return `
         <div class="card mb-12">
@@ -7479,7 +7565,7 @@ function settingsIAHtml() {
             <div style="font-size:11px;color:var(--text3);margin-bottom:10px;line-height:1.5">
                 Com isto ligado, o Relatório Semanal ganha resumo, análise e plano de ação escritos por IA a partir dos seus números.
                 Saem do aparelho apenas os <strong style="color:var(--text2)">totais e médias da semana</strong>, nunca o registro dia a dia,
-                mais os <strong style="color:var(--text2)">prints do Apple Watch</strong> que você mesmo anexar (opcional).
+                mais os <strong style="color:var(--text2)">dados do Apple Watch</strong> da semana (dias e treinos que o robô do Mac mini publica), sem print nenhum.
                 O acesso é reconhecido pelo seu <strong style="color:var(--text2)">login</strong>: não existe chave pra colar.
                 Cota: 1 análise por semana fechada (e 1 refeita, se você corrigir registros).
             </div>
@@ -7994,6 +8080,7 @@ function detectMuscleGroups(t) {
     MUSCLE_GROUPS.forEach(g => {
         if (g.kw.some(k => src.includes(k))) found.push(g);
     });
+    if ((t.exercicios || []).some(e => e && e.tipo === 'cardio') && !found.some(g => g.id === 'aerob')) found.push(getMuscleGroup('aerob')); // v1.35.0
     return found;
 }
 
@@ -8522,7 +8609,9 @@ function executeTemplate(templateId) {
         notas: tpl.notas,
         exercicios: tpl.exercicios.map(seedExecExercise),
         restValue: (typeof D.restDefault === 'number' ? D.restDefault : 90), // ponto de partida do cronômetro
-        restRemaining: null, // null = não descansando
+        restRemaining: null, // (até a 1.34.0) contador; a 1.35.0 usa restEndsAt
+        restEndsAt: null, // v1.35.0: instante (ms) em que o descanso acaba; null = não descansando
+        restCtx: null, // v1.35.0: de qual série/exercício é o descanso (para o popup)
         startTime: Date.now()
     };
     persistExecution(); // snapshot no Firestore — sobrevive a reload do PWA
@@ -8551,8 +8640,17 @@ function stopExecTimer() {
     }
 }
 
-// ===== Cronômetro de descanso (regressivo, ajustável no dedo) =====
+// ===== Cronômetro de descanso (v1.35.0: popup + hora do relógio) =====
+// Pedido do CEO 25/09/2026: "quando clicar que concluiu, abrir o cronômetro em popup, lembrando que mesmo se fecharmos o
+// app, ele continua em segundo plano". O fim do descanso é um INSTANTE (restEndsAt, hora do relógio), não um contador: o
+// iOS congela o JavaScript do app em segundo plano, e um contador que desconta 1 por segundo voltava atrasado. O tempo
+// restante é sempre recalculado a partir do relógio (no tique, ao voltar ao app e ao recarregar: restEndsAt vai no
+// snapshot da execução). O alvo é o "Intervalo Ns" das notas do exercício (plano importado) quando existe; senão o padrão
+// de Ajustes; −15s/+15s ficam lembrados por exercício dentro da sessão. O aviso sonoro só toca com o app aberto (limite de
+// PWA no iOS: sem servidor de push não há alerta em segundo plano); ao voltar, o app mostra o tempo certo ou "terminou há".
 let restTimerInterval = null;
+let restAudioCtx = null;
+let restPopupAberto = false;
 function fmtMMSS(sec) {
     sec = Math.max(0, Math.round(sec));
     return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
@@ -8560,39 +8658,167 @@ function fmtMMSS(sec) {
 function stopRestTimer() {
     if (restTimerInterval) { clearInterval(restTimerInterval); restTimerInterval = null; }
 }
-function startRest() { // dispara ao marcar uma série
+// "Intervalo 90s" nas notas do exercício (ou campo intervalo em segundos) -> segundos; sem isso, null
+function restAlvo(ex) {
+    if (!ex) return null;
+    if (typeof ex.intervalo === 'number' && Number.isFinite(ex.intervalo) && ex.intervalo >= 5) return Math.round(ex.intervalo);
+    const m = /intervalo\s*:?\s*(\d{1,3})\s*s\b/i.exec(String(ex.intervalo || ex.notas || ''));
+    return m ? Math.max(5, parseInt(m[1], 10)) : null;
+}
+// alvo do exercício (ou padrão da sessão) + ajuste lembrado do exercício; nunca abaixo de 15 s
+function restBase(ex) {
+    const alvo = restAlvo(ex);
+    const base = alvo != null ? alvo : ((activeExecution && typeof activeExecution.restValue === 'number') ? activeExecution.restValue : 90);
+    return Math.max(15, base + ((ex && typeof ex.restDelta === 'number' && Number.isFinite(ex.restDelta)) ? ex.restDelta : 0));
+}
+function restRemainingSec() {
+    if (!activeExecution || typeof activeExecution.restEndsAt !== 'number' || !Number.isFinite(activeExecution.restEndsAt)) return null;
+    const r = Math.ceil((activeExecution.restEndsAt - Date.now()) / 1000);
+    if (r > 3600) { activeExecution.restEndsAt = null; return null; } // mais de 1 h à frente: relógio do aparelho ou snapshot estranho; descarta
+    return Math.max(0, r);
+}
+// arma o descanso da série (exIdx, setIdx); não persiste nem renderiza: quem chama faz isso uma vez só
+function armRest(exIdx, setIdx) {
+    const ex = activeExecution.exercicios[exIdx];
+    const base = restBase(ex);
+    const prox = ex.sets.findIndex((s, i) => i > setIdx && !s.done);
+    const proxEx = prox < 0 ? activeExecution.exercicios.slice(exIdx + 1).find(e => e.sets.some(s => !s.done)) : null;
+    activeExecution.restEndsAt = Date.now() + base * 1000;
+    activeExecution.restCtx = { exIdx, setIdx, base, alvo: restAlvo(ex), nome: ex.nome || '', serie: setIdx + 1, total: ex.sets.length,
+        proxima: prox >= 0 ? 'série ' + (prox + 1) + ' de ' + ex.sets.length : (proxEx ? 'próximo exercício, ' + (proxEx.nome || '') : 'fim dos exercícios') };
+    // o toque no ✓ é o gesto do usuário que libera o áudio no iOS: cria/acorda o contexto aqui, para o aviso do fim tocar
+    try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!restAudioCtx && AC) restAudioCtx = new AC();
+        if (restAudioCtx && restAudioCtx.state === 'suspended') restAudioCtx.resume();
+    } catch (e) {}
+}
+function startRestTick() { stopRestTimer(); restTimerInterval = setInterval(tickRest, 1000); }
+function startRest(exIdx, setIdx) { // dispara ao marcar uma série; sem índices, usa a última série marcada
     if (!activeExecution) return;
-    activeExecution.restRemaining = activeExecution.restValue;
-    stopRestTimer();
-    restTimerInterval = setInterval(tickRest, 1000);
-    rTreinoExecute(); // mostra a barra do descanso
+    if (exIdx == null) {
+        exIdx = Math.max(0, activeExecution.exercicios.findIndex(e => e.sets.some(s => s.done)));
+        setIdx = Math.max(0, activeExecution.exercicios[exIdx].sets.map(s => s.done).lastIndexOf(true));
+    }
+    armRest(exIdx, setIdx);
+    persistExecution();
+    startRestTick();
+    rTreinoExecute();
+    openRestPopup();
 }
 function tickRest() {
-    if (!activeExecution || activeExecution.restRemaining == null) { stopRestTimer(); return; }
-    activeExecution.restRemaining -= 1;
-    if (activeExecution.restRemaining <= 0) {
-        stopRestTimer();
-        activeExecution.restRemaining = null;
-        if (navigator.vibrate) { try { navigator.vibrate(400); } catch (e) {} }
-        const b = $('rest-bar'); if (b) b.style.display = 'none';
-        toast('Descanso concluído 💪');
-        return;
-    }
-    const el = $('rest-countdown'); if (el) el.textContent = fmtMMSS(activeExecution.restRemaining);
+    const r = restRemainingSec();
+    if (r == null) { stopRestTimer(); return; }
+    if (r <= 0) { finishRest(); return; }
+    updateRestUi(r);
 }
-function adjustRest(delta) { // −15s / +15s na hora (varia por exercício); persiste o valor pro próximo descanso
+function updateRestUi(r) {
+    const el = $('rest-countdown'); if (el) el.textContent = fmtMMSS(r);
+    const p = $('rest-popup-countdown'); if (p) p.textContent = fmtMMSS(r);
+    const ctx = activeExecution && activeExecution.restCtx;
+    const bar = $('rest-popup-bar'); if (bar && ctx && ctx.base > 0) bar.style.width = Math.max(0, Math.min(100, 100 * r / ctx.base)).toFixed(1) + '%';
+    const rv = $('rest-value'); if (rv && ctx) rv.textContent = ctx.base + 's';
+}
+function finishRest() {
+    stopRestTimer();
     if (!activeExecution) return;
-    activeExecution.restValue = Math.max(15, (activeExecution.restValue || 90) + delta);
-    if (activeExecution.restRemaining != null) activeExecution.restRemaining = Math.max(1, activeExecution.restRemaining + delta);
-    const el = $('rest-countdown'); if (el) el.textContent = fmtMMSS(activeExecution.restRemaining || 0);
-    const rv = $('rest-value'); if (rv) rv.textContent = activeExecution.restValue + 's';
+    activeExecution.restEndsAt = null; // sem gravar: o fim do descanso não é dado (a próxima série grava); 1 gravação por série
+    restBeep();
+    if (navigator.vibrate) { try { navigator.vibrate(400); } catch (e) {} }
+    const b = $('rest-bar'); if (b) b.style.display = 'none';
+    if (restPopupAberto) renderRestPopup(); else toast('Descanso concluído 💪');
+}
+function restBeep() { // 3 toques curtos (só com o app aberto)
+    try {
+        if (!restAudioCtx) return;
+        const t0 = restAudioCtx.currentTime;
+        [0, 0.22, 0.44].forEach(dt => {
+            const o = restAudioCtx.createOscillator(), g = restAudioCtx.createGain();
+            o.type = 'sine'; o.frequency.value = 880;
+            g.gain.setValueAtTime(0.0001, t0 + dt); g.gain.exponentialRampToValueAtTime(0.3, t0 + dt + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dt + 0.18);
+            o.connect(g); g.connect(restAudioCtx.destination); o.start(t0 + dt); o.stop(t0 + dt + 0.2);
+        });
+    } catch (e) {}
+}
+function adjustRest(delta) { // −15s / +15s: mexe no descanso em curso e fica lembrado para o exercício (ou no padrão da sessão)
+    if (!activeExecution) return;
+    const ctx = activeExecution.restCtx;
+    const ex = ctx ? activeExecution.exercicios[ctx.exIdx] : null;
+    if (ex && restAlvo(ex) != null) ex.restDelta = Math.max(15 - restAlvo(ex), ((typeof ex.restDelta === 'number') ? ex.restDelta : 0) + delta); // piso: alvo + ajuste >= 15 s
+    else activeExecution.restValue = Math.max(15, (activeExecution.restValue || 90) + delta);
+    if (typeof activeExecution.restEndsAt === 'number') {
+        activeExecution.restEndsAt = Math.min(Date.now() + 3599000, Math.max(Date.now() + 1000, activeExecution.restEndsAt + delta * 1000)); // entre 1 s e o teto de 1 h
+        if (ctx) ctx.base = Math.max(15, ctx.base + delta);
+    }
     persistExecution();
+    const r = restRemainingSec(); if (r != null) updateRestUi(r);
+}
+// exercício removido ou trocado no meio do descanso: o descanso dele acaba, e os índices abaixo descem uma posição
+function restExercicioMudou(exIdx, removido) {
+    if (!activeExecution || !activeExecution.restCtx) return;
+    const ctx = activeExecution.restCtx;
+    if (ctx.exIdx === exIdx) { stopRestTimer(); activeExecution.restEndsAt = null; activeExecution.restCtx = null; const b = $('rest-bar'); if (b) b.style.display = 'none'; closeRestPopup(); return; }
+    if (removido && ctx.exIdx > exIdx) ctx.exIdx -= 1;
 }
 function skipRest() {
     if (!activeExecution) return;
     stopRestTimer();
-    activeExecution.restRemaining = null;
+    activeExecution.restEndsAt = null; activeExecution.restCtx = null;
+    persistExecution();
     const b = $('rest-bar'); if (b) b.style.display = 'none';
+    closeRestPopup();
+}
+// ao voltar ao app (reload, "Retomar", volta do segundo plano): o descanso segue pela hora do relógio, ou já acabou
+function restResume() {
+    if (!activeExecution || typeof activeExecution.restEndsAt !== 'number') return;
+    const r = restRemainingSec();
+    if (r == null) return; // inválido ou absurdo: já descartado
+    if (r > 0) { startRestTick(); updateRestUi(r); if (!(activeExecution.restCtx && activeExecution.restCtx.fechado)) openRestPopup(); return; } // popup fechado de propósito não reabre sozinho
+    const atraso = Math.round((Date.now() - activeExecution.restEndsAt) / 1000);
+    activeExecution.restEndsAt = null; // sem gravar (mesma razão de finishRest)
+    const b = $('rest-bar'); if (b) b.style.display = 'none';
+    closeRestPopup();
+    if (atraso < 30 * 60) toast('Descanso terminou há ' + (atraso < 60 ? atraso + ' s' : Math.round(atraso / 60) + ' min'));
+}
+function restPopupHtml() {
+    const ctx = (activeExecution && activeExecution.restCtx) || {};
+    const r = restRemainingSec();
+    const correndo = r != null && r > 0;
+    const fonte = ctx.alvo != null ? 'do plano (Intervalo ' + ctx.alvo + 's)' : 'padrão de Ajustes';
+    return `
+        <div class="modal-header" style="margin-bottom:8px">
+            <h3>${correndo ? '⏱ Descanso' : '✅ Descanso concluído'}</h3>
+            <button class="modal-close" onclick="closeRestPopup()">×</button>
+        </div>
+        <div style="font-size:13px;font-weight:700;color:var(--text)">${escHtml(ctx.nome || '')}</div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:10px">série ${ctx.serie || '?'} de ${ctx.total || '?'} feita · a seguir: ${escHtml(ctx.proxima || '')}</div>
+        <div id="rest-popup-countdown" style="font-size:64px;font-weight:800;line-height:1;text-align:center;font-variant-numeric:tabular-nums;color:${correndo ? 'var(--primary)' : 'var(--text)'};margin:6px 0 10px">${fmtMMSS(r || 0)}</div>
+        <div style="height:8px;border-radius:4px;background:var(--bg);overflow:hidden;margin-bottom:6px"><div id="rest-popup-bar" style="height:100%;background:var(--primary);width:${(correndo && ctx.base) ? Math.min(100, 100 * r / ctx.base).toFixed(1) : 0}%;transition:width .3s linear"></div></div>
+        <div style="font-size:11px;color:var(--text3);text-align:center;margin-bottom:12px">alvo <span id="rest-value">${ctx.base || 0}s</span> · ${fonte}</div>
+        ${correndo ? `
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+            <button class="btn btn-outline" style="flex:1" onclick="adjustRest(-15)">−15s</button>
+            <button class="btn btn-outline" style="flex:1" onclick="adjustRest(15)">+15s</button>
+            <button class="btn btn-outline" style="flex:1" onclick="skipRest()">Pular</button>
+        </div>
+        <button class="btn btn-primary w-full" onclick="closeRestPopup()">Fechar e seguir contando</button>
+        <div style="font-size:10.5px;color:var(--text3);text-align:center;margin-top:8px">Conta pela hora do relógio: continua certo se você fechar o app. O aviso sonoro toca só com o app aberto.</div>` : `
+        <button class="btn btn-primary w-full" onclick="closeRestPopup()">▶ Próxima série</button>`}`;
+}
+function renderRestPopup() { const box = $('rest-popup-box'); if (box) box.innerHTML = restPopupHtml(); }
+function openRestPopup() {
+    if (restPopupAberto && $('rest-popup')) { renderRestPopup(); return; }
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay'; overlay.id = 'rest-popup';
+    overlay.onclick = e => { if (e.target === overlay) closeRestPopup(); };
+    overlay.innerHTML = `<div class="modal-box" id="rest-popup-box">${restPopupHtml()}</div>`;
+    document.body.appendChild(overlay);
+    restPopupAberto = true;
+}
+function closeRestPopup() {
+    const el = $('rest-popup'); if (el && el.remove) el.remove();
+    restPopupAberto = false;
+    if (activeExecution && activeExecution.restCtx && restRemainingSec() > 0) activeExecution.restCtx.fechado = true; // não reabrir ao voltar do 2º plano
 }
 
 // ===== Carga: digitar direto + botões −/+ pro ajuste fino =====
@@ -8639,6 +8865,7 @@ function rTreinoExecute() {
     const step = (typeof D.cargaStep === 'number' && D.cargaStep > 0) ? D.cargaStep : 1;
     let exHtml = '';
     activeExecution.exercicios.forEach((ex, exIdx) => {
+        if (ex.tipo === 'cardio') { exHtml += cardioExecCardHtml(ex, exIdx); return; } // v1.35.0
         const grupo = getMuscleGroup(ex.grupo);
         const total = ex.sets.length;
         const doneCount = ex.sets.filter(s => s.done).length;
@@ -8693,12 +8920,13 @@ function rTreinoExecute() {
             </div>`;
     });
 
-    const resting = activeExecution.restRemaining != null;
+    const restSec = restRemainingSec(); // v1.35.0: pela hora do relógio
+    const resting = restSec != null && restSec > 0;
     const restBar = `
         <div id="rest-bar" style="display:${resting ? 'flex' : 'none'};position:fixed;left:12px;right:12px;bottom:calc(76px + env(safe-area-inset-bottom));z-index:101;align-items:center;gap:8px;background:var(--primary);color:#0a0f0a;border-radius:14px;padding:10px 12px;box-shadow:0 8px 24px rgba(0,0,0,.4)">
             <span style="font-size:13px;font-weight:800">⏱ Descanso</span>
             <button onclick="adjustRest(-15)" style="height:32px;padding:0 9px;border-radius:8px;background:rgba(0,0,0,.18);border:none;color:#0a0f0a;font-size:12px;font-weight:800;cursor:pointer">−15s</button>
-            <span id="rest-countdown" style="font-size:24px;font-weight:800;font-variant-numeric:tabular-nums;min-width:58px;text-align:center">${fmtMMSS(activeExecution.restRemaining || 0)}</span>
+            <span id="rest-countdown" onclick="openRestPopup()" title="Abrir o cronômetro" style="font-size:24px;font-weight:800;font-variant-numeric:tabular-nums;min-width:58px;text-align:center;cursor:pointer">${fmtMMSS(restSec || 0)}</span>
             <button onclick="adjustRest(15)" style="height:32px;padding:0 9px;border-radius:8px;background:rgba(0,0,0,.18);border:none;color:#0a0f0a;font-size:12px;font-weight:800;cursor:pointer">+15s</button>
             <button onclick="skipRest()" style="margin-left:auto;height:32px;padding:0 12px;border-radius:8px;background:#0a0f0a;border:none;color:#fff;font-size:12px;font-weight:800;cursor:pointer">Pular</button>
         </div>`;
@@ -8722,10 +8950,15 @@ function toggleSet(exIdx, setIdx) {
     const wasDone = s.done;
     s.done = !wasDone;
     ex.feito = ex.sets.every(x => x.done);
-    persistExecution(); // cada série marcada fica salva — nada se perde num reload
     if (!wasDone && s.done) {
-        startRest(); // concluiu a série → descanso (já re-renderiza e acende a próxima)
+        // v1.35.0: concluiu a série -> descanso pela hora do relógio e popup com o cronômetro (1 gravação: série + descanso)
+        armRest(exIdx, setIdx);
+        persistExecution();
+        startRestTick();
+        rTreinoExecute();
+        openRestPopup();
     } else {
+        persistExecution(); // cada série marcada fica salva — nada se perde num reload
         rTreinoExecute();
     }
 }
@@ -8760,6 +8993,161 @@ function removeExecSet(exIdx) {
     persistExecution();
     rTreinoExecute();
 }
+// ===== Cardio na sessão (v1.35.0, melhoria 2 do CEO 25/09/2026) =====
+// "Adicionar exercício a esta sessão" ganha a opção Cardio: do Apple Watch (os treinos do relógio do dia, que o robô do
+// Mac mini publica em users/{uid}/watch) ou manual (tipo, minutos, km). O item é um exercício SEM séries (series: []),
+// com tipo 'cardio' e o bloco cardio {durMin, distKm, kcalAtiva, kcalTotal, fcMed, fcMax, ini, fim, fonte, watchId}:
+// tudo o que já lê exercícios continua igual (0 séries, 0 kg de volume, sem recorde, sem "última vez"). Medida ausente
+// fica ausente (nunca vira 0). Cardio é medida do dia: "Duplicar pra hoje" não o copia.
+const CARDIO_TIPOS = ['Caminhada', 'Esteira', 'Bike', 'Elíptico', 'Escada', 'Corrida', 'Natação', 'Outro'];
+function cardioNum(v) { return (typeof v === 'number' && Number.isFinite(v) && v >= 0) ? v : null; }
+function cardioRitmo(durMin, distKm) { // min'ss"/km
+    const d = cardioNum(durMin), k = cardioNum(distKm);
+    if (d == null || k == null || k <= 0 || d <= 0) return null;
+    const segKm = Math.round(d * 60 / k);
+    return Math.floor(segKm / 60) + "'" + String(segKm % 60).padStart(2, '0') + '"/km';
+}
+function cardioResumoPartes(c, curto) {
+    c = c || {}; const p = [];
+    const dur = cardioNum(c.durMin), km = cardioNum(c.distKm), kcal = cardioNum(c.kcalAtiva), tot = cardioNum(c.kcalTotal), fm = cardioNum(c.fcMed), fx = cardioNum(c.fcMax);
+    if (dur != null) p.push(fmtN(dur) + ' min');
+    if (km != null) p.push(watchFmt2(km) + ' km');
+    const rit = cardioRitmo(dur, km); if (rit && !curto) p.push('ritmo ' + rit);
+    if (kcal != null) p.push(fmtN(kcal) + ' kcal' + ((tot != null && !curto) ? ' (total ' + fmtN(tot) + ')' : ''));
+    if (fm != null || fx != null) p.push('FC ' + (fm != null ? 'méd ' + fmtN(fm) : '') + ((fm != null && fx != null) ? ' · ' : '') + (fx != null ? 'máx ' + fmtN(fx) : ''));
+    return p;
+}
+function cardioResumo(c, curto) { const p = cardioResumoPartes(c, curto); return p.length ? p.join(' · ') : 'sem medidas'; }
+function cardioHora(c) { c = c || {}; const i = typeof c.ini === 'string' ? c.ini : '', f = typeof c.fim === 'string' ? c.fim : ''; return i ? i + (f ? '–' + f : '') : ''; }
+function cardioFonteTxt(c) { return (c && c.fonte === 'watch') ? '⌚ Apple Watch' : 'registro manual'; }
+function cardioDoWatch(tr) { // treino do relógio -> item de cardio
+    const c = { fonte: 'watch', watchId: String(tr.id || '') };
+    ['durMin', 'distKm', 'kcalAtiva', 'kcalTotal', 'fcMed', 'fcMax'].forEach(k => { const v = watchNum(tr[k]); if (v != null) c[k] = v; });
+    if (typeof tr.ini === 'string') c.ini = tr.ini;
+    if (typeof tr.fim === 'string') c.fim = tr.fim;
+    const tipo = (typeof tr.tipo === 'string' && tr.tipo.trim()) ? tr.tipo.trim() : 'Treino do relógio';
+    return { id: uid(), nome: tipo + (tr.interno === true ? ' (interno)' : ''), tipo: 'cardio', grupo: 'aerob', series: [], cardio: c };
+}
+function cardioItemSelado(e) { // da execução para o registro selado
+    return { id: uid(), nome: e.nome || 'Cardio', tipo: 'cardio', grupo: 'aerob', series: [], cardio: JSON.parse(JSON.stringify(e.cardio || {})) };
+}
+function cardioJaNaSessao(watchId) { return !!(activeExecution && activeExecution.exercicios.some(e => e.tipo === 'cardio' && e.cardio && e.cardio.watchId === String(watchId))); }
+// seção Cardio do seletor "Adicionar exercício": do relógio (hoje) e manual
+function cardioPickerHtml() {
+    const ts = watchTreinosDia(today());
+    let relogio;
+    if (ts.length) {
+        relogio = ts.map(tr => {
+            const ja = cardioJaNaSessao(tr.id), item = cardioDoWatch(tr), hora = cardioHora(item.cardio);
+            return `<button ${ja ? 'disabled' : `onclick="addExecCardioWatch(${escHtml(JSON.stringify(String(tr.id || '')))})"`} style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin-bottom:6px;cursor:${ja ? 'default' : 'pointer'};opacity:${ja ? '.5' : '1'}">
+                <span style="font-size:18px">⌚</span>
+                <div style="flex:1;min-width:0">
+                    <div style="font-size:13px;font-weight:700;color:var(--text)">${hora ? escHtml(hora) + ' · ' : ''}${escHtml(item.nome)}</div>
+                    <div style="font-size:11px;color:var(--text2)">${escHtml(cardioResumo(item.cardio, true))}${ja ? ' · já nesta sessão' : ''}</div>
+                </div>
+                <span style="font-size:16px;color:var(--text3)">${ja ? '✓' : '›'}</span>
+            </button>`;
+        }).join('');
+    } else {
+        const motivo = WATCH.erro ? 'sem leitura do relógio agora (' + escHtml(WATCH.erro) + ')' : (watchTemDados() ? 'nenhum treino do relógio chegou hoje ainda (o iPhone manda de hora em hora)' : 'nenhum dado do relógio nesta conta');
+        relogio = `<div style="font-size:12px;color:var(--text3);padding:6px 0 8px">${motivo}</div>`;
+    }
+    return `
+        <div style="font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--text3);margin:4px 0 6px">🏃 CARDIO · do Apple Watch, hoje</div>
+        ${relogio}
+        <div style="font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--text3);margin:10px 0 6px">🏃 CARDIO · manual</div>
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:12px">
+            <select id="cardio-tipo" class="form-input" style="flex:1.4;padding:8px">${CARDIO_TIPOS.map(t => `<option value="${t}">${t}</option>`).join('')}</select>
+            <input id="cardio-min" type="number" inputmode="numeric" min="1" max="600" placeholder="min" class="form-input" style="flex:1;padding:8px;text-align:center">
+            <input id="cardio-km" type="text" inputmode="decimal" placeholder="km" class="form-input" style="flex:1;padding:8px;text-align:center">
+            <button class="btn btn-primary" style="flex-shrink:0" onclick="addExecCardioManual()">Adicionar</button>
+        </div>
+        <div style="font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--text3);margin:0 0 2px">🏋️ EXERCÍCIOS DOS TEMPLATES</div>`;
+}
+function addExecCardioWatch(watchId) {
+    if (!activeExecution) return;
+    const tr = watchTreinosDia(today()).find(x => String(x.id || '') === String(watchId));
+    if (!tr) { toast('Treino do relógio não encontrado', true); return; }
+    if (cardioJaNaSessao(tr.id)) { toast('Esse treino do relógio já está na sessão', true); return; }
+    const item = cardioDoWatch(tr); item.sets = []; item.feito = true;
+    activeExecution.exercicios.push(item);
+    document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
+    persistExecution(); rTreinoExecute();
+    toast('⌚ Cardio do relógio adicionado à sessão');
+}
+function addExecCardioManual() {
+    if (!activeExecution) return;
+    const tipoEl = $('cardio-tipo'), minEl = $('cardio-min'), kmEl = $('cardio-km');
+    const tipo = (tipoEl && CARDIO_TIPOS.indexOf(tipoEl.value) >= 0) ? tipoEl.value : 'Cardio';
+    const minTxt = String((minEl && minEl.value) || '').trim(), kmTxt = String((kmEl && kmEl.value) || '').trim();
+    const min = /^\d{1,3}$/.test(minTxt) ? parseInt(minTxt, 10) : NaN;
+    if (!(min >= 1 && min <= 600)) { toast('Minutos do cardio: número inteiro de 1 a 600', true); return; }
+    const c = { fonte: 'manual', durMin: min };
+    if (kmTxt) {
+        const km = /^\d{1,3}([.,]\d{1,2})?$/.test(kmTxt) ? Number(kmTxt.replace(',', '.')) : NaN;
+        if (!(km >= 0.01 && km <= 500)) { toast('Distância: use km com até 2 casas (ex.: 1,5), de 0,01 a 500', true); return; }
+        c.distKm = Math.round(km * 100) / 100;
+    }
+    activeExecution.exercicios.push({ id: uid(), nome: tipo, tipo: 'cardio', grupo: 'aerob', series: [], sets: [], feito: true, cardio: c });
+    document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
+    persistExecution(); rTreinoExecute();
+    toast('🏃 Cardio adicionado à sessão');
+}
+function cardioExecCardHtml(ex, exIdx) {
+    const grupo = getMuscleGroup('aerob'), hora = cardioHora(ex.cardio);
+    return `
+            <div class="card mb-8">
+                <div style="display:flex;align-items:center;gap:12px">
+                    ${renderExerciseThumb({ nome: ex.nome, grupo: 'aerob' }, 56)}
+                    <div style="flex:1;min-width:0">
+                        <div style="font-size:14px;font-weight:700;color:var(--text)">${escHtml(ex.nome || 'Cardio')}</div>
+                        <div style="font-size:11px;color:${grupo.color};font-weight:600">${grupo.label} · ${cardioFonteTxt(ex.cardio)}${hora ? ' · ' + escHtml(hora) : ''}</div>
+                        <div style="font-size:12px;color:var(--text2);margin-top:2px">${escHtml(cardioResumo(ex.cardio))}</div>
+                    </div>
+                    <span style="font-size:12px;font-weight:800;color:var(--primary);flex-shrink:0">✓</span>
+                    <button onclick="openExecExercisePicker(${exIdx})" title="Trocar ou remover" style="width:34px;height:34px;border-radius:10px;background:var(--bg);border:1px solid var(--border);color:var(--text2);font-size:15px;cursor:pointer;flex-shrink:0">⇄</button>
+                </div>
+            </div>`;
+}
+function cardioSessaoCardHtml(ex) {
+    const hora = cardioHora(ex.cardio);
+    return `
+        <div class="card mb-8">
+            <div style="display:flex;align-items:center;gap:12px">
+                ${renderExerciseThumb({ nome: ex.nome, grupo: 'aerob' }, 44)}
+                <div style="flex:1;min-width:0">
+                    <div style="font-size:14px;font-weight:700;color:var(--text)">${escHtml(ex.nome || 'Cardio')}</div>
+                    <div style="font-size:11px;color:var(--text3)">cardio · ${cardioFonteTxt(ex.cardio)}${hora ? ' · ' + escHtml(hora) : ''}</div>
+                    <div style="font-size:12px;color:var(--text2);margin-top:2px">${escHtml(cardioResumo(ex.cardio))}</div>
+                </div>
+            </div>
+        </div>`;
+}
+function cardioEditorCardHtml(ex, exIdx) {
+    return `
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px">
+                <div style="display:flex;align-items:center;gap:6px">
+                    <div style="flex:1;min-width:0">
+                        <div style="font-size:13px;font-weight:600;color:var(--text)">🏃 ${escHtml(ex.nome || 'Cardio')}</div>
+                        <div style="font-size:11px;color:var(--text3)">cardio · ${cardioFonteTxt(ex.cardio)} · ${escHtml(cardioResumo(ex.cardio))}</div>
+                    </div>
+                    <button onclick="removeExercise(${exIdx})" style="width:28px;height:28px;border-radius:6px;background:var(--red-bg);border:none;color:var(--red);cursor:pointer;font-size:13px;flex-shrink:0" title="Remover cardio">🗑</button>
+                </div>
+            </div>`;
+}
+// linha do cardio na tabela do PDF e da exportação HTML: [nome, séries, coluna "Reps", coluna "Carga"]
+function cardioPdfCelulas(ex, fs, largNome) {
+    const c = ex.cardio || {};
+    const dur = cardioNum(c.durMin), km = cardioNum(c.distKm), kcal = cardioNum(c.kcalAtiva), fm = cardioNum(c.fcMed);
+    // coluna "Reps": minutos e ritmo; coluna "Carga": km, kcal e FC (a hora do treino fica no bloco do relógio, logo abaixo)
+    const rit = cardioRitmo(dur, km);
+    const tempo = [dur != null ? fmtN(dur) + ' min' : '', rit || ''].filter(Boolean);
+    const resto = [];
+    if (km != null) resto.push(watchFmt2(km) + ' km');
+    if (kcal != null) resto.push(fmtN(kcal) + ' kcal');
+    if (fm != null) resto.push('FC ' + fmtN(fm)); // só a média: a máxima está no bloco do relógio, logo abaixo
+    return [pdfCorta((ex.nome || 'Cardio') + ' · cardio' + (c.fonte === 'watch' ? ' (relógio)' : ''), fs, largNome), '-', tempo.length ? tempo.join(' · ') : '-', resto.length ? resto.join(' · ') : '-'];
+}
 // Seletor de exercício: troca o de índice exIdx (ou adiciona no fim, se exIdx == null),
 // escolhendo de QUALQUER template (o treino atual aparece primeiro).
 function openExecExercisePicker(exIdx) {
@@ -8792,6 +9180,7 @@ function openExecExercisePicker(exIdx) {
                 <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
             </div>
             ${replacing ? `<div style="font-size:12px;color:var(--text2);margin-bottom:4px">No lugar de <strong>${escHtml(replacing.nome)}</strong> (só nesta sessão: o template não muda):</div>` : '<div style="font-size:12px;color:var(--text2);margin-bottom:4px">Entra só nesta sessão (o template não muda):</div>'}
+            ${replacing ? '' : cardioPickerHtml()}
             ${groupsHtml || '<div style="font-size:12px;color:var(--text3)">Nenhum template com exercícios.</div>'}
             ${replacing ? `<button class="btn btn-outline w-full" style="color:var(--red);margin-top:10px" onclick="removeExecExercise(${exIdx})">🗑 Remover este exercício da sessão</button>` : ''}
         </div>`;
@@ -8806,6 +9195,7 @@ function applyExecExercise(exIdx, tplId, i) {
         const old = activeExecution.exercicios[exIdx];
         if (!old) return;
         if (old.sets.some(s => s.done) && !confirm(`"${old.nome}" já tem série feita.\nTrocar descarta essas séries. Continuar?`)) return;
+        restExercicioMudou(exIdx, false); // v1.35.0: o descanso do exercício trocado acaba
         activeExecution.exercicios[exIdx] = seedExecExercise(src);
     } else {
         activeExecution.exercicios.push(seedExecExercise(src));
@@ -8824,6 +9214,7 @@ function removeExecExercise(exIdx) {
     if (!confirm(temFeita
         ? `"${ex.nome}" já tem série feita.\nRemover apaga essas séries desta sessão. Continuar?`
         : `Remover "${ex.nome}" desta sessão?`)) return;
+    restExercicioMudou(exIdx, true); // v1.35.0: o descanso do removido acaba; índices abaixo descem
     activeExecution.exercicios.splice(exIdx, 1);
     document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
     persistExecution();
@@ -8836,7 +9227,7 @@ function cancelExecution() {
     const anyDone = activeExecution.exercicios.some(e => e.sets.some(s => s.done));
     if (anyDone && !confirm('Cancelar treino? O progresso desta sessão será descartado.')) return;
     stopExecTimer();
-    stopRestTimer();
+    stopRestTimer(); closeRestPopup();
     activeExecution = null;
     clearPersistedExecution();
     showPage('treino');
@@ -8846,7 +9237,7 @@ function finishExecution(personal) {
     if (!activeExecution) return;
     // v1.24.0: com o controle do personal ligado, a resposta Com/Sem Personal vem ANTES de gravar (1 toque)
     if (personalAtivo() && typeof personal !== 'boolean') return openPersonalChoice();
-    const feitos = activeExecution.exercicios.filter(e => e.sets.some(s => s.done));
+    const feitos = activeExecution.exercicios.filter(e => e.tipo === 'cardio' || e.sets.some(s => s.done));
     if (feitos.length === 0) {
         if (!confirm('Nenhuma série marcada como feita. Salvar mesmo assim?')) return;
     }
@@ -8857,8 +9248,8 @@ function finishExecution(personal) {
         data: today(),
         nome: activeExecution.nome,
         exercicios: activeExecution.exercicios
-            .filter(e => e.sets.some(s => s.done))
-            .map(e => ({
+            .filter(e => e.tipo === 'cardio' || e.sets.some(s => s.done))
+            .map(e => e.tipo === 'cardio' ? cardioItemSelado(e) : ({
                 id: uid(),
                 nome: e.nome,
                 series: e.sets.filter(s => s.done).map(s => ({
@@ -8875,7 +9266,7 @@ function finishExecution(personal) {
     if (!D.treinos) D.treinos = [];
     D.treinos.push(sessao);
     stopExecTimer();
-    stopRestTimer();
+    stopRestTimer(); closeRestPopup();
     activeExecution = null;
     D.activeExecution = null; // limpa o snapshot no MESMO save do registro
     save();
@@ -8915,6 +9306,7 @@ function resumeExecution() {
     if (!activeExecution) return;
     showPage('treino-execute');
     startExecTimer();
+    restResume(); // v1.35.0: descanso em curso segue pela hora do relógio; se acabou enquanto o app estava fechado, avisa
 }
 // ← do header da execução: SAI da tela sem perder nada (cancelar é só pelo botão Cancelar)
 function pauseExecution() {
@@ -8925,7 +9317,7 @@ function discardActiveExecution() {
     if (!activeExecution) return;
     if (!confirm(`Descartar o treino em andamento ("${activeExecution.nome}")?\n\nO progresso desta sessão será perdido.`)) return;
     stopExecTimer();
-    stopRestTimer();
+    stopRestTimer(); closeRestPopup();
     activeExecution = null;
     clearPersistedExecution();
     toast('Treino descartado');
@@ -8969,6 +9361,7 @@ function openTreinoSession(id) {
 function rTreinoSession() {
     const t = (D.treinos || []).find(x => x.id === viewingSessionId);
     if (!t) { showPage('treino-history'); return; }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(t.data || ''))) watchGarantir(t.data); // v1.35.0: o mês da sessão pode não estar sendo ouvido (registro antigo); nada religa escuta falha; data fora do padrão não abre escuta
     const stat = treinoStats(t);
     const groups = detectMuscleGroups(t);
     const pr = isTreinoPR(t);
@@ -8980,7 +9373,7 @@ function rTreinoSession() {
     const chipsHtml = groups.map(g => `<span style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;background:${g.color}22;color:${g.color}">${g.label}</span>`).join(' ')
         + (pr ? ` <span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(251,191,36,.18);color:#f59e0b">🏆 PR</span>` : '');
 
-    const exHtml = (t.exercicios || []).map(ex => `
+    const exHtml = (t.exercicios || []).map(ex => ex.tipo === 'cardio' ? cardioSessaoCardHtml(ex) : `
         <div class="card mb-8">
             <div style="display:flex;align-items:center;gap:12px;margin-bottom:${(ex.series || []).length ? '8px' : '0'}">
                 ${renderExerciseThumb(ex, 44)}
@@ -9057,6 +9450,7 @@ ${pi.com ? `<div class="ban com">🏋️ AULA COM O PERSONAL${pi.p && pi.p.nome 
 <table style="${tbl}"><tr><th style="${th}">Exercício</th><th style="${th};text-align:center">Séries</th><th style="${th}">Reps</th><th style="${th}">Carga (kg)</th></tr>
 ${(t.exercicios || []).map(ex => {
     // v1.28.0: uma linha por exercício (PDF em uma página): reps e cargas por série na mesma linha; iguais viram "4 × 8"
+    if (ex.tipo === 'cardio') { const c = cardioPdfCelulas(ex, 9, 100000); return `<tr><td style="${td}">${escHtml(c[0])}</td><td style="${td};text-align:center">${c[1]}</td><td style="${td}">${escHtml(c[2])}</td><td style="${td}">${escHtml(c[3])}</td></tr>`; } // v1.35.0
     const ss = ex.series || [];
     const reps = ss.map(s => String(s.reps || 0)), cargas = ss.map(s => String(fmtCarga(s.carga)));
     const iguais = a => a.length > 0 && a.every(x => x === a[0]);
@@ -9171,7 +9565,7 @@ function pdfQuebra(s, size, larg) { // quebra em linhas por largura
     });
     return out;
 }
-const PDF_CINZA = '0.39 0.45 0.55 rg', PDF_ROXO = '0.49 0.23 0.93 RG', PDF_ROXO_TXT = '0.36 0.13 0.71 rg', PDF_VERDE = '0.06 0.72 0.51 RG', PDF_BORDA = '0.89 0.91 0.94 RG', PDF_FUNDO = '0.945 0.96 0.975 rg';
+const PDF_CINZA = '0.39 0.45 0.55 rg', PDF_ROXO = '0.49 0.23 0.93 RG', PDF_ROXO_TXT = '0.36 0.13 0.71 rg', PDF_VERDE = '0.06 0.72 0.51 RG', PDF_BORDA = '0.89 0.91 0.94 RG', PDF_FUNDO = '0.945 0.96 0.975 rg', PDF_AZUL = '0.23 0.51 0.96 RG';
 // v1.29.0: escritor de PDF de VÁRIAS páginas (a v1.28.2 escrevia uma só). Cada página é uma lista de operações;
 // o rodapé com "página i de n" entra na montagem, quando o total é conhecido. Coordenadas em pontos, origem embaixo.
 function pdfDoc() {
@@ -9216,6 +9610,101 @@ function pdfDoc() {
     };
     return d;
 }
+// v1.35.0 (pedido do CEO 25/09/2026, opção A): bloco "Apple Watch neste dia" no registro em PDF, logo abaixo dos exercícios.
+// Mesma fonte da sessão selada no app (WATCH, os documentos do robô do Mac mini já em memória): os treinos do relógio do
+// dia e o resumo do dia. Só leitura; nada de rede; nada em D. Devolve null quando o dia não tem dado do relógio (o PDF
+// sai como na 1.34.0) e {altura, desenha} quando tem. Escuta do mês em erro: uma linha avisa que a leitura estava
+// indisponível ao gerar (ausência de dado nunca se confunde com "não houve treino no relógio"). Texto em WinAnsi: sem
+// emoji, "SpO2" e "VO2" sem subscrito. Altura medida linha a linha, para a tabela de exercícios reservar o exato.
+const PDF_WATCH_MAX_TREINOS = 4;
+function pdfWatchBloco(d, t) {
+    const { W, M, CW } = d;
+    const dt = t && typeof t.data === 'string' ? t.data : '';
+    if (!dt) return null;
+    const dia = watchDia(dt), treinos = watchTreinosDia(dt), ym = watchYm(dt);
+    const linhas = []; // [texto, tamanho, negrito, cor]
+    const add = (s, fs, bold, cor) => pdfQuebra(s, fs, CW).forEach(l => linhas.push([l, fs, !!bold, cor]));
+    // largura REAL (tabela AFM da Helvetica, sobre o texto como sai no PDF): pdfW subestima "%", "@" e "W"
+    const cabe = (s, fs) => pdfWExata(pdfTxt(s), fs) <= CW;
+    const corta = (s, fs) => { s = String(s); if (cabe(s, fs)) return s; while (s.length > 1 && !cabe(s + '...', fs)) s = s.slice(0, -1); return s + '...'; };
+    // quebra por ITENS (nunca separa número da unidade nem deixa "·" pendurado): junta com ' · ' enquanto cabe
+    const quebraItens = (prefixo, itens, fs) => {
+        const out = []; let linha = '';
+        itens.forEach(it => {
+            const cand = linha ? linha + ' · ' + it : (out.length ? '' : prefixo) + it;
+            if (cabe(cand, fs)) linha = cand;
+            else { if (linha) out.push(linha); linha = corta((out.length ? '' : prefixo) + it, fs); }
+        });
+        if (linha) out.push(linha);
+        return out;
+    };
+    // hora do arquivo do iPhone relativa à DATA DA SESSÃO (o PDF é lido depois): só HH:MM se o arquivo é do mesmo dia, senão DD/MM HH:MM
+    const gm = dia ? /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(String(dia.gravadoEm || '')) : null;
+    const arq = gm ? ((gm[1] + '-' + gm[2] + '-' + gm[3] === dt ? '' : gm[3] + '/' + gm[2] + ' ') + gm[4] + ':' + gm[5]) : '';
+    let rodape = '';
+    if (!dia && !treinos.length) {
+        const docYm = WATCH.docs[ym];
+        if (docYm && Object.prototype.hasOwnProperty.call(docYm, 'formato')) add('O robô publicou o relógio num formato que esta versão do app não conhece; atualize o app para ver os dados neste registro.', 9, false, PDF_CINZA);
+        else if (WATCH.falhou[ym]) add('Leitura do relógio indisponível ao gerar este registro (' + String(WATCH.falhou[ym]) + '); os dados ficam guardados no Mac mini.', 9, false, PDF_CINZA);
+        else return null; // sem dado neste dia (ou mês não ouvido): bloco não existe
+    } else {
+        treinos.slice(0, PDF_WATCH_MAX_TREINOS).forEach(tr => {
+            const partes = [];
+            const dur = watchNum(tr.durMin), kcal = watchNum(tr.kcalAtiva), fm = watchNum(tr.fcMed), fx = watchNum(tr.fcMax), km = watchNum(tr.distKm);
+            if (dur != null) partes.push(fmtN(dur) + ' min');
+            if (kcal != null) partes.push(fmtN(kcal) + ' kcal');
+            if (fm != null || fx != null) partes.push('FC ' + (fm != null ? 'méd ' + fmtN(fm) : '') + (fm != null && fx != null ? ' · ' : '') + (fx != null ? 'máx ' + fmtN(fx) : ''));
+            if (km != null) partes.push(watchFmt2(km) + ' km');
+            const ini = typeof tr.ini === 'string' ? tr.ini : '', fim = typeof tr.fim === 'string' ? tr.fim : '';
+            const hora = ini ? ini + (fim ? '-' + fim : '') : '';
+            const tipo = (typeof tr.tipo === 'string' && pdfTxt(tr.tipo).trim()) ? tr.tipo : 'Treino'; // tipo só de emoji (some no WinAnsi) cai para 'Treino'
+            linhas.push([corta((hora ? hora + ' · ' : '') + tipo + (tr.interno === true ? ' (interno)' : '') + ' · ' + (partes.length ? partes.join(' · ') : 'sem medidas'), 9), 9, false, null]);
+        });
+        if (treinos.length > PDF_WATCH_MAX_TREINOS) linhas.push(['+ ' + (treinos.length - PDF_WATCH_MAX_TREINOS) + ' treino(s) do relógio neste dia (veja no app)', 8.5, false, PDF_CINZA]);
+        if (!treinos.length) linhas.push([dia && dia.parcial === true ? 'Nenhum treino do relógio recebido até o arquivo' + (arq ? (arq.indexOf('/') >= 0 ? ' de ' : ' das ') + arq : '') + ' (dia parcial).' : 'Nenhum treino registrado pelo relógio neste dia.', 9, false, PDF_CINZA]);
+        if (dia) {
+            const v = k => watchNum(dia[k]);
+            const passos = v('passos'), km = v('distKm'), ativa = v('kcalAtiva'), total = v('kcalTotal'), rep = v('kcalRepouso'), ex = v('exercMin'), pe = v('emPeH');
+            const fcRep = v('fcRep'), fcMed = v('fcMed'), fcMax = v('fcMax'), fcMin = v('fcMin'), fcCam = v('fcCam'), vfc = v('vfcMs'), spo2 = v('spo2');
+            const sono = watchMin(dia.sonoMin), prof = watchMin(dia.sonoProfMin), remS = watchMin(dia.sonoRemMin), cama = watchMin(dia.sonoCamaMin);
+            const andares = v('andares'), luz = v('luzMin'), resp = v('respMin'), vo2 = v('vo2max'), peso = v('pesoKg');
+            const p = [];
+            if (passos != null) p.push(fmtN(passos) + ' passos' + (km != null ? ' (' + watchFmt2(km) + ' km)' : ''));
+            if (ativa != null) p.push(fmtN(ativa) + ' kcal ativas' + (total != null ? ' (total ' + fmtN(total) + ')' : rep != null ? ' (repouso ' + fmtN(rep) + ')' : ''));
+            if (ex != null) p.push(fmtN(ex) + ' min de exercício');
+            if (pe != null) p.push(fmtN(pe) + ' h em pé');
+            if (fcRep != null) p.push('FC repouso ' + fmtN(fcRep) + ((fcMed != null || fcMax != null) ? ' (' + [fcMed != null ? 'méd ' + fmtN(fcMed) : '', fcMax != null ? 'máx ' + fmtN(fcMax) : ''].filter(Boolean).join(' · ') + ')' : ''));
+            else if (fcMed != null || fcMax != null) p.push('FC ' + [fcMed != null ? 'méd ' + fmtN(fcMed) : '', fcMax != null ? 'máx ' + fmtN(fcMax) : ''].filter(Boolean).join(' · '));
+            else if (fcMin != null) p.push('FC mín ' + fmtN(fcMin));
+            if (fcCam != null) p.push('FC caminhada ' + fmtN(fcCam));
+            if (vfc != null) p.push('VFC ' + fmt(vfc) + ' ms');
+            if (spo2 != null) p.push('SpO2 ' + fmt(spo2) + '%');
+            if (resp != null) p.push('resp. ' + fmt(resp) + '/min');
+            if (vo2 != null) p.push('VO2máx ' + fmt(vo2));
+            if (sono) p.push('sono ' + sono + ([prof ? 'prof ' + prof : '', remS ? 'REM ' + remS : ''].filter(Boolean).length ? ' (' + [prof ? 'prof ' + prof : '', remS ? 'REM ' + remS : ''].filter(Boolean).join(' · ') + ')' : cama ? ' (na cama ' + cama + ')' : ''));
+            if (andares != null) p.push(fmtN(andares) + ' andar' + (andares === 1 ? '' : 'es'));
+            if (luz != null) p.push(fmtN(luz) + ' min de luz do dia');
+            if (peso != null) p.push('peso ' + watchFmt2(peso) + ' kg');
+            quebraItens('Dia: ', p, 8.5).forEach(l => linhas.push([l, 8.5, false, PDF_CINZA]));
+        }
+        const r = [];
+        if (dia && dia.parcial === true) r.push('dia parcial (o iPhone ainda mandará o resto do dia)');
+        if (arq) r.push('arquivo do iPhone ' + arq);
+        r.push('fonte: Apple Watch via Health Auto Export');
+        rodape = corta(r.join(' · '), 7.5);
+    }
+    const lh = fs => fs + 2.5; // 9 -> 11,5 pt por linha (como as notas); 8,5 -> 11
+    const altura = 16 + linhas.reduce((a, l) => a + lh(l[1]), 0) + (rodape ? 10 : 0) + 4;
+    return {
+        altura,
+        desenha(y) {
+            d.txt(M, y, 'Apple Watch neste dia', 11, true); y -= 4; d.line(M, y, W - M, y, PDF_AZUL, 1.2); y -= 12;
+            linhas.forEach(([s, fs, bold, cor]) => { d.txt(M, y, s, fs, bold, cor || undefined); y -= lh(fs); });
+            if (rodape) { d.txt(M, y, rodape, 7.5, false, PDF_CINZA); y -= 10; }
+            return y - 4;
+        }
+    };
+}
 // Página do registro de treino (a página única da v1.28.2): faixa com/sem personal, tabela de uma linha por
 // exercício, notas e resumo do extrato do mês. Geometria pensada para caber em UMA página A4, com guardas de estouro.
 function pdfSessionPage(d, t) {
@@ -9238,7 +9727,11 @@ function pdfSessionPage(d, t) {
     // tabela: uma linha por exercício. Reserva: rodapé (60) + extrato (115, se houver) + notas (mín. 24, se houver).
     const exs = t.exercicios || [];
     const temExtrato = !!(pi.r && pi.p && pi.marcada);
-    const reserva = 60 + (temExtrato ? 115 : 0) + (t.notas ? 24 : 0);
+    let wb = pdfWatchBloco(d, t); // v1.35.0: bloco do relógio (null quando o dia não tem dado)
+    let reserva = 60 + (temExtrato ? 115 : 0) + (t.notas ? 24 : 0) + (wb ? wb.altura : 0);
+    // v1.35.0 (auditoria 1, nota 4): se nem com a tabela no piso de 9 pt por linha o bloco cabe (40 e tantos exercícios), o
+    // bloco fica só na tela do app e a página não invade o rodapé
+    if (wb && (y - reserva) / (exs.length + 1) < 9) { reserva -= wb.altura; wb = null; }
     let rh = exs.length > 18 ? 12 : 15, fs = exs.length > 18 ? 7.5 : 9;
     const cabe = Math.floor((y - reserva) / rh) - 1;              // linhas que cabem com a altura atual
     if (exs.length > cabe) { rh = Math.max(9, Math.floor((y - reserva) / (exs.length + 1))); fs = Math.max(6, rh - 2.5); }
@@ -9251,13 +9744,14 @@ function pdfSessionPage(d, t) {
     exs.forEach(ex => {
         const ss = ex.series || [];
         const reps = ss.map(s => String(s.reps || 0)), cargas = ss.map(s => String(fmtCarga(s.carga)));
-        const cel = [pdfCorta(ex.nome || '—', fs, cols[1] - cols[0] - 10), String(ss.length), iguais(reps) ? ss.length + ' × ' + reps[0] : reps.join(' · '), iguais(cargas) ? cargas[0] : cargas.join(' · ')];
+        const cel = ex.tipo === 'cardio' ? cardioPdfCelulas(ex, fs, cols[1] - cols[0] - 10) : [pdfCorta(ex.nome || '—', fs, cols[1] - cols[0] - 10), String(ss.length), iguais(reps) ? ss.length + ' × ' + reps[0] : reps.join(' · '), iguais(cargas) ? cargas[0] : cargas.join(' · ')];
         d.rect(M, y - rh, CW, rh, null, PDF_BORDA);
         cel.forEach((c, i) => { if (i >= 2) d.txtFit(cols[i] + 5, y - rh + 4.5, c, fs, cols[i + 1] - cols[i] - 10); else d.txt(cols[i] + 5, y - rh + 4.5, c, fs, false); });
         y -= rh;
     });
     for (let i = 1; i < 4; i++) d.line(cols[i], y, cols[i], y + rh * (exs.length + 1));
     y -= 16;
+    if (wb) y = wb.desenha(y); // v1.35.0: Apple Watch neste dia, abaixo dos exercícios (as notas e o extrato vêm depois)
     if (t.notas) {
         d.txt(M, y, 'Notas', 11, true); y -= 4; d.line(M, y, W - M, y, PDF_VERDE, 1.2); y -= 12;
         const linhas = pdfQuebra(t.notas, 9, CW);
@@ -10081,6 +10575,7 @@ function rTreinoEditor() {
 
     let exHtml = '';
     editingTreino.exercicios.forEach((ex, exIdx) => {
+        if (ex.tipo === 'cardio') { exHtml += cardioEditorCardHtml(ex, exIdx); return; } // v1.35.0
         let serHtml = '';
         (ex.series || []).forEach((s, sIdx) => {
             serHtml += `
@@ -10194,7 +10689,7 @@ function saveTreino() {
             nome: e.nome.trim(),
             series: (e.series || []).filter(s => (s.reps || 0) > 0 || (s.carga || 0) > 0)
         }))
-        .filter(e => e.series.length > 0);
+        .filter(e => e.tipo === 'cardio' || e.series.length > 0); // v1.35.0: cardio não tem série
     if (editingTreino.exercicios.length === 0) {
         return toast('Adicione ao menos 1 exercício com séries válidas', true);
     }
@@ -10246,6 +10741,7 @@ function duplicateTreino(id) {
     editingTreino.id = uid();
     editingTreino.data = today();
     editingTreino.createdAt = Date.now();
+    editingTreino.exercicios = editingTreino.exercicios.filter(e => !(e && e.tipo === 'cardio')); // v1.35.0: cardio é medida daquele dia
     editingTreino.exercicios.forEach(e => e.id = uid());
     if (cPage && cPage !== 'treino-editor') treinoEditorReturnPage = cPage;
     showPage('treino-editor');
