@@ -1,7 +1,7 @@
 # Estado do Projeto — Gestão Saúde
 
-**Última atualização:** 2026-09-17 (parte 23, sessão no Mac mini)
-**Versão atual em produção:** v1.35.0 (Apple Watch no PDF do registro de treino, descanso em popup pela hora do relógio, Cardio na sessão do relógio ou manual, relógio na análise da semana no lugar dos prints; no ar 25/09 20h24, push do Mac mini com ok do CEO, serviço VPS v2.3 no ar 20h21, ver parte 28) sobre a v1.34.0 (Apple Watch dentro do app: card ⌚ no Início, bloco na sessão selada, chip no histórico e linha em Ajustes › Sincronização, lendo os documentos `users/{uid}/watch/AAAA-MM` publicados pelo robô do Mac mini; no ar 25/09 15h39, push do Mac mini com ok do CEO, regras publicadas 15h37, ver parte 27) sobre a v1.33.1 (na página 1 do registro de treino a pizza cresce até ocupar o espaço livre, até 160 pt, com legenda e % maiores; 24/09, push do Mac mini com ok do CEO, ver parte 26) sobre a v1.33.0 (pizza do mês em % e os dois gráficos do mês na página 1 do registro de treino; o Extrato separado do Personal saiu; 24/09, ver parte 25) sobre a v1.32.0 (página 2 do PDF do treino e extrato do Personal com TODOS os dias do mês, "Descanso" nos dias sem treino e gráfico de evolução; 22/09, ver parte 24) sobre a v1.31.0 (Relatório para a nutricionista: plano × comido em PDF semanal de 2 páginas; no ar 17/09 19h15, ver parte 23) sobre a v1.30.0 ("o plano manda"; no ar 17/09 15h01, ver parte 22) sobre a v1.29.0 (PDF do treino com o extrato detalhado do mês + extrato em PDF; no ar 17/09 12h02, ver parte 21) sobre a v1.28.2 (PDF gerado no aparelho + impressão por navegação real, 16/09 08h41) e a v1.28.0 (sincronização segura entre cópias: revisão + junção de 3 vias + escuta do documento, no ar 16/09 07h23), push do Mac mini pela deploy key com ok do CEO (ver parte 20). Antes: v1.27.0 (15/09 16h4x), v1.26.0 (14/09 18h08), v1.25.2 (14/09 14h07), v1.25.1 (14/09 09h07), v1.25.0 (14/09 08h07), v1.24.0 (02/09).
+**Última atualização:** 2026-09-26 (parte 29, sessão no Mac mini)
+**Versão atual em produção:** v1.35.0 (ver parte 28). **Construída, auditada e aguardando push com o "pode" do CEO: v1.35.1** ("Erro ao salvar dados" com registro durável, nova tentativa sozinha e reinício seguro quando o cliente do banco para; relatório semanal em PDF gerado no aparelho, como o registro de treino; 26/09, ver parte 29). Antes: v1.35.0 (Apple Watch no PDF do registro de treino, descanso em popup pela hora do relógio, Cardio na sessão do relógio ou manual, relógio na análise da semana no lugar dos prints; no ar 25/09 20h24, push do Mac mini com ok do CEO, serviço VPS v2.3 no ar 20h21, ver parte 28) sobre a v1.34.0 (Apple Watch dentro do app: card ⌚ no Início, bloco na sessão selada, chip no histórico e linha em Ajustes › Sincronização, lendo os documentos `users/{uid}/watch/AAAA-MM` publicados pelo robô do Mac mini; no ar 25/09 15h39, push do Mac mini com ok do CEO, regras publicadas 15h37, ver parte 27) sobre a v1.33.1 (na página 1 do registro de treino a pizza cresce até ocupar o espaço livre, até 160 pt, com legenda e % maiores; 24/09, push do Mac mini com ok do CEO, ver parte 26) sobre a v1.33.0 (pizza do mês em % e os dois gráficos do mês na página 1 do registro de treino; o Extrato separado do Personal saiu; 24/09, ver parte 25) sobre a v1.32.0 (página 2 do PDF do treino e extrato do Personal com TODOS os dias do mês, "Descanso" nos dias sem treino e gráfico de evolução; 22/09, ver parte 24) sobre a v1.31.0 (Relatório para a nutricionista: plano × comido em PDF semanal de 2 páginas; no ar 17/09 19h15, ver parte 23) sobre a v1.30.0 ("o plano manda"; no ar 17/09 15h01, ver parte 22) sobre a v1.29.0 (PDF do treino com o extrato detalhado do mês + extrato em PDF; no ar 17/09 12h02, ver parte 21) sobre a v1.28.2 (PDF gerado no aparelho + impressão por navegação real, 16/09 08h41) e a v1.28.0 (sincronização segura entre cópias: revisão + junção de 3 vias + escuta do documento, no ar 16/09 07h23), push do Mac mini pela deploy key com ok do CEO (ver parte 20). Antes: v1.27.0 (15/09 16h4x), v1.26.0 (14/09 18h08), v1.25.2 (14/09 14h07), v1.25.1 (14/09 09h07), v1.25.0 (14/09 08h07), v1.24.0 (02/09).
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
@@ -1250,3 +1250,55 @@ Kit único: `~/Gestao_Saude_Dados/kits/v130_bancada/v1341/` (`patch_v1341.py` so
   PIDs trocados, md5 `e452c59e` montado, backup `app.py.bak_20260925_2020` na VPS); app **NO AR às 20h24** (push
   `5e0559f..ba88bc7` pela deploy key com "pode" do CEO; ratificado: index `8b8b7cf28cd0ce01b563aacfdbf918ba`,
   APP_VERSION e sw 1.35.0). Robô v1.0.1: `selar.sh` + `atualizar.sh` (registrar quando feito).
+
+## Parte 29: v1.35.1, "Erro ao salvar dados" com registro durável, nova tentativa e reinício seguro; relatório semanal em PDF (26/09/2026, sessão no Mac mini)
+
+Dois defeitos relatados pelo CEO depois da 1.35.0: (1) print de 25/09 21h35 (Início) e 21h38 (visor do relatório) com
+"Erro ao salvar dados"; (2) o relatório semanal só exportava HTML e o Imprimir não abria a folha no app instalado
+("é só deixar igual ao do personal"). Kit: `~/Gestao_Saude_Dados/kits/v130_bancada/v1351/` (`patch_v1351.py` sobre a
+1.35.0 = `ba88bc7`).
+
+- **Diagnóstico do (1), medido no Firestore pela credencial só-leitura:** rev 808 v1.35.0 às 21h03 de 25/09, nada
+  depois; às 06h28 de 26/09 o app reaberto recuperou a pendência local ("pendência recuperada · 2026-09-26T00:38:35Z",
+  a análise da semana gerada às 21h38) e gravou a rev 809. A gravação falhou no aparelho com erro que NÃO é "sem rede"
+  (o toast seria outro), o dado ficou guardado (v1.28.0) e entrou depois. O código se perdeu: `SYNC.log` vivia só na
+  memória e o app foi fechado. A 1.35.0 não tocou `save()/saveTx()`. SDK 10.12.0: RPC unário com teto fixo de 15 s
+  (`deadline-exceeded` "Request time out") e 5 tentativas por transação; cada tentativa baixa e sobe o documento inteiro
+  (587 KB). Hipóteses abertas: `deadline-exceeded` (subida lenta), cliente do Firestore morto (IndexedDB perdida ao
+  voltar do 2º plano, defeito conhecido do iOS em PWA: falha em toda gravação até recarregar; casa com 2 falhas em 3 min
+  e sucesso após reabrir) e `aborted`. A cura cobre as três e deixa o registro para a próxima ocorrência.
+- **Registro durável** (`gs_sync_log`): `syncLog` grava os 30 últimos eventos no localStorage; `syncRestaurarLog()` os
+  traz de volta ao abrir; evento "app aberto · vVERSÃO · aparelho" a cada sessão; o erro guarda código E mensagem
+  (`syncErroTexto`). Ajustes › Sincronização mostra 8 eventos (com DD/MM quando não é de hoje) e o estado "🔁 a última
+  gravação falhou: alteração guardada neste aparelho, nova tentativa agendada".
+- **Nova tentativa sozinha** (`syncAgendarRetentativa`): 20 s, 45 s, 90 s, 3 min, 5 min (teto); gravação que entra zera;
+  ação do usuário com temporizador armado não arma outro. Toast novo: "⚠ Não consegui gravar no servidor (código). A
+  alteração está guardada neste aparelho; tento de novo sozinho." ("Erro ao salvar dados" saiu do app).
+- **Cliente do banco parou** (`syncClienteMorto`: INTERNAL ASSERTION, AsyncQueue, IndexedDB, persistence layer, already
+  failed): toast "⚠ O app precisa reiniciar para voltar a gravar no servidor. Sua alteração está guardada neste
+  aparelho." e `syncReiniciarQuandoSeguro()`: em 3 s, sem modal, sem campo em edição e em 1º plano (senão espera 5 s),
+  persiste a pendência, carimba `gs_sync_reload_at` e recarrega; no máximo 1 reinício a cada 10 min ("reinício adiado").
+- **Relatório semanal em PDF** (`buildWeeklyReportPdf`, `pdfDoc`): cabeçalho igual ao do registro de treino; Análise da
+  semana (resumo, texto, Plano da próxima semana numerado, dados do relógio, aviso da IA); Alertas por nível; Métricas
+  corporais (tabela + linha do peso); Resumo nutricional (tabela, contagem por faixa, barras de proteína pela faixa);
+  Treinos (resumo e tabela com "com/sem o personal"); Hidratação (barras); Medicação; Anotações; várias páginas com o
+  cabeçalho da tabela repetido; "Sem registros nesta semana." quando não há nada; meta zero não divide.
+  `exportWeeklyReport` passa o construtor ao visor (botão 📄 PDF, folha de compartilhamento) e o arquivo vira
+  `relatorio-semanal-AAAA-MM-DD`. Não mexido: o 🖨 Imprimir do visor no app instalado (`docTakeover`).
+- **Auditoria 1** (subagente independente): APROVADA COM RESSALVAS, 4 🟡 curados na hora (reinício respeita as páginas de
+  execução/edição e a gravação em curso; reinício adiado arma a nova tentativa; título nunca órfão no pé do PDF; bancada
+  sem os 4 pontos cegos: registro semeado antes do arranque, tabela cruzando a página, varredura de 2 a 62 linhas de
+  análise) e 5 🟢 aplicados (logout desarma temporizadores; reinício 3,5 s após o toast; rodapé curto; largura exata do
+  texto corrido). **Auditoria 2: APROVADA SEM RESSALVA** (19 sabotagens, a bancada pega as que escapavam); as notas 🟢 B e
+  C dela entraram (varredura com passo 1, que pegou o subtítulo do plano órfão no pé, curado com `need(28)`; caso
+  `token150`); rodada 3 confirma a linha. 🟢A (nova tentativa na janela de 10 min sem toast) fica para a 1.35.2.
+- **Bancada** (`valida_v1351.py`, rc 0): `verify_v1351.js` 154/154 no jsc sobre a 1.35.1 e sobre a 1.35.0 (prova reversa:
+  72 [cura] reprovam lá, nenhum outro); `verify_v1350_sobre_1351.js` 154/154; fitz 42.868/42.868 (62 PDFs da varredura,
+  treinos40, token150); `bench/build_bench_v1351.py` (Chrome headless) com 4 prévias. Firebase falso ganhou o gancho
+  `state.txError`. ☠️ Aprendizados: `const` declarado depois do uso no topo do script cai na zona morta e o `try` esconde
+  (o registro não persistia); o `setTimeout` do toast (3 s) se confunde com o temporizador do app na bancada
+  (neutralizar); no fitz o y cresce para baixo.
+- **Publicação:** pendente (push pela deploy key com "pode" do CEO). Rollback `git push origin ba88bc7:main --force-with-lease`.
+- **Pendentes que esta versão não cobre:** 1.35.2 = Cardio no EDITOR do registro (pedido de 25/09 20h3x); tamanho do
+  documento (587 KB, `days` = 338 KB; meses fechados em subcoleção); Imprimir do visor no app instalado; robô v1.0.1
+  (`selar.sh` + `atualizar.sh`); push do `docs:` `77def81`.

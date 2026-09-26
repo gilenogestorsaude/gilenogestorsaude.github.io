@@ -625,7 +625,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.35.0';
+const APP_VERSION = '1.35.1';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1039,6 +1039,7 @@ function getOrphanWaterEntries(entries) {
 const SYNC_PROTOCOL_VERSION = '1.28.0';   // primeira versão que grava rev e junta
 const SYNC_LS_PENDING = 'gs_sync_pending'; // localStorage: alteração local ainda não confirmada pelo servidor
 const SYNC_LS_BASE = 'gs_sync_base';       // localStorage: base (último estado sincronizado) da pendência
+const SYNC_LS_LOG = 'gs_sync_log';        // v1.35.1: os últimos eventos desta cópia sobrevivem ao fechamento do app (diagnóstico)
 const SYNC = {
     cid: null, label: '',   // identidade desta cópia do app
     rev: 0,                 // revisão do documento que esta cópia conhece
@@ -1053,7 +1054,9 @@ const SYNC = {
     lastWriter: null, writers: [],
     fromCache: false,       // load() serviu do cache local, sem confirmação do servidor
     loadError: false,
-    log: []                 // últimos eventos desta cópia (para Ajustes)
+    log: [],                // últimos eventos desta cópia (para Ajustes; v1.35.1: guardados no localStorage)
+    retryTimer: null, retryN: 0,          // v1.35.1: nova tentativa sozinha depois de uma gravação que falhou
+    reloadTimer: null, reloadPendente: false // v1.35.1: reinício do app quando o cliente do banco parou
 };
 
 function syncClientId() {
@@ -1074,10 +1077,23 @@ function syncClientLabel() {
 }
 SYNC.cid = syncClientId();
 SYNC.label = syncClientLabel();
+syncRestaurarLog();
+syncLog('app aberto', 'v' + APP_VERSION + ' · ' + SYNC.label); // v1.35.1: marca o início de cada sessão no registro
 
 function syncLog(kind, info) {
     SYNC.log.push({ t: Date.now(), kind, info: info == null ? '' : String(info) });
     if (SYNC.log.length > 30) SYNC.log.shift();
+    try { localStorage.setItem(SYNC_LS_LOG, JSON.stringify(SYNC.log)); } catch (e) { /* sem espaço: fica só na memória */ }
+}
+// v1.35.1: ao abrir o app, os eventos da sessão anterior voltam do localStorage (o erro de 25/09 21h38 se perdeu com o
+// fechamento do app antes de alguém ler). Entrada sem forma é ignorada; nunca mais de 30.
+function syncRestaurarLog() {
+    let l = null;
+    try { l = JSON.parse(localStorage.getItem(SYNC_LS_LOG) || 'null'); } catch (e) { l = null; }
+    SYNC.log = Array.isArray(l)
+        ? l.filter(e => e && typeof e === 'object' && typeof e.t === 'number' && typeof e.kind === 'string')
+            .map(e => ({ t: e.t, kind: e.kind, info: e.info == null ? '' : String(e.info) })).slice(-30)
+        : [];
 }
 function tsMs(v) {
     if (!v) return 0;
@@ -1232,6 +1248,59 @@ function isOfflineErr(e) {
     const msg = e && e.message ? String(e.message) : String(e || '');
     return code === 'unavailable' || /offline|network|unavailable/i.test(msg);
 }
+// v1.35.1: texto do erro para o registro: código e mensagem (curta). Antes só o código ficava, e o código sozinho
+// não distingue "servidor demorou" de "cliente do banco parou".
+function syncErroTexto(e) {
+    const code = e && e.code ? String(e.code) : '';
+    const msg = e && e.message != null ? String(e.message) : (typeof e === 'string' ? e : '');
+    const temMsg = !!msg && msg !== code;
+    return (code ? code + (temMsg ? ' · ' : '') : '') + (temMsg ? msg.slice(0, 160) : '');
+}
+// v1.35.1: o cliente do Firestore entrou num estado do qual não sai sem recarregar a página (IndexedDB perdida quando
+// o app volta do 2º plano, defeito conhecido do iOS; asserção interna do SDK). Toda gravação seguinte falharia igual.
+function syncClienteMorto(e) {
+    const t = String((e && e.message) || e || '');
+    return /INTERNAL ASSERTION|AsyncQueue|Indexed ?DB|Indexed Database|persistence layer|already failed/i.test(t);
+}
+// v1.35.1: depois de uma gravação que falhou, o app tenta de novo sozinho (antes só a próxima ação do usuário, o
+// retorno ao 1º plano ou o evento online tentavam). Intervalo cresce até 5 min; zera quando uma gravação entra.
+const SYNC_RETRY_MS = [20000, 45000, 90000, 180000, 300000];
+function syncAgendarRetentativa(motivo) {
+    if (SYNC.retryTimer) return;
+    const ms = SYNC_RETRY_MS[Math.min(SYNC.retryN, SYNC_RETRY_MS.length - 1)];
+    SYNC.retryN++;
+    SYNC.retryTimer = setTimeout(() => { SYNC.retryTimer = null; if (U && D && SYNC.pending && !SYNC.saving) save(); }, ms);
+    syncLog('nova tentativa em ' + Math.round(ms / 1000) + ' s', motivo);
+}
+function syncCancelarRetentativa() {
+    if (SYNC.retryTimer) { clearTimeout(SYNC.retryTimer); SYNC.retryTimer = null; }
+    SYNC.retryN = 0;
+}
+// v1.35.1: reinicia o app quando for seguro (sem modal aberto, sem campo em edição, em 1º plano). A alteração já está
+// no localStorage e volta pela pendência local ao abrir (foi assim em 26/09 06h28). Nunca um laço: no máximo um
+// reinício a cada 10 min; se o defeito persistir, ficam o aviso e as novas tentativas.
+const SYNC_LS_RELOAD = 'gs_sync_reload_at';
+function syncReiniciarQuandoSeguro() {
+    if (SYNC.reloadTimer) return;
+    SYNC.reloadPendente = true;
+    const tenta = () => {
+        SYNC.reloadTimer = null;
+        if (!SYNC.reloadPendente || !U) return;
+        const ae = document.activeElement;
+        const ocupado = !!document.querySelector('.modal-overlay') || !!(ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName || '')) || document.visibilityState !== 'visible'
+            || !!SYNC_HOLD_PAGES[cPage] || SYNC.saving; // auditoria 1 (🟡1): execução/edição de treino e gravação em curso também esperam
+        if (ocupado) { SYNC.reloadTimer = setTimeout(tenta, 5000); return; }
+        let ultimo = 0;
+        try { ultimo = Number(localStorage.getItem(SYNC_LS_RELOAD)) || 0; } catch (e) { ultimo = 0; }
+        if (Date.now() - ultimo < 10 * 60 * 1000) { SYNC.reloadPendente = false; syncLog('reinício adiado', 'já reiniciou há menos de 10 min'); syncAgendarRetentativa('reinício adiado'); return; } // auditoria 1 (🟡2): fica uma tentativa armada
+        try { localStorage.setItem(SYNC_LS_RELOAD, String(Date.now())); } catch (e) {}
+        try { persistPendingLocal(); } catch (e) {}
+        syncLog('reiniciando o app', 'cliente do banco parou');
+        SYNC.reloadPendente = false;
+        location.reload();
+    };
+    SYNC.reloadTimer = setTimeout(tenta, 3500); // depois do toast (3 s)
+}
 // Guarda no localStorage a alteração ainda não confirmada (e a base, quando mudou). Sobrevive ao app
 // ser morto no meio da gravação. Apagada quando o servidor confirma.
 function persistPendingLocal() {
@@ -1268,16 +1337,26 @@ async function save() {
         if (navigator.onLine === false) { const e = new Error('offline'); e.code = 'unavailable'; throw e; } // sem rede declarada: não espera a transação falhar
         do { SYNC.queued = false; await saveTx(); } while (SYNC.queued && U);
         SYNC.offlineAvisado = false;
+        syncCancelarRetentativa(); // v1.35.1: gravou, o contador da nova tentativa zera
     } catch (e) {
         if (!U) {
             // saiu da conta no meio da gravação: nada a avisar nesta tela
         } else if (isOfflineErr(e)) {
             syncLog('sem rede', e && e.code);
             if (!SYNC.offlineAvisado) { SYNC.offlineAvisado = true; toast('📡 Sem conexão: as alterações ficam guardadas neste aparelho e sincronizo quando a rede voltar'); }
+            syncAgendarRetentativa('sem rede'); // v1.35.1: além do evento online, tenta sozinho
+        } else if (syncClienteMorto(e)) {
+            // v1.35.1: o cliente do Firestore parou; só o recarregamento o traz de volta. A alteração já está no
+            // localStorage (persistPendingLocal, acima); o app reinicia quando for seguro.
+            console.error('Erro ao salvar (cliente do banco parou):', e);
+            syncLog('cliente do banco parou', syncErroTexto(e));
+            toast('⚠ O app precisa reiniciar para voltar a gravar no servidor. Sua alteração está guardada neste aparelho.', true);
+            syncReiniciarQuandoSeguro();
         } else {
             console.error('Erro ao salvar:', e);
-            syncLog('erro ao gravar', (e && e.code) || (e && e.message) || e);
-            toast('Erro ao salvar dados', true);
+            syncLog('erro ao gravar', syncErroTexto(e));
+            toast('⚠ Não consegui gravar no servidor (' + ((e && e.code) || 'erro') + '). A alteração está guardada neste aparelho; tento de novo sozinho.', true);
+            syncAgendarRetentativa((e && e.code) || 'erro');
         }
     } finally {
         SYNC.saving = false;
@@ -1799,6 +1878,9 @@ function syncResetState() {
     stopWatch(); // v1.34.0
     SYNC.rev = 0; SYNC.updatedAtMs = 0; SYNC.baseJson = null; SYNC.basePersistedRev = -1;
     SYNC.pending = false; SYNC.queued = false; SYNC.offlineAvisado = false;
+    syncCancelarRetentativa(); // v1.35.1 (auditoria 1): sair da conta desarma a nova tentativa e o reinício
+    if (SYNC.reloadTimer) { clearTimeout(SYNC.reloadTimer); SYNC.reloadTimer = null; }
+    SYNC.reloadPendente = false;
     SYNC.lastWriter = null; SYNC.writers = []; SYNC.fromCache = false; SYNC.loadError = false;
 }
 // Páginas em que adotar dados novos no meio do gesto atrapalharia: espera a próxima troca de página.
@@ -1887,11 +1969,12 @@ function settingsSyncHtml() {
     const w = SYNC.lastWriter;
     const lst = (SYNC.writers || []).slice().reverse().slice(0, 6);
     const estado = SYNC.loadError ? '❌ sem dados do servidor'
-        : SYNC.pending ? (navigator.onLine ? '⏳ gravando…' : '📡 aguardando rede: alteração guardada neste aparelho')
+        : SYNC.pending ? (SYNC.saving ? '⏳ gravando…' : SYNC.retryTimer ? '🔁 a última gravação falhou: alteração guardada neste aparelho, nova tentativa agendada' : navigator.onLine ? '⏳ gravando…' : '📡 aguardando rede: alteração guardada neste aparelho')
         : SYNC.fromCache ? '🟡 dados locais, ainda sem confirmação do servidor'
         : '✅ sincronizado';
     const p2 = n => String(n).padStart(2, '0');
-    const logHtml = SYNC.log.slice().reverse().slice(0, 5).map(e => { const d = new Date(e.t); return `${p2(d.getHours())}:${p2(d.getMinutes())} ${escHtml(e.kind)}${e.info ? ' · ' + escHtml(e.info) : ''}`; }).join('<br>');
+    const hojeStr = new Date().toDateString();
+    const logHtml = SYNC.log.slice().reverse().slice(0, 8).map(e => { const d = new Date(e.t); const dia = d.toDateString() === hojeStr ? '' : p2(d.getDate()) + '/' + p2(d.getMonth() + 1) + ' '; return `${dia}${p2(d.getHours())}:${p2(d.getMinutes())} ${escHtml(e.kind)}${e.info ? ' · ' + escHtml(e.info) : ''}`; }).join('<br>'); // v1.35.1: 8 eventos, guardados no aparelho, com a data quando não é de hoje
     return `
         <div class="card mb-12">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -1903,7 +1986,7 @@ function settingsSyncHtml() {
             <div class="cfg-item"><div><div class="cfg-label">⌚ Apple Watch</div><div class="cfg-desc">${watchEstadoTexto()}</div></div></div>
             <div class="cfg-item"><div><div class="cfg-label">Última gravação no banco</div><div class="cfg-desc">${w ? fmtWriter(w) : 'sem registro ainda (versões anteriores à 1.28.0 não gravavam quem escreveu)'}</div></div></div>
             <div class="cfg-item"><div style="min-width:0;flex:1"><div class="cfg-label">Últimas gravações</div><div class="cfg-desc" style="line-height:1.6">${lst.length ? lst.map(fmtWriter).join('<br>') : '—'}</div></div></div>
-            <div class="cfg-item" style="border:none"><div style="min-width:0;flex:1"><div class="cfg-label">Eventos desta cópia</div><div class="cfg-desc" style="line-height:1.6">${logHtml || '—'}</div></div></div>
+            <div class="cfg-item" style="border:none"><div style="min-width:0;flex:1"><div class="cfg-label">Eventos desta cópia (ficam guardados neste aparelho)</div><div class="cfg-desc" style="line-height:1.6">${logHtml || '—'}</div></div></div>
             <div style="font-size:11px;color:var(--text3);margin-top:8px;line-height:1.5">Cada gravação confere no servidor se outro aparelho gravou antes e junta as duas versões em vez de sobrescrever. Se dois aparelhos mudarem o mesmo item ao mesmo tempo, vale o deste aparelho e o app avisa. Cópia antiga do app (antes da 1.28.0) grava sem essa proteção: feche e abra o app em todos os aparelhos.</div>
         </div>`;
 }
@@ -7350,9 +7433,167 @@ function shareDocViewer() {
     }
 }
 
+// ========== RELATÓRIO SEMANAL EM PDF (v1.35.1, pedido do CEO 26/09/2026: "é só deixar igual ao do personal") ==========
+// O mesmo conteúdo do documento HTML (análise da semana, alertas, métricas corporais, nutrição, treinos, hidratação,
+// medicação, anotações) no escritor de PDF do aparelho (pdfDoc: Helvetica WinAnsi, várias páginas, rodapé "página i de n"),
+// com tabelas que repetem o cabeçalho na quebra e gráficos em vetor (linha do peso, barras de proteína e água). Só leitura:
+// nada em D, nada de rede. No app instalado o visor ganha o botão 📄 PDF (folha de compartilhamento), como o registro de
+// treino e o PDF da nutricionista; a impressão pelo navegador continua onde ela funciona.
+function buildWeeklyReportPdf(rep) {
+    const d = pdfDoc().newPage();
+    const { W, M, CW } = d;
+    const n = rep.nutri, a = rep.agua, t = rep.treinoAgg, m = rep.medAgg, nome = D.userName || '';
+    const cinza = PDF_CINZA, verde = '0.02 0.37 0.27 rg', ambar = '0.57 0.25 0.05 rg', verm = '0.6 0.11 0.11 rg';
+    const corNivel = { red: verm, yellow: ambar, green: verde, info: cinza };
+    const fillNivel = { red: '0.86 0.15 0.15 rg', yellow: '0.71 0.33 0.04 rg', green: '0.02 0.59 0.41 rg', info: '0.28 0.33 0.41 rg' };
+    const FILL_VERDE = '0.06 0.72 0.51 rg', FILL_AMBAR = '0.96 0.62 0.04 rg', FILL_VERM = '0.94 0.27 0.27 rg', FILL_AZUL = '0.23 0.51 0.96 rg';
+    const pctDe = (v, g) => (g > 0 && Number.isFinite(v)) ? Math.round(v / g * 100) : null; // meta zero ou dado inválido: sem barra
+    let y = d.y;
+    const need = h => { if (y - h < d.RODAPE) { d.newPage(); y = d.y; return true; } return false; };
+    const titulo = tt => { y -= 4; need(64); d.txt(M, y, pdfCorta(tt, 11, CW), 11, true); y -= 4; d.line(M, y, W - M, y, PDF_VERDE, 1.2); y -= 13; };
+    // largura como sai no PDF: regular pela tabela AFM da Helvetica (pdfWExata sobre o texto WinAnsi); negrito pelo pdfW com
+    // folga de 10% (Helvetica-Bold é mais larga e não há tabela dela). Auditoria 1 (🟢): pdfW subestima maiúsculas redondas.
+    const largura = (t, fs, bold) => bold ? pdfW(t, fs) * 1.1 : pdfWExata(pdfTxt(t), fs);
+    const quebra = (s, fs, larg, bold) => { // quebra por largura; palavra maior que a linha é cortada
+        const out = [];
+        String(s || '').split(/\r?\n/).forEach(par => {
+            let linha = '';
+            par.split(/\s+/).forEach(w => { const t = linha ? linha + ' ' + w : w; if (largura(t, fs, bold) <= larg) linha = t; else { if (linha) out.push(linha); linha = w; while (linha.length > 1 && largura(linha, fs, bold) > larg) linha = linha.slice(0, -1); } });
+            out.push(linha);
+        });
+        return out;
+    };
+    const paragrafo = (s, fs, bold, cor, x, larg) => { // linha vazia = respiro entre parágrafos
+        const lh = fs + 3;
+        quebra(s, fs, larg || CW, bold).forEach(l => { if (!l) { y -= lh * 0.5; return; } need(lh); d.txt(x || M, y, l, fs, bold, cor); y -= lh; });
+    };
+    const tabela = (cols, cab, rows, fs, rh) => { // cabeçalho repetido na quebra de página; '>' no título = coluna à direita
+        fs = fs || 8.5; rh = rh || 13;
+        const wB = (s, f, bold) => pdfW(s, f) * (bold ? 1.07 : 1);
+        const cabecalho = () => { d.rect(M, y - rh, CW, rh, PDF_FUNDO, PDF_BORDA); cab.forEach((c, i) => { const right = /^>/.test(c), s = c.replace(/^>/, ''); if (right) d.txt(cols[i + 1] - 4 - wB(s, fs, true), y - rh + 4, s, fs, true); else d.txt(cols[i] + 4, y - rh + 4, s, fs, true); }); y -= rh; };
+        need(rh * 3); cabecalho(); let topo = y + rh;
+        const fecha = ate => { for (let i = 1; i < cols.length - 1; i++) d.line(cols[i], ate, cols[i], topo); };
+        rows.forEach(r => {
+            if (y - rh < d.RODAPE) { fecha(y); d.newPage(); y = d.y; cabecalho(); topo = y + rh; }
+            d.rect(M, y - rh, CW, rh, null, PDF_BORDA);
+            r.cells.forEach((c, i) => { const cel = (c && typeof c === 'object') ? c : { t: String(c == null ? '' : c) }; const w = cols[i + 1] - cols[i] - 8; const s = pdfCorta(cel.t, fs, w);
+                if (cel.right) d.txt(cols[i + 1] - 4 - wB(s, fs, cel.bold), y - rh + 4, s, fs, cel.bold, cel.cor); else d.txt(cols[i] + 4, y - rh + 4, s, fs, cel.bold, cel.cor); });
+            y -= rh;
+        });
+        fecha(y); y -= 10;
+    };
+    const barras = (rotulo, items, fill) => { // items: [{i (0-6), pct|null, fill?}]; uma barra por dia, linha nos 100%
+        if (!items.some(it => it.pct != null)) return;
+        const H = 60; need(H + 36);
+        d.txt(M, y, rotulo, 7.5, false, cinza); y -= 10;
+        const maxPct = Math.max(120, ...items.filter(it => it.pct != null).map(it => it.pct));
+        const base = y - H - 10, larg = CW / 7, y100 = base + H * 100 / maxPct;
+        d.line(M, y100, W - M, y100, PDF_BORDA, 0.5); d.txt(M, y100 + 2, '100%', 6.5, false, cinza);
+        items.forEach(it => {
+            const x0 = M + it.i * larg + larg * 0.25, w = larg * 0.5;
+            if (it.pct != null) { const h = Math.max(1, H * Math.min(it.pct, maxPct) / maxPct); d.rect(x0, base, w, h, it.fill || fill); const s = it.pct + '%'; d.txt(x0 + (w - pdfW(s, 6.5)) / 2, base + h + 2, s, 6.5, false, cinza); }
+            else d.txt(x0 + (w - pdfW('-', 6.5)) / 2, base + 2, '-', 6.5, false, cinza);
+            d.txt(x0 + (w - pdfW(DOW_ABBR[it.i], 6.5)) / 2, base - 8, DOW_ABBR[it.i], 6.5, false, cinza);
+        });
+        y = base - 26; // respiro abaixo dos rótulos dos dias antes da próxima seção
+    };
+    const grafPeso = serie => { // linha do peso pelos dias medidos, valor em cada ponto
+        const H = 56; need(H + 36);
+        d.txt(M, y, 'Peso ao longo da semana:', 7.5, false, cinza); y -= 12;
+        const vals = serie.map(q => q.peso); let mn = Math.min(...vals), mx = Math.max(...vals);
+        if (mx - mn < 0.8) { const mid = (mx + mn) / 2; mn = mid - 0.4; mx = mid + 0.4; }
+        const base = y - H - 10, px = i => M + 30 + (CW - 60) * i / 6, py = v => base + 6 + (H - 12) * (v - mn) / (mx - mn);
+        d.line(M, base, W - M, base, PDF_BORDA, 0.5);
+        for (let k = 1; k < serie.length; k++) d.line(px(serie[k - 1].i), py(serie[k - 1].peso), px(serie[k].i), py(serie[k].peso), PDF_VERDE, 1.2);
+        serie.forEach(q => { d.rect(px(q.i) - 2, py(q.peso) - 2, 4, 4, FILL_VERDE); const s = fmt(q.peso); d.txt(px(q.i) - pdfW(s, 6.5) / 2, py(q.peso) + 5, s, 6.5, false, cinza); });
+        DOW_ABBR.forEach((nm, i) => d.txt(px(i) - pdfW(nm, 6.5) / 2, base - 8, nm, 6.5, false, cinza));
+        y = base - 26; // respiro abaixo dos rótulos dos dias antes da próxima seção
+    };
+    // cabeçalho, como o do registro de treino
+    d.txt(M, y, 'Gileno Gestão · SAÚDE', 16, true); y -= 13;
+    d.txt(M, y, pdfCorta('Relatório Semanal' + (nome ? ' · ' + nome : '') + ' · Domingo ' + fmtDM(rep.startIso) + ' a Sábado ' + fmtDM(rep.endIso), 9.5, CW), 9.5, false, cinza); y -= 16;
+    let algo = false;
+    const p = reportProseFor(rep.startIso);
+    if (p) { // a análise por IA, quando já gerada, abre o documento: é o veredito da semana
+        algo = true;
+        titulo('Análise da semana');
+        paragrafo(p.resumo, 9.5, true); y -= 3;
+        paragrafo(p.analise, 9);
+        if (Array.isArray(p.plano) && p.plano.length) {
+            y -= 2; need(28); d.txt(M, y, 'Plano da próxima semana', 9, true); y -= 12; // need(28): o subtítulo nunca fica sozinho no pé (varredura da auditoria 2, caso 51)
+            p.plano.forEach((x, i) => { const num = (i + 1) + '.'; quebra(x, 9, CW - 16).forEach((l, k) => { need(12); if (k === 0) d.txt(M, y, num, 9, true); d.txt(M + 16, y, l, 9); y -= 12; }); });
+        }
+        y -= 2;
+        if (p.relogio) { need(10); d.txt(M, y, 'Dados do relógio lidos nesta análise: ' + p.relogio.dias + ' dia(s) · ' + p.relogio.treinos + ' treino(s)', 7.5, false, cinza); y -= 10; }
+        else if (p.prints) { need(10); d.txt(M, y, p.prints + ' print(s) do Apple Watch lidos nesta análise (análise antiga)', 7.5, false, cinza); y -= 10; }
+        need(10); d.txt(M, y, 'Análise gerada por IA a partir dos seus registros. Não substitui avaliação médica.', 7.5, false, cinza); y -= 12;
+    }
+    if (rep.alerts.length) {
+        algo = true;
+        titulo('Alertas da semana');
+        rep.alerts.forEach(al => {
+            quebra(String(al.text || '').trim(), 9, CW - 12).forEach((l, k) => { need(12); if (k === 0) d.rect(M + 1, y + 1, 5, 5, fillNivel[al.level] || fillNivel.info); d.txt(M + 12, y, l, 9, false, corNivel[al.level] || cinza); y -= 12; });
+            y -= 2;
+        });
+    }
+    if (rep.past.some(x => x.hasVitals)) {
+        algo = true;
+        titulo('Métricas corporais');
+        tabela([M, M + 90, M + 190, M + 290, M + 390, W - M], ['Dia', '>Peso (kg)', '>PA', '>FC (bpm)', '>Sono'],
+            rep.days.filter(x => !x.future).map(x => ({ cells: [DOW_ABBR[x.i] + ' ' + fmtDM(x.dt), { t: x.v.peso != null ? fmt(x.v.peso) : '-', right: true }, { t: x.v.pa || '-', right: true }, { t: x.v.fc ? String(x.v.fc) : '-', right: true }, { t: x.sono != null ? formatSleepDuration(x.sono) : '-', right: true }] })), 8.5, 13);
+        if (rep.pesoVar != null) { need(11); d.txt(M, y, 'Variação líquida na semana: ' + (rep.pesoVar > 0 ? '+' : '') + rep.pesoVar.toFixed(1).replace('.', ',') + ' kg' + (rep.sonoAvg != null ? ' · Sono médio: ' + formatSleepDuration(Math.round(rep.sonoAvg)) : ''), 8.5, true, cinza); y -= 12; }
+        if (rep.pesoSerie.length >= 2) grafPeso(rep.pesoSerie);
+    }
+    if (n.dias) {
+        algo = true;
+        titulo('Resumo nutricional · ' + n.dias + ' dia(s) com registro');
+        tabela([M, M + 130, M + 270, W - M], ['Métrica', '>Média/dia', 'Meta atingida'], [
+            { cells: ['Calorias', { t: fmtN(n.avgKcal) + ' kcal', right: true }, n.diasKcalOk + ' / ' + n.dias + ' dias (±10%)'] },
+            { cells: ['Proteína', { t: fmt(n.avgProt) + ' g', right: true }, n.diasProtOk + ' / ' + n.dias + ' dias' + protSufixo(n)] },
+            { cells: ['Carboidrato', { t: fmt(n.avgCarbo) + ' g', right: true }, '-'] },
+            { cells: ['Gordura', { t: fmt(n.avgGord) + ' g', right: true }, n.temMetaGord ? n.diasGordOk + ' / ' + n.dias + ' dentro do teto' : '-'] }
+        ], 8.5, 13);
+        let linhaProt = '';
+        if (n.modoProt !== 'meta') { const faixa = n.modoProt === 'faixa', f = n.faixaProtUnica; linhaProt = 'Dias de proteína: ' + n.diasProtAbaixo + ' abaixo · ' + n.diasProtOk + (faixa ? ' na faixa' : ' adequados') + ' · ' + n.diasProtAcima + ' acima' + (f ? ' (faixa ' + faixaProtTxt(f) + ')' : '') + (faixa ? '' : ' · faixa nos dias que têm faixa, meta nos demais'); }
+        else if (n.melhorProt) linhaProt = 'Melhor dia de proteína: ' + DOW_ABBR[n.melhorProt.i] + ' (' + fmt(n.melhorProt.meals.prot) + ' g) · Pior: ' + DOW_ABBR[n.piorProt.i] + ' (' + fmt(n.piorProt.meals.prot) + ' g)';
+        if (linhaProt) paragrafo(linhaProt, 8.5, false, cinza);
+        y -= 2;
+        barras('Proteína · % da meta por dia' + (n.modoProt !== 'meta' ? ' · cor pela faixa (verde dentro, âmbar abaixo, vermelho acima)' : ''), rep.days.map(x => {
+            const tem = !x.future && x.hasMeals, it = { i: x.i, pct: tem ? pctDe(x.meals.prot, x.goals.prot) : null };
+            if (tem && n.modoProt !== 'meta') { const e = estadoProt(x.meals.prot, x.goals); it.fill = e === 'ok' ? FILL_VERDE : e === 'acima' ? FILL_VERM : FILL_AMBAR; }
+            return it;
+        }), FILL_AMBAR);
+    }
+    if (isModuleEnabled('treino') && (t.sessoes || rep.past.length >= 4)) {
+        algo = true;
+        titulo('Treinos');
+        paragrafo(t.sessoes + ' de ' + t.meta + ' sessões na semana' + (t.minutos ? ' · ' + fmtN(t.minutos) + ' min' : '') + (t.volume ? ' · ' + fmtN(t.volume) + ' kg de volume total' : ''), 8.5, true, cinza);
+        if (rep.treinos.length) tabela([M, M + 80, M + 320, M + 385, M + 440, W - M], ['Dia', 'Sessão', '>Duração', '>Séries', '>Volume'],
+            rep.treinos.map(tr => { const st = treinoStats(tr), di = rep.days.findIndex(x => x.dt === tr.data), pi = personalSessionInfo(tr); return { cells: [DOW_ABBR[Math.max(0, di)] + ' ' + fmtDM(tr.data), (tr.nome || 'Treino') + (pi.com ? ' · com o personal' : pi.sem ? ' · sem o personal' : ''), { t: tr.duracao ? tr.duracao + ' min' : '-', right: true }, { t: String(st.series), right: true }, { t: fmtN(st.volume) + ' kg', right: true }] }; }), 8.5, 13);
+    }
+    if (a.dias) {
+        algo = true;
+        titulo('Hidratação');
+        paragrafo('Média: ' + fmtN(a.avg) + ' ml/dia · Meta atingida em ' + a.diasMeta + ' de ' + a.dias + ' dias com registro' + (a.pior ? ' · Pior dia: ' + DOW_ABBR[a.pior.i] + ' (' + fmtN(a.pior.water) + ' ml)' : ''), 8.5, true, cinza);
+        barras('Água · % da meta por dia', rep.days.map(x => ({ i: x.i, pct: (!x.future && x.hasWater) ? pctDe(x.water, x.goals.water) : null })), FILL_AZUL);
+    }
+    if (m.temMeds && m.pct != null) {
+        algo = true;
+        titulo('Medicação e suplementos');
+        paragrafo('Adesão: ' + m.pct + '% (' + m.tom + ' de ' + m.prev + ' doses nos ' + m.diasReg + ' dia(s) com registro)' + (m.diasSemReg ? ' · ' + m.diasSemReg + ' dia(s) sem registro' : ''), 8.5, true, cinza);
+    }
+    if (rep.notes) {
+        algo = true;
+        titulo('Anotações da semana');
+        paragrafo(rep.notes, 9);
+    }
+    if (!algo) { need(12); d.txt(M, y, 'Sem registros nesta semana.', 9, false, cinza); y -= 12; }
+    d.y = y;
+    return d.build('relatório semanal gerado pelo app em ' + formatDataTreino(today()) + ' · não substitui avaliação profissional'); // curto o bastante para não ser cortado com "..."
+}
 function exportWeeklyReport() {
     const rep = collectWeekReport(reportWeekStart || weekStartOf(today()));
-    openExportedDoc(buildReportHtml(rep), 'relatorio-semanal.html');
+    openExportedDoc(buildReportHtml(rep), 'relatorio-semanal-' + rep.startIso + '.html', () => buildWeeklyReportPdf(rep)); // v1.35.1: PDF no aparelho, como o registro de treino
 }
 
 function rGoals() {
