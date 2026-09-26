@@ -244,6 +244,7 @@ body:not(.light) .food-add-btn{background:var(--green-bg);color:var(--green)}
 .chip{padding:6px 12px;border-radius:20px;border:none;cursor:pointer;font-size:12px;font-weight:500;background:var(--bg);color:var(--text3);border:1px solid var(--border);transition:all .2s}
 .chip.active{background:var(--primary-light);color:var(--primary-dark);border-color:var(--primary);font-weight:700}
 body:not(.light) .chip.active{background:var(--green-bg);color:var(--green);border-color:var(--green)}
+.chip.eventual{border-style:dashed;opacity:.85}.chip.eventual.active{opacity:1}
 
 /* ========== ADDED ITEMS ========== */
 .added-item{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)}
@@ -625,7 +626,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.35.1';
+const APP_VERSION = '1.35.2';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1538,6 +1539,8 @@ function normalizeLoadedD() {
                 D.mealSlots.forEach(s => {
                     if (typeof s.treinoOnly !== 'boolean') s.treinoOnly = (s.id === 'pretreino' || s.id === 'postreino');
                     if (typeof s.descansoOnly !== 'boolean') s.descansoOnly = false; // v1.21.0
+                    // v1.35.2: `eventual` NÃO é normalizado aqui de propósito (ver slotEventual): acrescentar o campo a todos
+                    // os slots em memória abriria janela de conflito na junção de 3 vias (cada slot é unidade atômica).
                     if (typeof s.ativo !== 'boolean') s.ativo = true;
                 });
             }
@@ -2717,10 +2720,33 @@ function getMealSlotById(id) {
     return getMealSlots().find(s => s.id === id) || null;
 }
 
+// v1.35.2: a ordem dos campos é o HORÁRIO PREVISTO (pedido do Gileno em 26/09/2026: o "Lanche extra" 11:45, criado
+// por último, saía abaixo do Jantar). horarioKey: 'HH:MM' -> minutos do dia, ou null quando não há horário válido.
+// ordenarPorHorario: campo com horário primeiro, crescente; sem horário no fim; empate e sem horário mantêm a ordem
+// da configuração (desempate pelo índice: não depende da estabilidade do sort). Nunca muda o array recebido.
+// slotEventual: só o booleano `true` liga o campo eventual (ausente, false ou texto = não eventual). Único leitor da flag.
+function slotEventual(s) { return !!s && s.eventual === true; }
+function horarioKey(t) {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(String(t == null ? '' : t).trim());
+    if (!m) return null;
+    const h = Number(m[1]), mi = Number(m[2]);
+    return (h >= 0 && h <= 23 && mi >= 0 && mi <= 59) ? h * 60 + mi : null;
+}
+function ordenarPorHorario(slots) {
+    return (Array.isArray(slots) ? slots : []).map((s, i) => ({ s, i, k: horarioKey(s && s.time) }))
+        .sort((a, b) => {
+            if ((a.k == null) !== (b.k == null)) return a.k == null ? 1 : -1;
+            if (a.k != null && a.k !== b.k) return a.k - b.k;
+            return a.i - b.i;
+        })
+        .map(x => x.s);
+}
+
 // Slots a EXIBIR num dia. Regra: campo da config aparece se (ativo E passa no filtro
-// treino) OU se já tem item registrado naquele dia. Assim campos de treino somem no
+// treino/descanso E não é eventual) OU se já tem item registrado naquele dia. Assim campos de treino somem no
 // descanso mas reaparecem se usados, e campos removidos/inativos com histórico não
-// escondem dado. Campos removidos da config (órfãos com itens) entram ao fim.
+// escondem dado. Campos removidos da config (órfãos com itens) entram também.
+// v1.35.2: a lista sai em ordem de horário previsto (ordenarPorHorario), inclusive os órfãos.
 function getDaySlots(dt) {
     if (!dt) dt = curDate();
     const day = getDayData(dt);
@@ -2735,7 +2761,8 @@ function getDaySlots(dt) {
         // em dia de treino dá lugar ao Pré/Pós-treino). Mesma exceção: dia com
         // registro no campo continua mostrando o campo, histórico nunca some.
         const descansoOk = !s.descansoOnly || !isTreino;
-        if ((s.ativo !== false && treinoOk && descansoOk) || hasItems) {
+        // v1.35.2: campo "eventual" nunca entra na lista do dia por conta própria; só quando tem registro nele
+        if ((s.ativo !== false && treinoOk && descansoOk && !slotEventual(s)) || hasItems) {
             out.push(s);
             seen.add(s.id);
         }
@@ -2748,7 +2775,20 @@ function getDaySlots(dt) {
             seen.add(id);
         }
     });
-    return out;
+    return ordenarPorHorario(out);
+}
+
+// v1.35.2: campos oferecidos para REGISTRAR num dia = os do dia (getDaySlots) + os eventuais ligados que ainda não têm
+// registro nele. A tela Refeição (chips) e o "mover para" usam esta lista; o Início e os relatórios usam getDaySlots
+// (o eventual só aparece lá depois de registrado). Mesma ordem por horário.
+function getDaySlotsRegistro(dt) {
+    if (!dt) dt = curDate();
+    const out = getDaySlots(dt).slice();
+    const seen = new Set(out.map(s => s.id));
+    getMealSlots().forEach(s => {
+        if (s && s.id && slotEventual(s) && s.ativo !== false && !seen.has(s.id)) { out.push(s); seen.add(s.id); }
+    });
+    return ordenarPorHorario(out);
 }
 
 function getDayMeals(dt) {
@@ -3209,7 +3249,7 @@ function rDash() {
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
                 </div>
                 <div class="meal-info">
-                    <div class="meal-name">${s.name}${s.treinoOnly ? ' <span style="font-size:9px" title="Só em dia de treino">🏋️</span>' : ''}${s.descansoOnly ? ' <span style="font-size:9px" title="Só em dia de descanso">😴</span>' : ''}</div>
+                    <div class="meal-name">${s.name}${s.treinoOnly ? ' <span style="font-size:9px" title="Só em dia de treino">🏋️</span>' : ''}${s.descansoOnly ? ' <span style="font-size:9px" title="Só em dia de descanso">😴</span>' : ''}${slotEventual(s) ? ' <span style="font-size:9px;color:var(--text3)" title="Eventual: entra no dia quando você registra">✦</span>' : ''}</div>
                     <div class="meal-time">${timeHtml}</div>
                 </div>
                 ${done ? `<div class="meal-macros">
@@ -3864,18 +3904,21 @@ function rMeal() {
     const dt = curDate();
     const day = getDayData(dt);
 
-    // Slots visíveis neste dia; garante que o slot selecionado é válido/visível
+    // Slots visíveis neste dia + eventuais ligados (v1.35.2); garante que o slot selecionado é válido/alcançável.
+    // Quando o selecionado não vale neste dia, cai no primeiro campo DO DIA (não num eventual).
     const daySlots = getDaySlots(dt);
-    if (daySlots.length && !daySlots.some(s => s.id === selectedMealSlot)) {
-        selectedMealSlot = daySlots[0].id;
+    const regSlots = getDaySlotsRegistro(dt);
+    if (regSlots.length && !regSlots.some(s => s.id === selectedMealSlot)) {
+        selectedMealSlot = (daySlots[0] || regSlots[0]).id;
     }
-    const curSlotCfg = daySlots.find(s => s.id === selectedMealSlot) || getMealSlotById(selectedMealSlot) || { id: selectedMealSlot, name: selectedMealSlot, time: '' };
+    const curSlotCfg = regSlots.find(s => s.id === selectedMealSlot) || getMealSlotById(selectedMealSlot) || { id: selectedMealSlot, name: selectedMealSlot, time: '' };
     const tinfo = mealTimeInfo(curSlotCfg, day.slots[selectedMealSlot]);
 
-    // Chips
+    // Chips (ordem de horário); eventual ainda sem registro no dia sai tracejado com ✦
     let chipsHtml = '';
-    daySlots.forEach(s => {
-        chipsHtml += `<button class="chip ${selectedMealSlot === s.id ? 'active' : ''}" onclick="selectedMealSlot='${s.id}';rMeal()">${escHtml(s.name)}</button>`;
+    regSlots.forEach(s => {
+        const ev = slotEventual(s) && !daySlots.some(x => x.id === s.id);
+        chipsHtml += `<button class="chip${selectedMealSlot === s.id ? ' active' : ''}${ev ? ' eventual' : ''}"${ev ? ' title="Eventual: entra no dia quando você registrar"' : ''} onclick="selectedMealSlot='${s.id}';rMeal()">${ev ? '✦ ' : ''}${escHtml(s.name)}</button>`;
     });
 
     // Current items
@@ -4459,7 +4502,7 @@ function slotDisplayName(slotId) {
 // Modal genérico: escolhe a refeição de destino. onclickExpr usa %ID% como placeholder do slot.
 function openMealDestPicker(titulo, onclickExpr) {
     const dt = curDate();
-    const destinos = getDaySlots(dt).filter(s => s.id !== selectedMealSlot);
+    const destinos = getDaySlotsRegistro(dt).filter(s => s.id !== selectedMealSlot); // v1.35.2: eventual também é destino
     if (destinos.length === 0) return toast('Não há outra refeição neste dia', true);
     const botoes = destinos.map(s =>
         `<button class="btn btn-outline w-full" style="justify-content:flex-start;margin-bottom:8px" onclick="${onclickExpr.replace('%ID%', s.id)}">${s.name}${s.time ? ` · ${s.time}` : ''}</button>`
@@ -4862,7 +4905,7 @@ function restorePlanScroll() {
 // opts.aplicarMetas: copia meta.goals {kcal,prot,carbo,gord,water,sodio} para os dias de treino e de descanso; a faixa {protMin,protMax} entra em par (v1.27.0).
 // v1.30.0 "o plano manda" (regra do CEO 17/09/2026: o usuário nunca ajusta métrica ou cadastro na mão): alimento de newFoods com
 // `atualizar: true` cujo id já existe tem o cadastro ATUALIZADO pelo plano (nome, referência, unidade, kcal, macros, sódio);
-// refeição do plano com `dias: "todos" | "treino" | "descanso"` e/ou `time` tem o campo existente CONFIGURADO. Sem esses
+// refeição do plano com `dias: "todos" | "treino" | "descanso" | "eventual"` (v1.35.2) e/ou `time` tem o campo existente CONFIGURADO. Sem esses
 // campos, o comportamento é o de antes (cadastro existente intocado, campo existente só religado).
 function processDietImport(parsed, opts) {
     opts = opts || {};
@@ -4894,13 +4937,13 @@ function processDietImport(parsed, opts) {
             else linhasOk(v.lines, `${onde}, versão ${j + 1}`);
         });
     });
-    const DIAS_OK = { todos: 1, treino: 1, descanso: 1 };
+    const DIAS_OK = { todos: 1, treino: 1, descanso: 1, eventual: 1 }; // v1.35.2: eventual
     const diasOk = v => typeof v === 'string' && Object.prototype.hasOwnProperty.call(DIAS_OK, v); // auditoria 17/09: array e "constructor" passavam calados
     const horaOk = h => typeof h === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(h);
     parsed.slots.forEach((ps, i) => {
         if (!ps || typeof ps !== 'object') return;
         const onde = ps.name || `refeição ${i + 1}`;
-        if (ps.dias != null && !diasOk(ps.dias)) formaRuim.push(onde + ': dias (use "todos", "treino" ou "descanso")');
+        if (ps.dias != null && !diasOk(ps.dias)) formaRuim.push(onde + ': dias (use "todos", "treino", "descanso" ou "eventual")');
         if (ps.time != null && ps.time !== '' && !horaOk(ps.time)) formaRuim.push(onde + ': horário (use HH:MM)');
     });
     (Array.isArray(parsed.newFoods) ? parsed.newFoods : []).forEach((f, i) => {
@@ -4981,8 +5024,11 @@ function processDietImport(parsed, opts) {
     const resolvedSlots = [];
     const reactivated = [];
     let cursor = -1;
-    // v1.30.0: `dias` do plano vira o par treinoOnly/descansoOnly do campo
-    const diasCfg = ps => ps.dias === 'treino' ? { treinoOnly: true, descansoOnly: false } : ps.dias === 'descanso' ? { treinoOnly: false, descansoOnly: true } : ps.dias === 'todos' ? { treinoOnly: false, descansoOnly: false } : null;
+    // v1.30.0: `dias` do plano vira o par treinoOnly/descansoOnly do campo; v1.35.2: e o `eventual`
+    const diasCfg = ps => ps.dias === 'treino' ? { treinoOnly: true, descansoOnly: false, eventual: false }
+        : ps.dias === 'descanso' ? { treinoOnly: false, descansoOnly: true, eventual: false }
+        : ps.dias === 'todos' ? { treinoOnly: false, descansoOnly: false, eventual: false }
+        : ps.dias === 'eventual' ? { treinoOnly: false, descansoOnly: false, eventual: true } : null;
     parsed.slots.forEach(ps => {
         if (!ps) return;
         const wantName = normalizeStr(ps.name);
@@ -4996,15 +5042,15 @@ function processDietImport(parsed, opts) {
             if (D.mealSlots[idx].ativo === false) { D.mealSlots[idx].ativo = true; reactivated.push(D.mealSlots[idx].name); }
             // v1.30.0: o plano manda na configuração do campo (dias e horário), só quando o plano traz o campo
             const cfg = diasCfg(ps), slot = D.mealSlots[idx];
-            const antes = JSON.stringify([slot.treinoOnly, slot.descansoOnly, slot.time]);
-            if (cfg) { slot.treinoOnly = cfg.treinoOnly; slot.descansoOnly = cfg.descansoOnly; }
+            const antes = JSON.stringify([slot.treinoOnly, slot.descansoOnly, slotEventual(slot), slot.time]);
+            if (cfg) { slot.treinoOnly = cfg.treinoOnly; slot.descansoOnly = cfg.descansoOnly; slot.eventual = cfg.eventual; }
             if (ps.time) slot.time = ps.time;
-            if (JSON.stringify([slot.treinoOnly, slot.descansoOnly, slot.time]) !== antes) configuredSlots++;
+            if (JSON.stringify([slot.treinoOnly, slot.descansoOnly, slotEventual(slot), slot.time]) !== antes) configuredSlots++;
         } else {
             const base = normalizeStr(ps.name).replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').substr(0, 16) || 'refeicao';
             slotId = base + '_' + uid().substr(0, 4);
-            const cfgNovo = diasCfg(ps) || { treinoOnly: !!ps.treinoOnly, descansoOnly: !!ps.descansoOnly };
-            const novo = { id: slotId, name: ps.name, time: ps.time || '', treinoOnly: cfgNovo.treinoOnly, descansoOnly: cfgNovo.descansoOnly, ativo: true };
+            const cfgNovo = diasCfg(ps) || { treinoOnly: !!ps.treinoOnly, descansoOnly: !!ps.descansoOnly, eventual: ps.eventual === true && !ps.treinoOnly && !ps.descansoOnly }; // G2: excludentes
+            const novo = { id: slotId, name: ps.name, time: ps.time || '', treinoOnly: cfgNovo.treinoOnly, descansoOnly: cfgNovo.descansoOnly, eventual: cfgNovo.eventual, ativo: true };
             const at = (cursor >= 0 ? cursor + 1 : D.mealSlots.length);
             D.mealSlots.splice(at, 0, novo);
             cursor = at;
@@ -7761,7 +7807,7 @@ function rSettings() {
     if (!D) return;
     $('settings-body').innerHTML = `
         ${settingsSectionHtml('modulos', '🧩', 'Módulos do app', 'Ligue ou desligue áreas que você não usa', settingsModulesHtml())}
-        ${isModuleEnabled('refeicao') ? settingsSectionHtml('slots', '🍽', 'Campos de refeição', 'Renomear, horário previsto, ordem e ativar', settingsMealSlotsHtml()) : ''}
+        ${isModuleEnabled('refeicao') ? settingsSectionHtml('slots', '🍽', 'Campos de refeição', 'Renomear, horário previsto, dias e ativar', settingsMealSlotsHtml()) : ''}
         ${isModuleEnabled('treino') ? settingsSectionHtml('treino', '🏋️', 'Treino', 'Descanso, passo da carga e aulas com o personal', settingsTreinoHtml()) : ''}
         ${settingsSectionHtml('planos', '📋', 'Planos do profissional', 'Importar dieta da nutri e treino do personal', settingsImportHtml())}
         ${D.proPreview ? settingsSectionHtml('ia', '🧠', 'Relatório por IA', 'Serviço que comenta a semana (acesso pelo seu login)', settingsIAHtml()) : ''}
@@ -7894,20 +7940,18 @@ function settingsMealSlotsHtml() {
                 <button class="btn btn-primary btn-sm" onclick="openMealSlotEditor()">+ Adicionar</button>
             </div>
             <div style="font-size:11px;color:var(--text3);margin-bottom:12px;line-height:1.5">
-                Renomeie, defina o horário previsto, marque os que valem só em dia de treino, ligue/desligue ou reordene. Campos "só treino" somem nos dias de descanso (mas reaparecem se você já tiver registrado algo neles).
+                Renomeie, defina o horário previsto, escolha em que dias cada campo aparece (todos, só treino, só descanso ou eventual) e ligue/desligue. A lista segue o horário previsto; campo sem horário fica no fim. Campos "só treino" somem nos dias de descanso (e vice-versa), mas reaparecem se você já tiver registrado algo neles. Campo "eventual" não entra na lista do dia: fica na tela Refeição para registrar e, registrado, entra no dia no seu horário.
             </div>
-            ${getMealSlots().map((s, i, arr) => `
+            ${ordenarPorHorario(getMealSlots()).map(s => `
                 <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;${s.ativo === false ? 'opacity:.55' : ''}">
                     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
                         <div style="min-width:0;flex:1">
-                            <div style="font-size:14px;font-weight:600;color:var(--text)">${s.name}${s.treinoOnly ? ' <span style="font-size:10px;color:#f59e0b;font-weight:700">🏋️ treino</span>' : ''}${s.descansoOnly ? ' <span style="font-size:10px;color:var(--blue, #3b82f6);font-weight:700">😴 descanso</span>' : ''}${s.ativo === false ? ' <span style="font-size:10px;color:var(--red);font-weight:700">desligado</span>' : ''}</div>
+                            <div style="font-size:14px;font-weight:600;color:var(--text)">${s.name}${s.treinoOnly ? ' <span style="font-size:10px;color:#f59e0b;font-weight:700">🏋️ treino</span>' : ''}${s.descansoOnly ? ' <span style="font-size:10px;color:var(--blue, #3b82f6);font-weight:700">😴 descanso</span>' : ''}${slotEventual(s) ? ' <span style="font-size:10px;color:#a855f7;font-weight:700">✦ eventual</span>' : ''}${s.ativo === false ? ' <span style="font-size:10px;color:var(--red);font-weight:700">desligado</span>' : ''}</div>
                             <div style="font-size:11px;color:var(--text3);margin-top:2px">🕐 previsto ${s.time || '--:--'}</div>
                         </div>
                         <button class="toggle ${s.ativo !== false ? 'on' : ''}" onclick="toggleMealSlotActive('${s.id}')" style="flex-shrink:0" title="Ligar/desligar"></button>
                     </div>
                     <div style="display:flex;gap:6px;margin-top:8px">
-                        <button class="btn btn-outline btn-sm" onclick="moveMealSlot('${s.id}',-1)" ${i === 0 ? 'disabled style="opacity:.4"' : ''}>↑</button>
-                        <button class="btn btn-outline btn-sm" onclick="moveMealSlot('${s.id}',1)" ${i === arr.length - 1 ? 'disabled style="opacity:.4"' : ''}>↓</button>
                         <button class="btn btn-outline btn-sm" style="flex:1" onclick="openMealSlotEditor('${s.id}')">Editar</button>
                         <button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="deleteMealSlot('${s.id}')">Excluir</button>
                     </div>
@@ -8018,16 +8062,8 @@ function rerenderConfigHost() {
     else if (cPage === 'goals') rGoals();
 }
 
-// ========== CAMPOS DE REFEIÇÃO — CONFIG (CRUD + ordem) ==========
-function moveMealSlot(id, dir) {
-    const arr = getMealSlots();
-    const i = arr.findIndex(s => s.id === id);
-    const j = i + dir;
-    if (i < 0 || j < 0 || j >= arr.length) return;
-    const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
-    save();
-    rerenderConfigHost();
-}
+// ========== CAMPOS DE REFEIÇÃO — CONFIG (CRUD) ==========
+// v1.35.2: os botões ↑/↓ de reordenar (e a função que trocava a posição) saíram: a ordem em toda tela é o horário previsto.
 
 function toggleMealSlotActive(id) {
     const s = getMealSlotById(id);
@@ -8058,7 +8094,7 @@ function deleteMealSlot(id) {
 
 function openMealSlotEditor(id) {
     const editing = id ? getMealSlotById(id) : null;
-    const s = editing || { name: '', time: '', treinoOnly: false, ativo: true };
+    const s = editing || { name: '', time: '', treinoOnly: false, descansoOnly: false, eventual: false, ativo: true };
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
@@ -8079,11 +8115,12 @@ function openMealSlotEditor(id) {
             <div class="form-group">
                 <label class="form-label">Em que dias este campo aparece?</label>
                 <select id="slot-dias" class="form-input">
-                    <option value="todos" ${!s.treinoOnly && !s.descansoOnly ? 'selected' : ''}>Todos os dias</option>
+                    <option value="todos" ${!s.treinoOnly && !s.descansoOnly && !slotEventual(s) ? 'selected' : ''}>Todos os dias</option>
                     <option value="treino" ${s.treinoOnly ? 'selected' : ''}>🏋️ Só em dia de treino</option>
-                    <option value="descanso" ${s.descansoOnly ? 'selected' : ''}>😴 Só em dia de descanso</option>
+                    <option value="descanso" ${!s.treinoOnly && s.descansoOnly ? 'selected' : ''}>😴 Só em dia de descanso</option>
+                    <option value="eventual" ${!s.treinoOnly && !s.descansoOnly && slotEventual(s) ? 'selected' : ''}>✦ Eventual (só quando você registrar)</option>
                 </select>
-                <div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.4">No outro tipo de dia o campo some sozinho (mas reaparece num dia em que você já registrou algo nele).</div>
+                <div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.4">Treino/descanso: no outro tipo de dia o campo some sozinho (mas reaparece num dia em que você já registrou algo nele). Eventual: não entra na lista do dia; fica na tela Refeição para registrar e, registrado, entra no dia no seu horário previsto. A ordem dos campos é sempre o horário previsto.</div>
             </div>
             <button class="btn btn-primary w-full" onclick="saveMealSlot(${editing ? `'${id}'` : 'null'})">Salvar</button>
         </div>`;
@@ -8094,15 +8131,16 @@ function openMealSlotEditor(id) {
 function saveMealSlot(id) {
     const name = ($('slot-name').value || '').trim();
     const time = $('slot-time').value || '';
-    const dias = $('slot-dias').value;                 // 'todos' | 'treino' | 'descanso'
+    const dias = $('slot-dias').value;                 // 'todos' | 'treino' | 'descanso' | 'eventual' (v1.35.2)
     const treinoOnly = dias === 'treino';
     const descansoOnly = dias === 'descanso';
+    const eventual = dias === 'eventual';
     if (!name) return toast('Informe o nome do campo', true);
     if (id) {
         const s = getMealSlotById(id);
-        if (s) { s.name = name; s.time = time; s.treinoOnly = treinoOnly; s.descansoOnly = descansoOnly; }
+        if (s) { s.name = name; s.time = time; s.treinoOnly = treinoOnly; s.descansoOnly = descansoOnly; s.eventual = eventual; }
     } else {
-        getMealSlots().push({ id: 'slot_' + uid(), name, time, treinoOnly, descansoOnly, ativo: true });
+        getMealSlots().push({ id: 'slot_' + uid(), name, time, treinoOnly, descansoOnly, eventual, ativo: true });
     }
     save();
     const modal = document.querySelector('.modal-overlay');
@@ -10306,14 +10344,14 @@ function nutriDaySlotsRO(dt) {
         const slot = slotsDay[s.id];
         const hasItems = !!(slot && slot.items && slot.items.length);
         const treinoOk = !s.treinoOnly || isTreino, descansoOk = !s.descansoOnly || !isTreino;
-        if ((s.ativo !== false && treinoOk && descansoOk) || hasItems) { out.push(s); seen.add(s.id); }
+        if ((s.ativo !== false && treinoOk && descansoOk && !slotEventual(s)) || hasItems) { out.push(s); seen.add(s.id); } // v1.35.2: eventual só com registro
     });
     Object.keys(slotsDay).forEach(id => {
         if (seen.has(id)) return;
         const slot = slotsDay[id];
         if (slot && slot.items && slot.items.length) { out.push({ id: id, name: slot.name || id, time: slot.time || '', _orphan: true }); seen.add(id); }
     });
-    return out;
+    return ordenarPorHorario(out); // v1.35.2: mesma ordem do Início
 }
 // Casa os itens comidos com as linhas de UMA versão do plano. Cada item só casa uma linha; entre vários itens
 // candidatos à mesma linha fica o de gramas mais próximas. O que sobra dos itens é "fora do plano".

@@ -1,7 +1,7 @@
 # Estado do Projeto — Gestão Saúde
 
-**Última atualização:** 2026-09-26 (parte 29, sessão no Mac mini)
-**Versão atual em produção:** v1.35.1 ("Erro ao salvar dados" com registro durável, nova tentativa sozinha e reinício seguro quando o cliente do banco para; relatório semanal em PDF gerado no aparelho, como o registro de treino; no ar 26/09 08h05, push do Mac mini com ok do CEO, 3 auditorias, ver parte 29) sobre a v1.35.0 (Apple Watch no PDF do registro de treino, descanso em popup pela hora do relógio, Cardio na sessão do relógio ou manual, relógio na análise da semana no lugar dos prints; no ar 25/09 20h24, push do Mac mini com ok do CEO, serviço VPS v2.3 no ar 20h21, ver parte 28) sobre a v1.34.0 (Apple Watch dentro do app: card ⌚ no Início, bloco na sessão selada, chip no histórico e linha em Ajustes › Sincronização, lendo os documentos `users/{uid}/watch/AAAA-MM` publicados pelo robô do Mac mini; no ar 25/09 15h39, push do Mac mini com ok do CEO, regras publicadas 15h37, ver parte 27) sobre a v1.33.1 (na página 1 do registro de treino a pizza cresce até ocupar o espaço livre, até 160 pt, com legenda e % maiores; 24/09, push do Mac mini com ok do CEO, ver parte 26) sobre a v1.33.0 (pizza do mês em % e os dois gráficos do mês na página 1 do registro de treino; o Extrato separado do Personal saiu; 24/09, ver parte 25) sobre a v1.32.0 (página 2 do PDF do treino e extrato do Personal com TODOS os dias do mês, "Descanso" nos dias sem treino e gráfico de evolução; 22/09, ver parte 24) sobre a v1.31.0 (Relatório para a nutricionista: plano × comido em PDF semanal de 2 páginas; no ar 17/09 19h15, ver parte 23) sobre a v1.30.0 ("o plano manda"; no ar 17/09 15h01, ver parte 22) sobre a v1.29.0 (PDF do treino com o extrato detalhado do mês + extrato em PDF; no ar 17/09 12h02, ver parte 21) sobre a v1.28.2 (PDF gerado no aparelho + impressão por navegação real, 16/09 08h41) e a v1.28.0 (sincronização segura entre cópias: revisão + junção de 3 vias + escuta do documento, no ar 16/09 07h23), push do Mac mini pela deploy key com ok do CEO (ver parte 20). Antes: v1.27.0 (15/09 16h4x), v1.26.0 (14/09 18h08), v1.25.2 (14/09 14h07), v1.25.1 (14/09 09h07), v1.25.0 (14/09 08h07), v1.24.0 (02/09).
+**Última atualização:** 2026-09-26 (parte 30, sessão no Mac mini)
+**Versão atual em produção:** v1.35.1 (ver parte 29). **Construída, auditada e aguardando push com o "pode" do CEO: v1.35.2** (campos de refeição em ordem de horário previsto em todas as telas; campo "eventual", 4ª opção de "Em que dias", que só entra no dia quando tem registro; plano da nutri aceita dias "eventual"; 26/09, ver parte 30). Antes: v1.35.1 ("Erro ao salvar dados" com registro durável, nova tentativa sozinha e reinício seguro quando o cliente do banco para; relatório semanal em PDF gerado no aparelho, como o registro de treino; no ar 26/09 08h05, push do Mac mini com ok do CEO, 3 auditorias, ver parte 29) sobre a v1.35.0 (Apple Watch no PDF do registro de treino, descanso em popup pela hora do relógio, Cardio na sessão do relógio ou manual, relógio na análise da semana no lugar dos prints; no ar 25/09 20h24, push do Mac mini com ok do CEO, serviço VPS v2.3 no ar 20h21, ver parte 28) sobre a v1.34.0 (Apple Watch dentro do app: card ⌚ no Início, bloco na sessão selada, chip no histórico e linha em Ajustes › Sincronização, lendo os documentos `users/{uid}/watch/AAAA-MM` publicados pelo robô do Mac mini; no ar 25/09 15h39, push do Mac mini com ok do CEO, regras publicadas 15h37, ver parte 27) sobre a v1.33.1 (na página 1 do registro de treino a pizza cresce até ocupar o espaço livre, até 160 pt, com legenda e % maiores; 24/09, push do Mac mini com ok do CEO, ver parte 26) sobre a v1.33.0 (pizza do mês em % e os dois gráficos do mês na página 1 do registro de treino; o Extrato separado do Personal saiu; 24/09, ver parte 25) sobre a v1.32.0 (página 2 do PDF do treino e extrato do Personal com TODOS os dias do mês, "Descanso" nos dias sem treino e gráfico de evolução; 22/09, ver parte 24) sobre a v1.31.0 (Relatório para a nutricionista: plano × comido em PDF semanal de 2 páginas; no ar 17/09 19h15, ver parte 23) sobre a v1.30.0 ("o plano manda"; no ar 17/09 15h01, ver parte 22) sobre a v1.29.0 (PDF do treino com o extrato detalhado do mês + extrato em PDF; no ar 17/09 12h02, ver parte 21) sobre a v1.28.2 (PDF gerado no aparelho + impressão por navegação real, 16/09 08h41) e a v1.28.0 (sincronização segura entre cópias: revisão + junção de 3 vias + escuta do documento, no ar 16/09 07h23), push do Mac mini pela deploy key com ok do CEO (ver parte 20). Antes: v1.27.0 (15/09 16h4x), v1.26.0 (14/09 18h08), v1.25.2 (14/09 14h07), v1.25.1 (14/09 09h07), v1.25.0 (14/09 08h07), v1.24.0 (02/09).
 **URL:** https://gilenogestorsaude.github.io
 **Repo:** https://github.com/gilenogestorsaude/gilenogestorsaude.github.io
 **Firebase project:** gileno-gestao-saude
@@ -1302,3 +1302,43 @@ Dois defeitos relatados pelo CEO depois da 1.35.0: (1) print de 25/09 21h35 (In�
 - **Pendentes que esta versão não cobre:** 1.35.2 = Cardio no EDITOR do registro (pedido de 25/09 20h3x); tamanho do
   documento (587 KB, `days` = 338 KB; meses fechados em subcoleção); Imprimir do visor no app instalado; robô v1.0.1
   (`selar.sh` + `atualizar.sh`); push do `docs:` `77def81`.
+
+## Parte 30: v1.35.2, campos de refeição em ordem de horário e campo "eventual" (26/09/2026, sessão no Mac mini)
+
+Pedido do CEO em 26/09 12h1x, com dois prints do iPhone (Início e "Editar campo de refeição"): "Nesse campo (Anexo)
+ordenar por horário e ter a opção de (eventual)". O "Lanche extra" (11:45), criado por ele na manhã de 26/09 e último
+da configuração, saía no fim da lista do Início, abaixo do Jantar 19:30; e o select "Em que dias este campo aparece?" só
+tinha Todos / Só treino / Só descanso. Kit: `~/Gestao_Saude_Dados/kits/v130_bancada/v1352/` (`patch_v1352.py` sobre a
+1.35.1 = `8faf78a`, 13 âncoras; `LEIA-ME.md`).
+
+- **Ordem por horário previsto** (`horarioKey`, `ordenarPorHorario`): horário crescente; campo sem horário no fim, na
+  ordem da configuração; empate mantém a ordem da configuração. Vale em `getDaySlots` (Início, chips da Refeição,
+  previsto do plano, "mover para"), `getDaySlotsRegistro` (nova), `nutriDaySlotsRO` (relatório da nutricionista) e na
+  lista de Ajustes › Campos de refeição. `D.mealSlots` NÃO é reordenado (só a leitura ordena; sincronização por id e
+  histórico intocados). Os botões ↑/↓ e `moveMealSlot` saíram; subtítulo da seção "dias" no lugar de "ordem"; texto de
+  ajuda explica a regra.
+- **Campo "eventual"** (`slot.eventual`, 4ª opção "✦ Eventual (só quando você registrar)", excludente com treino e
+  descanso): não entra na lista do dia por conta própria, não é refeição pendente, não conta no previsto do plano nem no
+  relatório da nutri; assim que tem registro no dia entra em tudo, no horário dele, com a marca ✦ no Início. Para
+  registrar: na tela Refeição o eventual aparece como chip tracejado "✦ Nome" (`chip eventual`) e no "mover para" como
+  destino. Seleção inválida cai no primeiro campo DO DIA. Migração: todo campo ganha `eventual: false` (texto "true"
+  vira false). Plano da nutri aceita `dias: "eventual"` (configura campo existente e cria novo); mensagem de forma
+  inválida cita as 4 opções.
+- **Bancada** (`valida_v1352.py`, rc 0): `verify_v1352.js` 80/80 no jsc sobre a 1.35.2 (helpers; ordem em todos os 138
+  dias do banco real de 26/09 12h15 contra referência independente; órfão, sem horário, empate; eventual em getDaySlots,
+  getDaySlotsRegistro, nutriDaySlotsRO, Início renderizado, previsto do plano; tela Refeição renderizada; "mover para";
+  Ajustes; editor e saveMealSlot nas 4 opções; migração; importação do plano v5 real) e prova reversa sobre a 1.35.1 (55
+  [cura] reprovam lá, nenhum outro); arquivos 10/10. `bench/build_bench_v1352.py`: 4 prévias (Início 26/09, Refeição
+  27/09 com o eventual, Ajustes, editor) na pasta 04 do CEO.
+- **Auditoria** (subagente independente): rodada 1 APROVADA COM RESSALVAS (🟡 Y1: a migração `eventual=false` em todos os
+  campos abria janela de conflito na junção de 3 vias, provado com `mergeD`; curada: sem migração, `slotEventual` é o único
+  leitor da flag; 🟢 G1, G2, G6, G7, G10 curados na hora; G3, G4, G5, G8, G9 não bloqueiam). **Rodada 2 APROVADA SEM
+  RESSALVA** (patch reproduz `new/` byte a byte; 87/87 e prova reversa reconferidas; 47 extras dele; 16 sabotagens, a
+  bancada pega 12 e as 4 restantes só com `eventual` em texto, que ninguém grava). Relatórios em `auditoria/auditoria1/`.
+  ☠️ Lição: migração que acrescenta campo a TODOS os elementos de um array juntado por id muda `ours` inteiro em memória
+  e transforma qualquer edição concorrente em conflito perdido; preferir "ausência = padrão" no leitor.
+- **Publicação:** commit local feito em 26/09 13h1x sobre `4fe8585`; push com o "pode" do CEO (a cópia instalada no
+  iPhone segue na 1.35.1 até o service worker trocar: abrir o app, fechar e abrir de novo). Rollback depois do push: `git push origin 8faf78a:main --force-with-lease`.
+- **Pendentes que esta versão não cobre:** Cardio no EDITOR do registro selado (pedido de 25/09 20h3x, era a "1.35.2"
+  planejada, passa a 1.35.3); gráfico de FC (1.36.0); tamanho do documento (587 KB); Imprimir do visor no app instalado;
+  robô v1.0.1 (`selar.sh` + `atualizar.sh`); push do `docs:` `4fe8585`.
