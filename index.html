@@ -626,7 +626,7 @@ db.enablePersistence({ synchronizeTabs: false }).catch(err => {
 });
 
 // ========== VERSÃO ==========
-const APP_VERSION = '1.35.2';
+const APP_VERSION = '1.35.3';
 
 // ========== GLOBALS ==========
 let U = null; // user
@@ -1625,6 +1625,7 @@ function watchRefresh() {
         else if (cPage === 'treino-history') rTreinoHistory();
         else if (cPage === 'treino-session') rTreinoSession();
         else if (cPage === 'report') rReport(); // v1.35.0: a análise da semana mostra o que o relógio deu
+        else if (cPage === 'treino-editor') { const el = $('editor-cardio-relogio'); if (el && editingTreino) el.innerHTML = cardioListaRelogioHtml(editorCardioData(), editorCardioCtx()); } // v1.35.3: só a LISTA do relógio do seletor de cardio, se aberto (o editor e o formulário manual têm campos em digitação)
     });
 }
 // Só limpa o erro quando nada do que a tela precisa (_meta, mês em vista e anterior) está marcado como falho
@@ -9311,14 +9312,20 @@ function cardioItemSelado(e) { // da execução para o registro selado
     return { id: uid(), nome: e.nome || 'Cardio', tipo: 'cardio', grupo: 'aerob', series: [], cardio: JSON.parse(JSON.stringify(e.cardio || {})) };
 }
 function cardioJaNaSessao(watchId) { return !!(activeExecution && activeExecution.exercicios.some(e => e.tipo === 'cardio' && e.cardio && e.cardio.watchId === String(watchId))); }
-// seção Cardio do seletor "Adicionar exercício": do relógio (hoje) e manual
-function cardioPickerHtml() {
-    const ts = watchTreinosDia(today());
+// v1.35.3: o mesmo teste para o registro em edição (editor): o treino do relógio não entra duas vezes no registro
+function cardioJaNoEditor(watchId) { return !!(editingTreino && Array.isArray(editingTreino.exercicios) && editingTreino.exercicios.some(e => e && e.tipo === 'cardio' && e.cardio && e.cardio.watchId === String(watchId))); }
+// v1.35.3: as seções Cardio (relógio de UM dia + manual) servem à sessão em andamento (hoje) e ao editor do registro
+// selado (o dia da sessão). ctx = { ja(watchId), onWatch, onManual (nomes das funções), rotulo, semTreino, semData, carregando }.
+// dt nulo = sem data válida (o editor com a data apagada): só a seção manual funciona. ctx.idLista (só o editor): a lista
+// do relógio ganha um contêiner com esse id, para o redesenho trocar SÓ a lista e nunca o formulário manual em digitação
+// (auditoria 1 da 1.35.3, 🟡 Y1: trocar o innerHTML do modal inteiro recriava os campos e perdia o digitado).
+function cardioListaRelogioHtml(dt, ctx) {
+    const ts = dt ? watchTreinosDia(dt) : [];
     let relogio;
     if (ts.length) {
         relogio = ts.map(tr => {
-            const ja = cardioJaNaSessao(tr.id), item = cardioDoWatch(tr), hora = cardioHora(item.cardio);
-            return `<button ${ja ? 'disabled' : `onclick="addExecCardioWatch(${escHtml(JSON.stringify(String(tr.id || '')))})"`} style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin-bottom:6px;cursor:${ja ? 'default' : 'pointer'};opacity:${ja ? '.5' : '1'}">
+            const ja = ctx.ja(tr.id), item = cardioDoWatch(tr), hora = cardioHora(item.cardio);
+            return `<button ${ja ? 'disabled' : `onclick="${ctx.onWatch}(${escHtml(JSON.stringify(String(tr.id || '')))})"`} style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin-bottom:6px;cursor:${ja ? 'default' : 'pointer'};opacity:${ja ? '.5' : '1'}">
                 <span style="font-size:18px">⌚</span>
                 <div style="flex:1;min-width:0">
                     <div style="font-size:13px;font-weight:700;color:var(--text)">${hora ? escHtml(hora) + ' · ' : ''}${escHtml(item.nome)}</div>
@@ -9328,20 +9335,44 @@ function cardioPickerHtml() {
             </button>`;
         }).join('');
     } else {
-        const motivo = WATCH.erro ? 'sem leitura do relógio agora (' + escHtml(WATCH.erro) + ')' : (watchTemDados() ? 'nenhum treino do relógio chegou hoje ainda (o iPhone manda de hora em hora)' : 'nenhum dado do relógio nesta conta');
+        const motivo = !dt ? ctx.semData : WATCH.erro ? 'sem leitura do relógio agora (' + escHtml(WATCH.erro) + ')' : ctx.carregando ? ctx.carregando : (watchTemDados() ? ctx.semTreino : 'nenhum dado do relógio nesta conta');
         relogio = `<div style="font-size:12px;color:var(--text3);padding:6px 0 8px">${motivo}</div>`;
     }
+    return relogio;
+}
+function cardioSecoesHtml(dt, ctx) {
+    const relogio = cardioListaRelogioHtml(dt, ctx);
     return `
-        <div style="font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--text3);margin:4px 0 6px">🏃 CARDIO · do Apple Watch, hoje</div>
-        ${relogio}
+        <div style="font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--text3);margin:4px 0 6px">🏃 CARDIO · do Apple Watch, ${ctx.rotulo}</div>
+        ${ctx.idLista ? '<div id="' + ctx.idLista + '">' + relogio + '</div>' : relogio}
         <div style="font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--text3);margin:10px 0 6px">🏃 CARDIO · manual</div>
         <div style="display:flex;gap:6px;align-items:center;margin-bottom:12px">
             <select id="cardio-tipo" class="form-input" style="flex:1.4;padding:8px">${CARDIO_TIPOS.map(t => `<option value="${t}">${t}</option>`).join('')}</select>
             <input id="cardio-min" type="number" inputmode="numeric" min="1" max="600" placeholder="min" class="form-input" style="flex:1;padding:8px;text-align:center">
             <input id="cardio-km" type="text" inputmode="decimal" placeholder="km" class="form-input" style="flex:1;padding:8px;text-align:center">
-            <button class="btn btn-primary" style="flex-shrink:0" onclick="addExecCardioManual()">Adicionar</button>
-        </div>
+            <button class="btn btn-primary" style="flex-shrink:0" onclick="${ctx.onManual}()">Adicionar</button>
+        </div>`;
+}
+// seção Cardio do seletor "Adicionar exercício" da sessão em andamento: do relógio (hoje) e manual (saída idêntica à 1.35.0)
+function cardioPickerHtml() {
+    return cardioSecoesHtml(today(), { ja: cardioJaNaSessao, onWatch: 'addExecCardioWatch', onManual: 'addExecCardioManual', rotulo: 'hoje',
+        semTreino: 'nenhum treino do relógio chegou hoje ainda (o iPhone manda de hora em hora)' }) + `
         <div style="font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--text3);margin:0 0 2px">🏋️ EXERCÍCIOS DOS TEMPLATES</div>`;
+}
+// v1.35.3: leitura e validação do formulário manual (a MESMA regra na sessão em andamento e no editor do registro)
+function cardioManualLerForm() {
+    const tipoEl = $('cardio-tipo'), minEl = $('cardio-min'), kmEl = $('cardio-km');
+    const tipo = (tipoEl && CARDIO_TIPOS.indexOf(tipoEl.value) >= 0) ? tipoEl.value : 'Cardio';
+    const minTxt = String((minEl && minEl.value) || '').trim(), kmTxt = String((kmEl && kmEl.value) || '').trim();
+    const min = /^\d{1,3}$/.test(minTxt) ? parseInt(minTxt, 10) : NaN;
+    if (!(min >= 1 && min <= 600)) return { ok: false, msg: 'Minutos do cardio: número inteiro de 1 a 600' };
+    const c = { fonte: 'manual', durMin: min };
+    if (kmTxt) {
+        const km = /^\d{1,3}([.,]\d{1,2})?$/.test(kmTxt) ? Number(kmTxt.replace(',', '.')) : NaN;
+        if (!(km >= 0.01 && km <= 500)) return { ok: false, msg: 'Distância: use km com até 2 casas (ex.: 1,5), de 0,01 a 500' };
+        c.distKm = Math.round(km * 100) / 100;
+    }
+    return { ok: true, nome: tipo, cardio: c };
 }
 function addExecCardioWatch(watchId) {
     if (!activeExecution) return;
@@ -9356,18 +9387,9 @@ function addExecCardioWatch(watchId) {
 }
 function addExecCardioManual() {
     if (!activeExecution) return;
-    const tipoEl = $('cardio-tipo'), minEl = $('cardio-min'), kmEl = $('cardio-km');
-    const tipo = (tipoEl && CARDIO_TIPOS.indexOf(tipoEl.value) >= 0) ? tipoEl.value : 'Cardio';
-    const minTxt = String((minEl && minEl.value) || '').trim(), kmTxt = String((kmEl && kmEl.value) || '').trim();
-    const min = /^\d{1,3}$/.test(minTxt) ? parseInt(minTxt, 10) : NaN;
-    if (!(min >= 1 && min <= 600)) { toast('Minutos do cardio: número inteiro de 1 a 600', true); return; }
-    const c = { fonte: 'manual', durMin: min };
-    if (kmTxt) {
-        const km = /^\d{1,3}([.,]\d{1,2})?$/.test(kmTxt) ? Number(kmTxt.replace(',', '.')) : NaN;
-        if (!(km >= 0.01 && km <= 500)) { toast('Distância: use km com até 2 casas (ex.: 1,5), de 0,01 a 500', true); return; }
-        c.distKm = Math.round(km * 100) / 100;
-    }
-    activeExecution.exercicios.push({ id: uid(), nome: tipo, tipo: 'cardio', grupo: 'aerob', series: [], sets: [], feito: true, cardio: c });
+    const r = cardioManualLerForm(); // v1.35.3: mesma leitura do editor
+    if (!r.ok) { toast(r.msg, true); return; }
+    activeExecution.exercicios.push({ id: uid(), nome: r.nome, tipo: 'cardio', grupo: 'aerob', series: [], sets: [], feito: true, cardio: r.cardio });
     document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
     persistExecution(); rTreinoExecute();
     toast('🏃 Cardio adicionado à sessão');
@@ -10915,7 +10937,8 @@ function rTreinoEditor() {
             <div style="font-size:13px;font-weight:700;color:var(--text)">Exercícios (${editingTreino.exercicios.length})</div>
         </div>
         ${exHtml || '<div class="card text-center" style="padding:20px;color:var(--text3);font-size:12px;margin-bottom:8px">Nenhum exercício ainda</div>'}
-        <button onclick="addExercise()" style="width:100%;padding:12px;background:var(--surface);border:1px dashed var(--primary);border-radius:8px;color:var(--primary);font-size:13px;font-weight:700;cursor:pointer;margin-bottom:12px">+ Adicionar exercício</button>
+        <button onclick="addExercise()" style="width:100%;padding:12px;background:var(--surface);border:1px dashed var(--primary);border-radius:8px;color:var(--primary);font-size:13px;font-weight:700;cursor:pointer;margin-bottom:8px">+ Adicionar exercício</button>
+        <button onclick="openEditorCardioPicker()" style="width:100%;padding:12px;background:var(--surface);border:1px dashed var(--primary);border-radius:8px;color:var(--primary);font-size:13px;font-weight:700;cursor:pointer;margin-bottom:12px">🏃 Adicionar cardio (Apple Watch do dia ou manual)</button>
 
         <div class="card mb-12">
             <div class="form-group" style="margin-bottom:0">
@@ -10941,6 +10964,60 @@ function addExercise() {
 function removeExercise(idx) {
     editingTreino.exercicios.splice(idx, 1);
     rTreinoEditor();
+}
+
+// ===== v1.35.3: Cardio no EDITOR do registro (Reabrir, Registrar manualmente, Duplicar): do Apple Watch NO DIA DA SESSÃO, ou manual =====
+// A data é a do campo "Data" do editor (editingTreino.data): sessão de 24/09 reaberta lista os treinos do relógio de 24/09.
+function editorCardioData() { const d = editingTreino ? String(editingTreino.data || '') : ''; return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null; }
+function editorCardioCtx() {
+    const dt = editorCardioData(), ym = dt ? watchYm(dt) : '', hoje = today();
+    const rotulo = !dt ? 'no dia da sessão' : (dt === hoje ? 'hoje' : 'em ' + dt.slice(8, 10) + '/' + dt.slice(5, 7) + (dt.slice(0, 4) === hoje.slice(0, 4) ? '' : '/' + dt.slice(0, 4)));
+    return {
+        ja: cardioJaNoEditor, onWatch: 'addEditorCardioWatch', onManual: 'addEditorCardioManual', rotulo: rotulo, idLista: 'editor-cardio-relogio',
+        semData: 'informe a data da sessão (campo Data, acima) para ver os treinos do relógio desse dia',
+        // documento do mês ainda não chegou (undefined; null = o servidor disse que não existe): watchRefresh redesenha quando chegar
+        carregando: (dt && U && WATCH.docs[ym] === undefined && !WATCH.falhou[ym]) ? 'carregando o mês do relógio…' : null,
+        semTreino: dt === hoje ? 'nenhum treino do relógio chegou hoje ainda (o iPhone manda de hora em hora)' : 'nenhum treino do relógio nesse dia'
+    };
+}
+function editorCardioSecoesHtml() { return cardioSecoesHtml(editorCardioData(), editorCardioCtx()); }
+function openEditorCardioPicker() {
+    if (!editingTreino) return;
+    const dt = editorCardioData();
+    if (dt) watchGarantir(dt); // o mês da sessão passa a ser ouvido (como o PDF da sessão selada faz desde a 1.34.1)
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = `
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>🏃 Adicionar cardio</h3>
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">×</button>
+            </div>
+            <div style="font-size:12px;color:var(--text2);margin-bottom:6px">Entra neste registro como item sem séries, com as medidas do relógio ou as que você digitar. Só grava ao Salvar.</div>
+            ${editorCardioSecoesHtml()}
+        </div>`;
+    document.body.appendChild(overlay);
+}
+function addEditorCardioWatch(watchId) {
+    if (!editingTreino) return;
+    const dt = editorCardioData();
+    const tr = dt ? watchTreinosDia(dt).find(x => String(x.id || '') === String(watchId)) : null;
+    if (!tr) { toast('Treino do relógio não encontrado', true); return; }
+    if (cardioJaNoEditor(tr.id)) { toast('Esse treino do relógio já está neste registro', true); return; }
+    editingTreino.exercicios.push(cardioDoWatch(tr)); // forma do registro selado (series: [], sem sets/feito)
+    document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
+    rTreinoEditor();
+    toast('⌚ Cardio do relógio adicionado (Salvar para gravar)');
+}
+function addEditorCardioManual() {
+    if (!editingTreino) return;
+    const r = cardioManualLerForm();
+    if (!r.ok) { toast(r.msg, true); return; }
+    editingTreino.exercicios.push({ id: uid(), nome: r.nome, tipo: 'cardio', grupo: 'aerob', series: [], cardio: r.cardio });
+    document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
+    rTreinoEditor();
+    toast('🏃 Cardio adicionado (Salvar para gravar)');
 }
 
 function addSerie(exIdx) {
@@ -10970,7 +11047,7 @@ function saveTreino() {
         }))
         .filter(e => e.tipo === 'cardio' || e.series.length > 0); // v1.35.0: cardio não tem série
     if (editingTreino.exercicios.length === 0) {
-        return toast('Adicione ao menos 1 exercício com séries válidas', true);
+        return toast('Adicione ao menos 1 exercício com séries válidas (ou um cardio)', true); // v1.35.3
     }
     const idx = D.treinos.findIndex(t => t.id === editingTreino.id);
     if (idx >= 0) {
